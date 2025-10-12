@@ -121,22 +121,41 @@ def pdf_preview():
 @app.route("/api/pdf_info/<filename>")
 def get_pdf_info(filename):
     """Get PDF information including page count"""
+    print(f"DEBUG: pdf_info called with filename: {filename}")
     filepath = os.path.join(UPLOAD_FOLDER, filename)
+    print(f"DEBUG: Looking for file at: {filepath}")
+    print(f"DEBUG: File exists: {os.path.exists(filepath)}")
+    print(f"DEBUG: Upload folder contents: {os.listdir(UPLOAD_FOLDER) if os.path.exists(UPLOAD_FOLDER) else 'Folder does not exist'}")
+    
+    if not os.path.exists(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        return jsonify({"error": f"File not found: {filename}"}), 404
+    
     try:
         doc = fitz.open(filepath)
         page_count = len(doc)
         doc.close()
+        print(f"DEBUG: Successfully got page count: {page_count}")
         return jsonify({
             "filename": filename,
             "page_count": page_count
         })
     except Exception as e:
+        print(f"ERROR: Exception in get_pdf_info: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/pdf_thumbnail/<filename>/<int:page_num>")
 def get_pdf_thumbnail(filename, page_num):
     """Get thumbnail image for a specific page"""
+    print(f"DEBUG: thumbnail called with filename: {filename}, page: {page_num}")
     filepath = os.path.join(UPLOAD_FOLDER, filename)
+    print(f"DEBUG: File path: {filepath}")
+    print(f"DEBUG: File exists: {os.path.exists(filepath)}")
+    
+    if not os.path.exists(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        return jsonify({"error": f"File not found: {filename}"}), 404
+    
     try:
         doc = fitz.open(filepath)
         if page_num < 1 or page_num > len(doc):
@@ -271,6 +290,11 @@ def convert_pdf(filename):
     print(f"DEBUG: File path: {filepath}")
     print(f"DEBUG: Page number (0-based): {page_num}")
     print(f"DEBUG: File exists: {os.path.exists(filepath)}")
+    print(f"DEBUG: Upload folder contents: {os.listdir(UPLOAD_FOLDER) if os.path.exists(UPLOAD_FOLDER) else 'Folder does not exist'}")
+    
+    if not os.path.exists(filepath):
+        print(f"ERROR: File not found: {filepath}")
+        return jsonify({"error": f"File not found: {filename}"}), 404
     
     try:
         doc = fitz.open(filepath)
