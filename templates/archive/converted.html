@@ -1,0 +1,4054 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF to HTML - {{ filename }}</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background-color: transparent;
+        overflow: auto;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+      }
+
+      .pdf-container {
+        background: transparent;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        overflow: visible;
+        min-width: 100%;
+        min-height: 100%;
+        margin: 0 auto;
+        max-width: 100%;
+      }
+
+      .pdf-page {
+        position: relative;
+        margin: 20px auto;
+        background: white;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        transform-origin: top left;
+        width: 100%;
+        height: auto;
+      }
+
+      .pdf-page.hidden {
+        display: none;
+      }
+
+      .text-line {
+        position: relative;
+        white-space: nowrap;
+      }
+
+      .text-span {
+        position: absolute;
+        white-space: nowrap;
+      }
+
+      .editable-text {
+        cursor: text;
+        border: none;
+        padding: 0;
+        outline: none;
+        background: transparent;
+        position: relative;
+        z-index: 15; /* Higher than overlay to ensure clickability */
+      }
+
+      .editable-text:hover {
+        border: none;
+        background: transparent;
+      }
+
+      .editable-image {
+        cursor: pointer;
+        border: none;
+        outline: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        pointer-events: none;
+      }
+
+      .editable-image:hover {
+        border: none;
+      }
+
+      /* Prevent right-click context menu on images */
+      .editable-image {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -khtml-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+
+      .interactive-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none; /* Allow clicks to pass through to underlying elements */
+        z-index: 5;
+      }
+
+      .text-element {
+        position: absolute;
+        background: transparent;
+        border: 1px solid #007bff;
+        padding: 2px;
+        min-width: 50px;
+        min-height: 20px;
+        cursor: text;
+        font-size: 14px;
+        color: #000;
+        z-index: 50;
+        pointer-events: auto;
+      }
+
+      .text-element:focus {
+        outline: none;
+        border: 2px solid #007bff;
+        background: rgba(0, 123, 255, 0.1);
+      }
+
+      .element-delete-btn {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        width: 20px;
+        height: 20px;
+        background: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: bold;
+        cursor: pointer;
+        display: block;
+        z-index: 200;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        opacity: 0;
+        transition: opacity 0.2s ease, transform 0.2s ease;
+        pointer-events: auto;
+      }
+
+      .element-delete-btn:hover {
+        background: #c82333;
+      }
+
+      .element-container:hover .element-delete-btn {
+        opacity: 1;
+      }
+
+      .element-container {
+        position: relative;
+        display: inline-block;
+        cursor: grab;
+        transition: transform 0.1s ease;
+        background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        width: fit-content;
+        height: fit-content;
+        min-width: 0;
+        min-height: 0;
+        padding: 8px 8px 8px 0;
+        margin: 0;
+      }
+
+      .element-container:hover {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      }
+
+      .element-container:active {
+        cursor: grabbing;
+      }
+
+      .element-container.dragging {
+        z-index: 1000;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      }
+
+      /* Signature Modal Styles */
+      .modal {
+        position: fixed;
+        z-index: 10000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .modal-content {
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        max-width: 500px;
+        width: 90%;
+        max-height: 90vh;
+        overflow-y: auto;
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px;
+        border-bottom: 1px solid #eee;
+      }
+
+      .modal-header h3 {
+        margin: 0;
+        color: #333;
+      }
+
+      .close {
+        font-size: 24px;
+        font-weight: bold;
+        cursor: pointer;
+        color: #aaa;
+      }
+
+      .close:hover {
+        color: #000;
+      }
+
+      .modal-body {
+        padding: 20px;
+      }
+
+      .signature-canvas-container {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 20px;
+      }
+
+      .signature-controls {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+      }
+
+      .btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background-color 0.2s;
+      }
+
+      .btn-primary {
+        background-color: #007bff;
+        color: white;
+      }
+
+      .btn-primary:hover {
+        background-color: #0056b3;
+      }
+
+      .btn-danger {
+        background-color: #dc3545;
+        color: white;
+      }
+
+      .btn-danger:hover {
+        background-color: #c82333;
+      }
+
+      .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+      }
+
+      .btn-secondary:hover {
+        background-color: #545b62;
+      }
+
+      /* Resize handles for elements */
+      .resize-handle {
+        position: absolute;
+        background: #007bff;
+        border: 2px solid white;
+        border-radius: 50%;
+        width: 12px;
+        height: 12px;
+        cursor: pointer;
+        z-index: 1000;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+      }
+
+      .element-container:hover .resize-handle {
+        opacity: 1 !important;
+      }
+
+      .element-container.editing .resize-handle {
+        opacity: 1;
+      }
+
+      .element-container .resize-handle.se {
+        opacity: 0;
+      }
+
+      .element-container:hover .resize-handle.se {
+        opacity: 1 !important;
+      }
+
+      .resize-handle:hover {
+        background: #0056b3;
+        transform: scale(1.1);
+      }
+
+      .resize-handle.nw {
+        top: -6px;
+        left: -6px;
+        cursor: nw-resize;
+      }
+
+      .resize-handle.ne {
+        top: -6px;
+        right: -6px;
+        cursor: ne-resize;
+      }
+
+      .resize-handle.sw {
+        bottom: -6px;
+        left: -6px;
+        cursor: sw-resize;
+      }
+
+      .resize-handle.se {
+        bottom: -6px;
+        right: -6px;
+        cursor: se-resize;
+      }
+
+      .resize-handle.n {
+        top: -6px;
+        left: 50%;
+        transform: translateX(-50%);
+        cursor: n-resize;
+      }
+
+      .resize-handle.s {
+        bottom: -6px;
+        left: 50%;
+        transform: translateX(-50%);
+        cursor: s-resize;
+      }
+
+      .resize-handle.w {
+        top: 50%;
+        left: -6px;
+        transform: translateY(-50%);
+        cursor: w-resize;
+      }
+
+      .resize-handle.e {
+        top: 50%;
+        right: -6px;
+        transform: translateY(-50%);
+        cursor: e-resize;
+      }
+
+      .element-container.resizing {
+        user-select: none;
+      }
+
+      .element-container.resizing * {
+        pointer-events: none;
+      }
+
+      .element-container.resizing .resize-handle {
+        pointer-events: all;
+      }
+
+      .text-formatting-toolbar {
+        position: absolute;
+        top: -35px;
+        left: 0;
+        background: #333;
+        border: 1px solid #555;
+        border-radius: 4px;
+        padding: 5px;
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        z-index: 100;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        pointer-events: auto;
+      }
+
+      .text-formatting-toolbar select,
+      .text-formatting-toolbar input {
+        background: #444;
+        color: white;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 5px;
+        font-size: 12px;
+        pointer-events: auto;
+        z-index: 101;
+        position: relative;
+      }
+
+      .text-formatting-toolbar select:focus,
+      .text-formatting-toolbar input:focus {
+        outline: none;
+        border-color: #007bff;
+      }
+
+      .text-formatting-toolbar button {
+        background: #555;
+        color: white;
+        border: 1px solid #666;
+        border-radius: 3px;
+        padding: 2px 6px;
+        font-size: 12px;
+        cursor: pointer;
+        pointer-events: auto;
+        z-index: 101;
+        position: relative;
+      }
+
+      .text-formatting-toolbar button:hover {
+        background: #666;
+      }
+
+      .signature-element {
+        position: relative;
+        background: none !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        border: none;
+        padding: 0;
+        margin: 0;
+        cursor: pointer;
+        display: inline-block;
+        border-radius: 0;
+        font-size: 12px;
+        white-space: nowrap;
+        color: #007bff;
+        width: fit-content;
+        height: fit-content;
+        min-width: 0;
+        min-height: 0;
+        z-index: 20;
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        -webkit-touch-callout: none;
+        pointer-events: auto;
+      }
+
+      .image-element {
+        position: relative;
+        background: transparent !important;
+        background-color: transparent !important;
+        background-image: none !important;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        display: inline-block;
+        width: fit-content;
+        height: fit-content;
+        min-width: 0;
+        min-height: 0;
+        font-size: 12px;
+        color: #007bff;
+        z-index: 20;
+        user-select: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        -webkit-touch-callout: none;
+        pointer-events: auto;
+      }
+
+      .pdf-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1000;
+      }
+
+      .pdf-modal-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .pdf-modal-content {
+        background: white;
+        border-radius: 8px;
+        width: 90%;
+        max-width: 1200px;
+        height: 90%;
+        max-height: 800px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      }
+
+      .pdf-modal-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #f9fafb;
+        border-radius: 8px 8px 0 0;
+      }
+
+      .pdf-modal-header h3 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #111827;
+      }
+
+      .pdf-modal-close {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #6b7280;
+        padding: 0;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+      }
+
+      .pdf-modal-close:hover {
+        background-color: #e5e7eb;
+        color: #374151;
+      }
+
+      .pdf-modal-body {
+        flex: 1;
+        padding: 0;
+        overflow: hidden;
+      }
+
+      .pdf-modal-iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        border-radius: 0 0 8px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pdf-container">
+      {% for page in pages %}
+      <div
+        class="pdf-page{% if loop.index > 1 %} hidden{% endif %}"
+        id="page-{{ loop.index }}"
+        data-width="{{ page.width }}"
+        data-height="{{ page.height }}"
+      >
+        {{ page.html|safe }}
+
+        <!-- Interactive overlay for editing -->
+        <div class="interactive-overlay" id="overlay-{{ loop.index }}"></div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="signatureModal" class="modal" style="display: none">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Create Signature</h3>
+          <span class="close" onclick="closeSignatureModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+          <div class="signature-canvas-container">
+            <canvas
+              id="signatureCanvas"
+              width="400"
+              height="200"
+              style="border: 2px solid #ccc; cursor: crosshair"
+            ></canvas>
+          </div>
+          <div class="signature-controls">
+            <button onclick="clearSignature()" class="btn btn-danger">
+              Clear
+            </button>
+            <button onclick="saveSignature()" class="btn btn-primary">
+              Save Signature
+            </button>
+            <button onclick="closeSignatureModal()" class="btn btn-secondary">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HTML to PDF Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <script>
+      let currentPage = 1;
+      const totalPages = parseInt("{{ pages|length }}");
+      let currentZoom = 1;
+      let currentEditElement = null;
+      let signatureCanvas = null;
+      let isDrawing = false;
+      let hasSignature = false;
+      let edits = [];
+      let currentEditType = null;
+      let savedHtmlFilename = null;
+      let sessionId = null;
+      let isGeneratingPDF = false;
+
+      // Generate session ID on page load
+      function generateSessionId() {
+        return Math.random().toString(36).substr(2, 8);
+      }
+
+      // Cleanup session files
+      function cleanupSession() {
+        if (sessionId) {
+          fetch(`/cleanup_session/${sessionId}`, {
+            method: "POST",
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              console.log("Session cleanup:", data.message);
+            })
+            .catch((error) => {
+              console.error("Cleanup error:", error);
+            });
+        }
+      }
+
+      // Initialize session and zoom on page load
+      document.addEventListener("DOMContentLoaded", function () {
+        sessionId = generateSessionId();
+        console.log("Generated session ID:", sessionId);
+        changeZoom(currentZoom);
+
+        // Cleanup on page unload
+        window.addEventListener("beforeunload", cleanupSession);
+      });
+
+      function changePage(direction) {
+        const newPage = currentPage + direction;
+        if (newPage >= 1 && newPage <= totalPages) {
+          document.getElementById(`page-${currentPage}`).style.display = "none";
+          currentPage = newPage;
+          document.getElementById(`page-${currentPage}`).style.display =
+            "block";
+          document.getElementById(
+            "pageInfo"
+          ).textContent = `${currentPage}/${totalPages}`;
+
+          const prevPageBtn = document.getElementById("prevPage");
+          const nextPageBtn = document.getElementById("nextPage");
+          if (prevPageBtn) prevPageBtn.disabled = currentPage === 1;
+          if (nextPageBtn) nextPageBtn.disabled = currentPage === totalPages;
+        }
+      }
+
+      function changeZoom(zoom) {
+        currentZoom = zoom;
+        const pages = document.querySelectorAll(".pdf-page");
+        pages.forEach((page) => {
+          page.style.transform = `scale(${zoom})`;
+          page.style.transformOrigin = "top left";
+        });
+      }
+
+      function showNotification(message, isError = false) {
+        // Create notification element
+        const notification = document.createElement("div");
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          padding: 12px 16px;
+          border-radius: 8px;
+          color: ${isError ? "#dc2626" : "#059669"};
+          background: ${isError ? "#fef2f2" : "#f0fdf4"};
+          border: 1px solid ${isError ? "#fecaca" : "#bbf7d0"};
+          font-weight: 500;
+          z-index: 1000;
+          max-width: 320px;
+          word-wrap: break-word;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+          transform: translateX(100%);
+          transition: transform 0.3s ease-in-out;
+        `;
+        notification.textContent = message;
+
+        document.body.appendChild(notification);
+
+        // Animate in
+        setTimeout(() => {
+          notification.style.transform = "translateX(0)";
+        }, 10);
+
+        // Auto remove after 3 seconds
+        setTimeout(() => {
+          notification.style.transform = "translateX(100%)";
+          setTimeout(() => {
+            if (notification.parentNode) {
+              notification.parentNode.removeChild(notification);
+            }
+          }, 300);
+        }, 3000);
+      }
+
+      function saveEdits() {
+        console.log("Saving current document state...");
+
+        const saveButton = document.querySelector(".actions .btn.primary");
+        const originalText = saveButton.textContent;
+        saveButton.textContent = "Saving...";
+        saveButton.disabled = true;
+
+        // Save HTML version and show View/Download buttons
+        saveHTMLAndShowButtons();
+
+        // Restore button state
+        saveButton.textContent = originalText;
+        saveButton.disabled = false;
+      }
+
+      function saveHTMLAndShowButtons() {
+        // Get the current HTML content
+        const htmlContent = document.documentElement.outerHTML;
+
+        fetch(`/save_html/{{ filename }}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            html_content: htmlContent,
+            session_id: sessionId,
+          }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.status === "success") {
+              savedHtmlFilename = data.html_filename;
+              document.getElementById("viewPdfBtn").style.display =
+                "inline-block";
+              // Don't show download button yet - only after user clicks View
+            } else {
+              showNotification("Error saving document: " + data.message, true);
+            }
+          })
+          .catch((error) => {
+            showNotification("Error saving document: " + error, true);
+          });
+      }
+
+      function viewPDF() {
+        console.log("=== VIEW PDF CALLED ===");
+        console.log("savedHtmlFilename:", savedHtmlFilename);
+
+        if (savedHtmlFilename) {
+          console.log("Calling showPDFModal()");
+          showPDFModal();
+          // Don't show download button in preview mode
+          // document.getElementById("downloadPdfBtn").style.display =
+          //   "inline-block";
+          console.log("Download button hidden in preview mode");
+        } else {
+          console.log("No saved HTML filename, showing notification");
+          showNotification("Please save your document first!", true);
+        }
+
+        console.log("=== END VIEW PDF ===");
+      }
+
+      function showPDFModal() {
+        console.log("=== SHOWING PDF MODAL ===");
+
+        const modal = document.createElement("div");
+        modal.className = "pdf-modal";
+        modal.innerHTML = `
+          <div class="pdf-modal-overlay" onclick="closePDFModal()">
+            <div class="pdf-modal-content" onclick="event.stopPropagation()">
+              <div class="pdf-modal-header">
+                <h3>PDF Preview</h3>
+                <button onclick="closePDFModal()" class="pdf-modal-close">&times;</button>
+              </div>
+              <div class="pdf-modal-body">
+                <iframe src="/view_html/${savedHtmlFilename}" class="pdf-modal-iframe" onload="hideIframeToolbar(this)"></iframe>
+              </div>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(modal);
+        console.log("Modal added to DOM");
+
+        const saveButton = document.querySelector(".actions .btn.primary");
+        const newButton = document.querySelector(".actions .btn.tertiary");
+
+        console.log("Save button found:", saveButton);
+        console.log("New button found:", newButton);
+
+        if (saveButton) {
+          console.log("Save button current display:", saveButton.style.display);
+          console.log(
+            "Save button computed display:",
+            window.getComputedStyle(saveButton).display
+          );
+          saveButton.style.setProperty("display", "none", "important");
+          console.log("Save button display set to:", saveButton.style.display);
+          console.log(
+            "Save button computed display after: ",
+            window.getComputedStyle(saveButton).display
+          );
+        } else {
+          console.log("Save button NOT FOUND!");
+        }
+
+        if (newButton) {
+          console.log("New button current display:", newButton.style.display);
+          console.log(
+            "New button computed display:",
+            window.getComputedStyle(newButton).display
+          );
+          newButton.style.setProperty("display", "none", "important");
+          console.log("New button display set to:", newButton.style.display);
+          console.log(
+            "New button computed display after: ",
+            window.getComputedStyle(newButton).display
+          );
+        } else {
+          console.log("New button NOT FOUND!");
+        }
+
+        console.log("=== END SHOWING PDF MODAL ===");
+      }
+
+      function closePDFModal() {
+        console.log("=== CLOSING PDF MODAL ===");
+
+        const modal = document.querySelector(".pdf-modal");
+        if (modal) {
+          modal.remove();
+          console.log("Modal removed from DOM");
+        } else {
+          console.log("Modal NOT FOUND for removal!");
+        }
+
+        const saveButton = document.querySelector(".actions .btn.primary");
+        const newButton = document.querySelector(".actions .btn.tertiary");
+
+        console.log("Save button found for restore:", saveButton);
+        console.log("New button found for restore:", newButton);
+
+        if (saveButton) {
+          console.log(
+            "Save button current display before restore:",
+            saveButton.style.display
+          );
+          saveButton.style.setProperty("display", "inline-block", "important");
+          console.log(
+            "Save button display restored to:",
+            saveButton.style.display
+          );
+          console.log(
+            "Save button computed display after restore: ",
+            window.getComputedStyle(saveButton).display
+          );
+        } else {
+          console.log("Save button NOT FOUND for restore!");
+        }
+
+        if (newButton) {
+          console.log(
+            "New button current display before restore:",
+            newButton.style.display
+          );
+          newButton.style.setProperty("display", "inline-block", "important");
+          console.log(
+            "New button display restored to:",
+            newButton.style.display
+          );
+          console.log(
+            "New button computed display after restore: ",
+            window.getComputedStyle(newButton).display
+          );
+        } else {
+          console.log("New button NOT FOUND for restore!");
+        }
+
+        console.log("=== END CLOSING PDF MODAL ===");
+      }
+
+      function hideIframeToolbar(iframe) {
+        console.log("=== HIDING SPECIFIC IFRAME BUTTONS ===");
+        try {
+          const iframeDoc =
+            iframe.contentDocument || iframe.contentWindow.document;
+          if (iframeDoc) {
+            const saveButton = iframeDoc.querySelector(".actions .btn.primary");
+            const newButton = iframeDoc.querySelector(".actions .btn.tertiary");
+
+            console.log("Save button found in iframe:", saveButton);
+            console.log("New button found in iframe:", newButton);
+
+            if (saveButton) {
+              saveButton.style.setProperty("display", "none", "important");
+              console.log("Save button hidden in iframe");
+            } else {
+              console.log("Save button not found in iframe");
+            }
+
+            if (newButton) {
+              newButton.style.setProperty("display", "none", "important");
+              console.log("New button hidden in iframe");
+            } else {
+              console.log("New button not found in iframe");
+            }
+          } else {
+            console.log("Cannot access iframe document");
+          }
+        } catch (error) {
+          console.log("Error accessing iframe:", error);
+        }
+        console.log("=== END HIDING SPECIFIC IFRAME BUTTONS ===");
+      }
+
+      function showPaymentPrompt() {
+        // Use the existing monetization modal system
+        window.parent.postMessage(
+          {
+            type: "OPEN_MONETIZATION_MODAL",
+            fileName: "{{ filename }}",
+            fileType: "PDF",
+            downloadUrl: "#",
+          },
+          "*"
+        );
+      }
+
+      // Add document click listener for debugging
+      document.addEventListener("click", function (e) {
+        console.log("🖱️ Document clicked - target:", e.target);
+        console.log("🖱️ Document clicked - currentEditType:", currentEditType);
+        console.log(
+          "🖱️ Document clicked - overlays:",
+          document.querySelectorAll(".interactive-overlay").length
+        );
+      });
+
+      // Listen for messages from parent (React component)
+      window.addEventListener("message", function (event) {
+        console.log("📨 Iframe received message:", event.data);
+
+        if (event.data.type === "SET_EDIT_MODE") {
+          console.log("🎯 Setting edit mode to:", event.data.mode);
+          console.log("🎯 Previous edit type:", currentEditType);
+          currentEditType = event.data.mode;
+          console.log("🎯 New edit type set:", currentEditType);
+          console.log("🎯 Is sign mode:", currentEditType === "sign");
+
+          // Get overlays first
+          const overlays = document.querySelectorAll(".interactive-overlay");
+          console.log("🎯 Found overlays:", overlays.length);
+
+          // Immediately create element when tool is selected
+          if (event.data.mode === "text") {
+            console.log("📝 Creating text element immediately");
+            createTextElementImmediately();
+            // Disable overlays after creating element to prevent multiple creation
+            overlays.forEach((overlay, index) => {
+              overlay.style.pointerEvents = "none";
+              overlay.style.zIndex = "1";
+              console.log(`🎯 Overlay ${index} disabled after text creation`);
+            });
+          } else if (event.data.mode === "sign") {
+            console.log("✍️ Creating signature element immediately");
+            createSignatureElementImmediately();
+            // Disable overlays after creating element
+            overlays.forEach((overlay, index) => {
+              overlay.style.pointerEvents = "none";
+              overlay.style.zIndex = "1";
+              console.log(
+                `🎯 Overlay ${index} disabled after signature creation`
+              );
+            });
+          } else if (event.data.mode === "image") {
+            // COMMENTED OUT: Image functionality temporarily disabled
+            console.log("🖼️ Image tool disabled - functionality commented out");
+            // createImageElementImmediately();
+            // // Disable overlays after creating element
+            // overlays.forEach((overlay, index) => {
+            //   overlay.style.pointerEvents = "none";
+            //   overlay.style.zIndex = "1";
+            //   console.log(`🎯 Overlay ${index} disabled after image creation`);
+            // });
+          } else {
+            // For other modes, enable/disable overlays as needed
+            overlays.forEach((overlay, index) => {
+              if (
+                event.data.mode === "text" ||
+                event.data.mode === "sign"
+                // COMMENTED OUT: event.data.mode === "image"
+              ) {
+                overlay.style.pointerEvents = "auto";
+                overlay.style.zIndex = "10";
+                console.log(
+                  `🎯 Overlay ${index} enabled for ${event.data.mode} mode`
+                );
+              } else {
+                overlay.style.pointerEvents = "none";
+                overlay.style.zIndex = "1";
+                console.log(
+                  `🎯 Overlay ${index} disabled for ${event.data.mode} mode`
+                );
+              }
+            });
+          }
+
+          // Send confirmation back to parent
+          window.parent.postMessage(
+            {
+              type: "EDIT_MODE_SET",
+              mode: event.data.mode,
+            },
+            "*"
+          );
+        } else if (event.data.type === "CHANGE_PAGE") {
+          console.log("📄 Changing to page:", event.data.pageNumber);
+          // Hide current page
+          document.getElementById(`page-${currentPage}`).style.display = "none";
+          // Show new page
+          currentPage = event.data.pageNumber;
+          document.getElementById(`page-${currentPage}`).style.display =
+            "block";
+          console.log("📄 Now showing page:", currentPage);
+        } else if (
+          event.data.type === "GENERATE_PDF" ||
+          event.data.type === "GENERATE_AND_DOWNLOAD_PDF" ||
+          event.data.type === "GENERATE_PDF_FOR_PREVIEW"
+        ) {
+          // Prevent duplicate execution
+          if (isGeneratingPDF) {
+            console.log(
+              "PDF generation already in progress, ignoring duplicate message"
+            );
+            return;
+          }
+
+          console.log(
+            `Received ${event.data.type} message, starting PDF generation...`
+          );
+
+          // Determine if this is for preview or download
+          const isPreview = event.data.type === "GENERATE_PDF_FOR_PREVIEW";
+          generatePDF(isPreview);
+        } else if (event.data.type === "CONFIGURE_SIGNATURE_MODAL") {
+          console.log("✍️ Configuring signature modal behavior:", event.data);
+          // Set a flag to control signature modal behavior
+          window.signatureModalConfigured = true;
+          window.signatureModalShowOnce = event.data.showOnce || false;
+          // Reset the used flag when configuring for a new signature
+          window.signatureModalUsed = false;
+        } else if (event.data.type === "UNDO") {
+          console.log("↶ Undo button clicked");
+          performUndo();
+        } else if (event.data.type === "REDO") {
+          console.log("↷ Redo button clicked");
+          performRedo();
+        } else {
+          console.log("❓ Unknown message type in iframe:", event.data.type);
+        }
+      });
+
+      async function downloadPDF() {
+        if (!savedHtmlFilename) {
+          showNotification("Please save your document first!", true);
+          return;
+        }
+
+        // Show monetization modal first
+        showPaymentPrompt();
+      }
+
+      async function generatePDF(isPreview = false) {
+        // Prevent duplicate execution
+        if (isGeneratingPDF) {
+          console.log(
+            "PDF generation already in progress, skipping duplicate call"
+          );
+          return;
+        }
+
+        isGeneratingPDF = true;
+
+        // Declare variables outside try block so they're accessible in catch
+        let pagesToProcess = [];
+        let originalDisplays = [];
+        let originalZoom = currentZoom;
+
+        try {
+          // Only update download button if not in preview mode
+          let downloadBtn = null;
+          let originalText = "";
+          if (!isPreview) {
+            downloadBtn = document.getElementById("downloadPdfBtn");
+            if (!downloadBtn) {
+              throw new Error("Download button not found");
+            }
+            originalText = downloadBtn.textContent;
+            downloadBtn.textContent = "Generating...";
+            downloadBtn.disabled = true;
+          }
+
+          // Reset zoom to 100% for consistent PDF generation
+          originalZoom = currentZoom;
+          changeZoom(1);
+
+          // Wait a moment for zoom change to take effect
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // Use only the actual PDF pages (not nested elements)
+          const totalPages = parseInt("4");
+          pagesToProcess = [];
+          originalDisplays = [];
+
+          // Get only the main page containers
+          for (let i = 1; i <= totalPages; i++) {
+            const page = document.getElementById(`page-${i}`);
+            if (page) {
+              originalDisplays[i - 1] = page.style.display;
+              page.style.display = "block";
+              pagesToProcess.push(page);
+            }
+          }
+
+          // Wait for all pages to be visible
+          await new Promise((resolve) => setTimeout(resolve, 200));
+
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF("p", "mm", "a4");
+
+          for (let i = 0; i < pagesToProcess.length; i++) {
+            const page = pagesToProcess[i];
+
+            // Capture the page as canvas
+            const canvas = await html2canvas(page, {
+              scale: 2, // Higher quality
+              useCORS: true,
+              allowTaint: true,
+              backgroundColor: "#ffffff",
+              width: page.offsetWidth,
+              height: page.offsetHeight,
+            });
+
+            // Convert canvas to image
+            const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+            // Calculate dimensions to fit A4 page
+            const imgWidth = 210; // A4 width in mm
+            const pageHeight = 297; // A4 height in mm
+            const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+            // Add new page if not the first page
+            if (i > 0) {
+              pdf.addPage();
+            }
+
+            // Add image to PDF
+            pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, imgHeight);
+          }
+
+          // Restore original page visibility
+          pagesToProcess.forEach((page, index) => {
+            page.style.display = originalDisplays[index];
+          });
+
+          // Restore original zoom
+          changeZoom(originalZoom);
+
+          // Generate filename
+          const timestamp = new Date()
+            .toISOString()
+            .replace(/[:.]/g, "-")
+            .slice(0, 19);
+          const filename = `edited_document_${timestamp}.pdf`;
+
+          if (isPreview) {
+            // Generate PDF for preview
+            console.log("Generating PDF for preview:", filename);
+
+            const pdfBlob = pdf.output("blob");
+            const url = URL.createObjectURL(pdfBlob);
+
+            // Send the PDF URL to the parent component
+            window.parent.postMessage(
+              {
+                type: "PDF_GENERATED_FOR_PREVIEW",
+                pdfUrl: url,
+                filename: filename,
+              },
+              "*"
+            );
+
+            console.log("PDF generated for preview successfully");
+            showNotification("PDF generated for preview!", false);
+          } else {
+            // Download the PDF
+            console.log("About to save PDF:", filename);
+
+            // Try to force download dialog by creating blob and download link
+            const pdfBlob = pdf.output("blob");
+            const url = URL.createObjectURL(pdfBlob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            link.style.display = "none";
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+
+            console.log("PDF download triggered successfully");
+
+            showNotification("PDF downloaded successfully!", false);
+          }
+        } catch (error) {
+          console.error("Error generating PDF:", error);
+          showNotification("Error generating PDF: " + error.message, true);
+
+          // Restore original page visibility on error
+          if (pagesToProcess) {
+            pagesToProcess.forEach((page, index) => {
+              page.style.display = originalDisplays[index];
+            });
+          }
+
+          // Restore original zoom on error
+          changeZoom(originalZoom);
+        } finally {
+          // Always restore button state and clear generation flag
+          if (!isPreview) {
+            const downloadBtn = document.getElementById("downloadPdfBtn");
+            if (downloadBtn) {
+              downloadBtn.textContent = "Download";
+              downloadBtn.disabled = false;
+            }
+          }
+          isGeneratingPDF = false;
+        }
+      }
+
+      // Function to make elements draggable
+      function makeElementDraggable(element) {
+        let isDragging = false;
+        let startX, startY, initialX, initialY;
+
+        // Initialize click counter for this element if not exists
+        if (!element.clickCount) {
+          element.clickCount = 0;
+        }
+
+        // Check if element already has drag handles (text elements with toolbars)
+        const hasDragHandles = element.querySelector(
+          '.text-formatting-toolbar .toolbar-control[title="Drag to move"]'
+        );
+        if (hasDragHandles) {
+          console.log(
+            "📊 Element has drag handles - skipping makeElementDraggable"
+          );
+          return;
+        }
+
+        element.addEventListener("mousedown", function (e) {
+          element.clickCount++;
+          console.log("🖱️ Element mousedown - makeElementDraggable");
+          console.log("📊 Element click count:", element.clickCount);
+          console.log("📊 Element class:", element.className);
+          console.log("📊 Target class:", e.target.className);
+
+          // Check if already dragging globally
+          if (window.isDragging) {
+            console.log("🖱️ Already dragging globally, ignoring mousedown");
+            console.log("📊 Drag blocked - global drag in progress");
+            return;
+          }
+
+          // Check if currently resizing
+          if (window.isResizing) {
+            console.log("🔧 Currently resizing, ignoring mousedown");
+            console.log("📊 Drag blocked - resize in progress");
+            return;
+          }
+
+          // Check if clicking on resize handle or its children
+          if (
+            e.target.classList.contains("resize-handle") ||
+            e.target.closest(".resize-handle")
+          ) {
+            console.log("🔧 Clicked on resize handle - preventing drag");
+            return;
+          }
+
+          // Don't drag when clicking on delete button
+          if (e.target.classList.contains("element-delete-btn")) {
+            return;
+          }
+
+          // Don't drag when clicking on text element itself (for editing)
+          if (e.target.classList.contains("text-element")) {
+            console.log(
+              "📝 Clicked on text element - allowing edit, preventing drag"
+            );
+            return;
+          }
+
+          // Don't drag when clicking on signature element itself (for editing)
+          if (e.target.classList.contains("signature-element")) {
+            console.log(
+              "✍️ Clicked on signature element - allowing edit, preventing drag"
+            );
+            return;
+          }
+
+          // Don't drag when a tool is still active, UNLESS it's an empty text element or drag handle
+          if (
+            currentEditType === "text" ||
+            currentEditType === "sign"
+            // COMMENTED OUT: currentEditType === "image"
+          ) {
+            // Allow dragging if clicking on drag handle
+            if (
+              e.target.innerHTML === "✋" &&
+              e.target.title === "Drag to move"
+            ) {
+              console.log(
+                "🖱️ Drag handle clicked - allowing drag even with active tool"
+              );
+            }
+            // Allow dragging if it's an empty text element
+            else if (e.target.classList.contains("text-element")) {
+              const textElement = e.target;
+              if (!textElement.value || textElement.value.trim() === "") {
+                console.log(
+                  "📝 Empty text element - allowing drag even with active tool"
+                );
+              } else {
+                console.log(
+                  "🚫 Tool is active and text has content - preventing drag"
+                );
+                return;
+              }
+            }
+            // Allow dragging if it's a signature element (signatures can always be moved)
+            else if (e.target.classList.contains("signature-element")) {
+              console.log(
+                "✍️ Signature element - allowing drag even with active tool"
+              );
+            } else {
+              console.log(
+                "🚫 Tool is active - preventing drag to avoid creating new elements"
+              );
+              return;
+            }
+          }
+
+          // Allow dragging when clicking on drag handle in toolbar, container, or any part of the element
+          // (but not the text content or delete button)
+          console.log("🖱️ Mouse down on element, target:", e.target.className);
+
+          // Check if clicking on drag handle in toolbar
+          if (
+            e.target.innerHTML === "✋" &&
+            e.target.title === "Drag to move"
+          ) {
+            console.log("🖱️ Drag handle in toolbar clicked");
+          }
+
+          isDragging = true;
+          startX = e.clientX;
+          startY = e.clientY;
+          console.log("📊 Drag started - makeElementDraggable");
+          console.log("📊 Start position:", startX, startY);
+
+          // Get current position relative to overlay
+          const overlay = element.closest(".interactive-overlay");
+          if (overlay) {
+            const overlayRect = overlay.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+
+            initialX = elementRect.left - overlayRect.left;
+            initialY = elementRect.top - overlayRect.top;
+          } else {
+            initialX = parseInt(element.style.left) || 0;
+            initialY = parseInt(element.style.top) || 0;
+          }
+
+          element.style.cursor = "grabbing";
+          element.style.zIndex = "1000";
+          element.classList.add("dragging");
+
+          console.log("🖱️ Started dragging element");
+          console.log("🖱️ Start position:", startX, startY);
+          console.log("🖱️ Initial position:", initialX, initialY);
+          window.isDragging = true;
+
+          // Add visual feedback for dragging
+          element.style.cursor = "grabbing";
+          element.style.opacity = "0.9";
+          element.style.boxShadow = "0 4px 12px rgba(0, 0, 0, 0.25)";
+
+          e.preventDefault();
+        });
+
+        document.addEventListener("mousemove", function (e) {
+          if (!isDragging || window.isResizing) return;
+
+          const deltaX = e.clientX - startX;
+          const deltaY = e.clientY - startY;
+
+          console.log("🖱️ Mouse move - deltaX:", deltaX, "deltaY:", deltaY);
+          console.log("📊 Element click count:", element.clickCount);
+          console.log("📊 Current mouse position:", e.clientX, e.clientY);
+
+          // Get overlay bounds to keep element within view
+          const overlay = element.closest(".interactive-overlay");
+          if (overlay) {
+            const overlayRect = overlay.getBoundingClientRect();
+
+            // Calculate new position relative to overlay
+            let newX = initialX + deltaX;
+            let newY = initialY + deltaY;
+
+            // Keep element within overlay bounds
+            const elementWidth = element.offsetWidth;
+            const elementHeight = element.offsetHeight;
+
+            newX = Math.max(
+              0,
+              Math.min(newX, overlayRect.width - elementWidth)
+            );
+            newY = Math.max(
+              0,
+              Math.min(newY, overlayRect.height - elementHeight)
+            );
+
+            element.style.left = newX + "px";
+            element.style.top = newY + "px";
+          }
+
+          // Add some visual feedback during drag
+          element.style.opacity = "0.8";
+        });
+
+        document.addEventListener("mouseup", function () {
+          if (isDragging && !window.isResizing) {
+            isDragging = false;
+            window.isDragging = false;
+            element.style.cursor = "grab";
+            element.style.zIndex = "20";
+            element.style.opacity = "1";
+            element.style.transform = "scale(1)";
+            element.style.boxShadow = "none";
+            element.classList.remove("dragging");
+            console.log("🖱️ Finished dragging element");
+            console.log("📊 Element click count:", element.clickCount);
+            console.log("📊 Drag session completed - makeElementDraggable");
+          }
+        });
+      }
+
+      // Function to show text edit toolbar
+      function showTextEditToolbar(textElement, textContainer) {
+        // Add editing class to show resize handles
+        textContainer.classList.add("editing");
+
+        // Remove existing toolbar if any
+        const existingToolbar = textContainer.querySelector(
+          ".text-formatting-toolbar"
+        );
+        if (existingToolbar) {
+          existingToolbar.remove();
+        }
+
+        // Create new toolbar
+        const toolbar = document.createElement("div");
+        toolbar.className = "text-formatting-toolbar";
+        toolbar.style.position = "absolute";
+        toolbar.style.top = "-35px";
+        toolbar.style.left = "0";
+        toolbar.style.zIndex = "100";
+
+        // Create font family select
+        const fontSelect = document.createElement("select");
+        fontSelect.innerHTML = `
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Verdana">Verdana</option>
+        `;
+        fontSelect.value = textElement.style.fontFamily || "Arial";
+
+        // Create font size select
+        const sizeSelect = document.createElement("select");
+        sizeSelect.innerHTML = `
+          <option value="10">10px</option>
+          <option value="12">12px</option>
+          <option value="14">14px</option>
+          <option value="16">16px</option>
+          <option value="18">18px</option>
+          <option value="20">20px</option>
+          <option value="24">24px</option>
+        `;
+        sizeSelect.value = parseInt(textElement.style.fontSize) || 14;
+
+        // Create color input
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = textElement.style.color || "#000000";
+        colorInput.style.width = "30px";
+        colorInput.style.height = "20px";
+
+        // Create bold button
+        const boldButton = document.createElement("button");
+        boldButton.innerHTML = "B";
+        boldButton.style.fontWeight = "bold";
+        if (textElement.style.fontWeight === "bold") {
+          boldButton.style.backgroundColor = "#007bff";
+          boldButton.style.color = "white";
+        }
+
+        // Create italic button
+        const italicButton = document.createElement("button");
+        italicButton.innerHTML = "I";
+        italicButton.style.fontStyle = "italic";
+        if (textElement.style.fontStyle === "italic") {
+          italicButton.style.backgroundColor = "#007bff";
+          italicButton.style.color = "white";
+        }
+
+        // Create done button
+        const doneButton = document.createElement("button");
+        doneButton.innerHTML = "✓";
+        doneButton.style.background = "#007bff";
+        doneButton.style.color = "white";
+
+        // Add event listeners to prevent drag handle from firing
+        doneButton.addEventListener("mousedown", function (e) {
+          console.log(
+            "📊 Edit toolbar Done button mousedown - preventing drag"
+          );
+          e.stopPropagation();
+        });
+
+        doneButton.addEventListener("click", function (e) {
+          console.log("📊 Edit toolbar Done button click - preventing drag");
+          e.stopPropagation();
+        });
+
+        // Create drag handle for edit toolbar
+        const dragHandle = document.createElement("button");
+        dragHandle.className = "toolbar-control";
+        dragHandle.innerHTML = "✋";
+        dragHandle.title = "Drag to move";
+        dragHandle.style.backgroundColor = "#007bff";
+        dragHandle.style.color = "white";
+        console.log("✅ Created drag handle for edit toolbar");
+
+        // Add drag functionality to the drag handle
+        dragHandle.addEventListener("mousedown", function (e) {
+          // Initialize click counter for this element if not exists
+          if (!textContainer.clickCount) {
+            textContainer.clickCount = 0;
+          }
+          textContainer.clickCount++;
+
+          console.log("🖱️ Drag handle in edit toolbar clicked");
+          console.log("📊 Element click count:", textContainer.clickCount);
+          console.log("📊 Element ID:", textContainer.id || "no-id");
+          console.log("📊 Current drag state:", window.isDragging);
+          console.log(
+            "📊 Active drag handlers:",
+            window.currentDragHandlers ? "exists" : "none"
+          );
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Check if already dragging
+          if (window.isDragging) {
+            console.log("🖱️ Already dragging, ignoring new drag start");
+            console.log("📊 Drag blocked - already in progress");
+            return;
+          }
+
+          // Check if clicking on Done button
+          if (
+            e.target.innerHTML === "✓" &&
+            e.target.style.background === "rgb(0, 123, 255)"
+          ) {
+            console.log("📊 Clicked on Done button - ignoring drag handle");
+            return;
+          }
+
+          // Set global dragging flag
+          window.isDragging = true;
+          console.log("📊 Drag started - global flag set to true");
+
+          // Remove any existing drag listeners first
+          if (window.currentDragHandlers) {
+            console.log("📊 Cleaning up existing drag handlers");
+            document.removeEventListener(
+              "mousemove",
+              window.currentDragHandlers.move
+            );
+            document.removeEventListener(
+              "mouseup",
+              window.currentDragHandlers.up
+            );
+          } else {
+            console.log("📊 No existing drag handlers to clean up");
+          }
+
+          // Directly trigger drag functionality
+          const container = textContainer;
+          let startX = e.clientX;
+          let startY = e.clientY;
+
+          // Get current position relative to overlay
+          const overlay = container.closest(".interactive-overlay");
+          let initialX, initialY;
+
+          if (overlay) {
+            const overlayRect = overlay.getBoundingClientRect();
+            const elementRect = container.getBoundingClientRect();
+
+            initialX = elementRect.left - overlayRect.left;
+            initialY = elementRect.top - overlayRect.top;
+          } else {
+            initialX = parseInt(container.style.left) || 0;
+            initialY = parseInt(container.style.top) || 0;
+          }
+
+          container.style.cursor = "grabbing";
+          container.style.zIndex = "1000";
+          container.classList.add("dragging");
+
+          console.log("🖱️ Started dragging from edit toolbar drag handle");
+
+          function handleMouseMove(e) {
+            if (!window.isDragging || window.isResizing) return;
+
+            console.log("🖱️ Mouse move during drag");
+            console.log("📊 Element click count:", textContainer.clickCount);
+            console.log("📊 Mouse position:", e.clientX, e.clientY);
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            console.log("📊 Delta movement:", deltaX, deltaY);
+
+            if (overlay) {
+              const overlayRect = overlay.getBoundingClientRect();
+
+              let newX = initialX + deltaX;
+              let newY = initialY + deltaY;
+
+              const elementWidth = container.offsetWidth;
+              const elementHeight = container.offsetHeight;
+
+              newX = Math.max(
+                0,
+                Math.min(newX, overlayRect.width - elementWidth)
+              );
+              newY = Math.max(
+                0,
+                Math.min(newY, overlayRect.height - elementHeight)
+              );
+
+              container.style.left = newX + "px";
+              container.style.top = newY + "px";
+            }
+          }
+
+          function handleMouseUp(e) {
+            console.log(
+              "🖱️ Mouse up on edit toolbar drag handle - stopping drag"
+            );
+            console.log("📊 Element click count:", textContainer.clickCount);
+            console.log("📊 Edit toolbar drag session completed for element");
+
+            // Only process if we're actually dragging
+            if (!window.isDragging) {
+              console.log("📊 Not dragging, ignoring mouse up");
+              return;
+            }
+
+            window.isDragging = false;
+            container.style.cursor = "grab";
+            container.style.zIndex = "20";
+            container.classList.remove("dragging");
+
+            // Remove event listeners
+            document.removeEventListener("mousemove", handleMouseMove, true);
+            document.removeEventListener("mouseup", handleMouseUp, true);
+
+            // Remove global mouse up handler
+            if (window.globalMouseUpHandler) {
+              document.removeEventListener(
+                "mouseup",
+                window.globalMouseUpHandler,
+                false
+              );
+              window.globalMouseUpHandler = null;
+            }
+
+            // Clear global handlers
+            window.currentDragHandlers = null;
+            console.log("📊 Global drag handlers cleared");
+
+            e.preventDefault();
+            e.stopPropagation();
+          }
+
+          // Store handlers globally to prevent conflicts
+          window.currentDragHandlers = {
+            move: handleMouseMove,
+            up: handleMouseUp,
+          };
+
+          // Add event listeners with capture to ensure they're triggered
+          document.addEventListener("mousemove", handleMouseMove, true);
+          document.addEventListener("mouseup", handleMouseUp, true);
+
+          // Add global mouse up handler as backup
+          const globalMouseUp = function (e) {
+            if (window.isDragging) {
+              console.log("🖱️ Global mouse up - stopping drag");
+              handleMouseUp(e);
+            }
+          };
+          window.globalMouseUpHandler = globalMouseUp;
+          document.addEventListener("mouseup", globalMouseUp, false);
+        });
+
+        // Apply formatting function
+        const applyFormatting = () => {
+          textElement.style.fontFamily = fontSelect.value;
+          textElement.style.fontSize = sizeSelect.value + "px";
+          textElement.style.color = colorInput.value;
+        };
+
+        // Event listeners
+        fontSelect.addEventListener("change", applyFormatting);
+        sizeSelect.addEventListener("change", applyFormatting);
+        colorInput.addEventListener("change", applyFormatting);
+
+        boldButton.addEventListener("click", () => {
+          textElement.style.fontWeight =
+            textElement.style.fontWeight === "bold" ? "normal" : "bold";
+          boldButton.style.backgroundColor =
+            textElement.style.fontWeight === "bold" ? "#007bff" : "";
+          boldButton.style.color =
+            textElement.style.fontWeight === "bold" ? "white" : "";
+        });
+
+        italicButton.addEventListener("click", () => {
+          textElement.style.fontStyle =
+            textElement.style.fontStyle === "italic" ? "normal" : "italic";
+          italicButton.style.backgroundColor =
+            textElement.style.fontStyle === "italic" ? "#007bff" : "";
+          italicButton.style.color =
+            textElement.style.fontStyle === "italic" ? "white" : "";
+        });
+
+        doneButton.addEventListener("click", () => {
+          // Reset all drag-related state immediately
+          window.isDragging = false;
+          currentEditType = "select";
+
+          // Remove any active drag classes
+          textContainer.classList.remove("dragging");
+          textContainer.style.cursor = "grab";
+          textContainer.style.zIndex = "20";
+          textContainer.style.opacity = "1";
+          textContainer.style.transform = "scale(1)";
+          textContainer.style.boxShadow = "none";
+
+          toolbar.remove();
+          textElement.readOnly = true;
+          textElement.style.border = "none";
+          textElement.style.background = "transparent";
+          // Remove editing class to hide resize handles
+          textContainer.classList.remove("editing");
+
+          console.log("✅ Tool deactivated after Done button click");
+        });
+
+        // Prevent toolbar clicks from bubbling
+        toolbar.addEventListener("click", function (e) {
+          e.stopPropagation();
+        });
+
+        [
+          fontSelect,
+          sizeSelect,
+          colorInput,
+          boldButton,
+          italicButton,
+          dragHandle,
+          doneButton,
+        ].forEach((control) => {
+          control.addEventListener("click", function (e) {
+            e.stopPropagation();
+          });
+        });
+
+        // Assemble toolbar
+        toolbar.appendChild(fontSelect);
+        toolbar.appendChild(sizeSelect);
+        toolbar.appendChild(colorInput);
+        toolbar.appendChild(boldButton);
+        toolbar.appendChild(italicButton);
+        toolbar.appendChild(dragHandle);
+        toolbar.appendChild(doneButton);
+
+        // Insert toolbar before text element
+        textContainer.insertBefore(toolbar, textElement);
+
+        // Make text editable
+        textElement.readOnly = false;
+        textElement.style.border = "1px solid #007bff";
+        textElement.style.background = "rgba(0, 123, 255, 0.1)";
+        textElement.focus();
+        textElement.select();
+      }
+
+      // Function to add text element
+      function addTextElement(e, overlay) {
+        console.log("📝 Adding text element...");
+        console.log("📝 Click event:", e);
+        console.log("📝 Overlay element:", overlay);
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        console.log("📝 Click position - x:", x, "y:", y);
+        console.log("📝 Overlay rect:", rect);
+
+        // Create text element container
+        const textContainer = document.createElement("div");
+        textContainer.className = "element-container";
+        textContainer.style.position = "absolute";
+        textContainer.style.left = x + "px";
+        textContainer.style.top = y + "px";
+        textContainer.style.zIndex = "20";
+        console.log("📝 Created text container at position:", x, y);
+
+        // Create formatting toolbar
+        const toolbar = document.createElement("div");
+        toolbar.className = "text-formatting-toolbar";
+
+        // Font family selector
+        const fontSelect = document.createElement("select");
+        fontSelect.innerHTML = `
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+          <option value="Helvetica">Helvetica</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Verdana">Verdana</option>
+          <option value="Courier New">Courier New</option>
+          <option value="Comic Sans MS">Comic Sans MS</option>
+        `;
+        console.log("🎨 Created font select dropdown");
+
+        // Font size selector
+        const sizeSelect = document.createElement("select");
+        sizeSelect.innerHTML = `
+          <option value="10">10px</option>
+          <option value="12">12px</option>
+          <option value="14" selected>14px</option>
+          <option value="16">16px</option>
+          <option value="18">18px</option>
+          <option value="20">20px</option>
+          <option value="24">24px</option>
+          <option value="28">28px</option>
+          <option value="32">32px</option>
+        `;
+
+        // Color picker
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = "#000000";
+        colorInput.style.width = "30px";
+        colorInput.style.height = "20px";
+
+        // Bold button
+        const boldButton = document.createElement("button");
+        boldButton.innerHTML = "B";
+        boldButton.style.fontWeight = "bold";
+
+        // Italic button
+        const italicButton = document.createElement("button");
+        italicButton.innerHTML = "I";
+        italicButton.style.fontStyle = "italic";
+
+        // Done button
+        const doneButton = document.createElement("button");
+        doneButton.innerHTML = "✓";
+        doneButton.style.background = "#007bff";
+
+        // Add event listeners to prevent drag handle from firing
+        doneButton.addEventListener("mousedown", function (e) {
+          console.log("📊 Done button mousedown - preventing drag");
+          e.stopPropagation();
+        });
+
+        doneButton.addEventListener("click", function (e) {
+          console.log("📊 Done button click - preventing drag");
+          e.stopPropagation();
+        });
+
+        console.log("✅ Created done button");
+
+        // Create drag handle for toolbar
+        const dragHandle = document.createElement("button");
+        dragHandle.className = "toolbar-control";
+        dragHandle.innerHTML = "✋";
+        dragHandle.title = "Drag to move";
+        dragHandle.style.backgroundColor = "#007bff";
+        dragHandle.style.color = "white";
+        console.log("✅ Created drag handle for toolbar");
+
+        // Add drag functionality to the drag handle
+        dragHandle.addEventListener("mousedown", function (e) {
+          // Initialize click counter for this element if not exists
+          if (!textContainer.clickCount) {
+            textContainer.clickCount = 0;
+          }
+          textContainer.clickCount++;
+
+          console.log("🖱️ Drag handle in toolbar clicked");
+          console.log("📊 Element click count:", textContainer.clickCount);
+          console.log("📊 Element ID:", textContainer.id || "no-id");
+          console.log("📊 Current drag state:", window.isDragging);
+          console.log(
+            "📊 Active drag handlers:",
+            window.currentDragHandlers ? "exists" : "none"
+          );
+
+          e.preventDefault();
+          e.stopPropagation();
+
+          // Check if already dragging
+          if (window.isDragging) {
+            console.log("🖱️ Already dragging, ignoring new drag start");
+            console.log("📊 Drag blocked - already in progress");
+            return;
+          }
+
+          // Check if clicking on Done button
+          if (
+            e.target.innerHTML === "✓" &&
+            e.target.style.background === "rgb(0, 123, 255)"
+          ) {
+            console.log("📊 Clicked on Done button - ignoring drag handle");
+            return;
+          }
+
+          // Set global dragging flag
+          window.isDragging = true;
+          console.log("📊 Drag started - global flag set to true");
+
+          // Remove any existing drag listeners first
+          if (window.currentDragHandlers) {
+            console.log("📊 Cleaning up existing drag handlers");
+            document.removeEventListener(
+              "mousemove",
+              window.currentDragHandlers.move
+            );
+            document.removeEventListener(
+              "mouseup",
+              window.currentDragHandlers.up
+            );
+          } else {
+            console.log("📊 No existing drag handlers to clean up");
+          }
+
+          // Directly trigger drag functionality
+          const container = textContainer;
+          let startX = e.clientX;
+          let startY = e.clientY;
+
+          // Get current position relative to overlay
+          const overlay = container.closest(".interactive-overlay");
+          let initialX, initialY;
+
+          if (overlay) {
+            const overlayRect = overlay.getBoundingClientRect();
+            const elementRect = container.getBoundingClientRect();
+
+            initialX = elementRect.left - overlayRect.left;
+            initialY = elementRect.top - overlayRect.top;
+          } else {
+            initialX = parseInt(container.style.left) || 0;
+            initialY = parseInt(container.style.top) || 0;
+          }
+
+          container.style.cursor = "grabbing";
+          container.style.zIndex = "1000";
+          container.classList.add("dragging");
+
+          console.log("🖱️ Started dragging from toolbar drag handle");
+
+          function handleMouseMove(e) {
+            if (!window.isDragging || window.isResizing) return;
+
+            console.log("🖱️ Mouse move during drag");
+            console.log("📊 Element click count:", textContainer.clickCount);
+            console.log("📊 Mouse position:", e.clientX, e.clientY);
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            console.log("📊 Delta movement:", deltaX, deltaY);
+
+            if (overlay) {
+              const overlayRect = overlay.getBoundingClientRect();
+
+              let newX = initialX + deltaX;
+              let newY = initialY + deltaY;
+
+              const elementWidth = container.offsetWidth;
+              const elementHeight = container.offsetHeight;
+
+              newX = Math.max(
+                0,
+                Math.min(newX, overlayRect.width - elementWidth)
+              );
+              newY = Math.max(
+                0,
+                Math.min(newY, overlayRect.height - elementHeight)
+              );
+
+              container.style.left = newX + "px";
+              container.style.top = newY + "px";
+            }
+          }
+
+          function handleMouseUp(e) {
+            console.log("🖱️ Mouse up on toolbar drag handle - stopping drag");
+            console.log("📊 Element click count:", textContainer.clickCount);
+            console.log("📊 Drag session completed for element");
+
+            // Only process if we're actually dragging
+            if (!window.isDragging) {
+              console.log("📊 Not dragging, ignoring mouse up");
+              return;
+            }
+
+            window.isDragging = false;
+            container.style.cursor = "grab";
+            container.style.zIndex = "20";
+            container.classList.remove("dragging");
+
+            // Remove event listeners
+            document.removeEventListener("mousemove", handleMouseMove, true);
+            document.removeEventListener("mouseup", handleMouseUp, true);
+
+            // Remove global mouse up handler
+            if (window.globalMouseUpHandler) {
+              document.removeEventListener(
+                "mouseup",
+                window.globalMouseUpHandler,
+                false
+              );
+              window.globalMouseUpHandler = null;
+            }
+
+            // Clear global handlers
+            window.currentDragHandlers = null;
+            console.log("📊 Global drag handlers cleared");
+
+            e.preventDefault();
+            e.stopPropagation();
+          }
+
+          // Store handlers globally to prevent conflicts
+          window.currentDragHandlers = {
+            move: handleMouseMove,
+            up: handleMouseUp,
+          };
+
+          // Add event listeners with capture to ensure they're triggered
+          document.addEventListener("mousemove", handleMouseMove, true);
+          document.addEventListener("mouseup", handleMouseUp, true);
+
+          // Add global mouse up handler as backup
+          const globalMouseUp = function (e) {
+            if (window.isDragging) {
+              console.log("🖱️ Global mouse up - stopping drag");
+              handleMouseUp(e);
+            }
+          };
+          window.globalMouseUpHandler = globalMouseUp;
+          document.addEventListener("mouseup", globalMouseUp, false);
+        });
+
+        // Assemble toolbar
+        toolbar.appendChild(fontSelect);
+        toolbar.appendChild(sizeSelect);
+        toolbar.appendChild(colorInput);
+        toolbar.appendChild(boldButton);
+        toolbar.appendChild(italicButton);
+        toolbar.appendChild(dragHandle);
+        toolbar.appendChild(doneButton);
+
+        // Prevent toolbar clicks from creating new text elements
+        toolbar.addEventListener("click", function (e) {
+          e.stopPropagation();
+        });
+        toolbar.addEventListener("mousedown", function (e) {
+          e.stopPropagation();
+        });
+        toolbar.addEventListener("mouseup", function (e) {
+          e.stopPropagation();
+        });
+        toolbar.addEventListener("mouseover", function (e) {
+          e.stopPropagation();
+        });
+        toolbar.addEventListener("mouseout", function (e) {
+          e.stopPropagation();
+        });
+
+        // Prevent all toolbar controls from bubbling up
+        [
+          fontSelect,
+          sizeSelect,
+          colorInput,
+          boldButton,
+          italicButton,
+          dragHandle,
+          doneButton,
+        ].forEach((control) => {
+          control.addEventListener("click", function (e) {
+            e.stopPropagation();
+          });
+          control.addEventListener("mousedown", function (e) {
+            e.stopPropagation();
+          });
+          control.addEventListener("mouseup", function (e) {
+            e.stopPropagation();
+          });
+        });
+
+        // Create text element
+        const textElement = document.createElement("textarea");
+        textElement.className = "text-element";
+        textElement.style.position = "relative";
+        textElement.style.left = "0";
+        textElement.style.top = "0";
+        textElement.style.width = "200px";
+        textElement.style.height = "30px";
+        textElement.placeholder = "Enter text...";
+        textElement.value = "New Text";
+        console.log("📝 Created text element:", textElement);
+
+        // Create delete button
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "element-delete-btn";
+        deleteBtn.innerHTML = "×";
+        deleteBtn.title = "Delete element";
+        console.log("🗑️ Created delete button for text element");
+
+        // Add protection against drag and selection (but allow text editing)
+        textElement.addEventListener("dragstart", function (e) {
+          e.preventDefault();
+          return false;
+        });
+
+        textElement.addEventListener("selectstart", function (e) {
+          // Allow text selection within the textarea for editing
+          return true;
+        });
+
+        // Set HTML attributes for protection
+        textElement.setAttribute("draggable", "false");
+        textElement.setAttribute("ondragstart", "return false;");
+
+        // Delete button event handler
+        deleteBtn.addEventListener("click", function (e) {
+          console.log("🗑️ Delete button clicked for text element");
+          e.preventDefault();
+          e.stopPropagation();
+          if (confirm("Are you sure you want to delete this text element?")) {
+            textContainer.remove();
+            // Remove from edits array if it was saved
+            const editIndex = edits.findIndex(
+              (edit) =>
+                edit.type === "add_text" &&
+                edit.page === currentPage &&
+                edit.x === x &&
+                edit.y === y
+            );
+            if (editIndex !== -1) {
+              edits.splice(editIndex, 1);
+            }
+          }
+        });
+
+        // Apply formatting functions
+        const applyFormatting = () => {
+          textElement.style.fontFamily = fontSelect.value;
+          textElement.style.fontSize = sizeSelect.value + "px";
+          textElement.style.color = colorInput.value;
+        };
+
+        // Event listeners for formatting
+        fontSelect.addEventListener("change", applyFormatting);
+        sizeSelect.addEventListener("change", applyFormatting);
+        colorInput.addEventListener("change", applyFormatting);
+
+        boldButton.addEventListener("click", () => {
+          textElement.style.fontWeight =
+            textElement.style.fontWeight === "bold" ? "normal" : "bold";
+        });
+
+        italicButton.addEventListener("click", () => {
+          textElement.style.fontStyle =
+            textElement.style.fontStyle === "italic" ? "normal" : "italic";
+        });
+
+        // Done button - finalize text
+        doneButton.addEventListener("click", () => {
+          console.log("✅ Done button clicked!");
+          console.log("✅ Text value:", textElement.value);
+          console.log("✅ Text trimmed:", textElement.value.trim());
+          if (textElement.value.trim()) {
+            const editData = {
+              type: "add_text",
+              page: currentPage,
+              x: x,
+              y: y,
+              text: textElement.value,
+              fontFamily: textElement.style.fontFamily,
+              fontSize: textElement.style.fontSize,
+              color: textElement.style.color,
+              fontWeight: textElement.style.fontWeight,
+              fontStyle: textElement.style.fontStyle,
+            };
+            console.log("✅ Saving edit data:", editData);
+            edits.push(editData);
+            console.log("✅ Total edits count:", edits.length);
+
+            // Send message to parent
+            const messageData = {
+              type: "TEXT_ADDED",
+              text: textElement.value,
+              x: x,
+              y: y,
+              fontFamily: textElement.style.fontFamily,
+              fontSize: textElement.style.fontSize,
+              color: textElement.style.color,
+              fontWeight: textElement.style.fontWeight,
+              fontStyle: textElement.style.fontStyle,
+            };
+            console.log("📤 Sending message to parent:", messageData);
+            window.parent.postMessage(messageData, "*");
+          }
+
+          // Remove toolbar and finalize
+          console.log("✅ Removing toolbar and finalizing text");
+          toolbar.remove();
+          textElement.style.border = "none";
+          textElement.style.background = "transparent";
+          textElement.readOnly = true;
+          // Remove editing class to hide resize handles
+          textContainer.classList.remove("editing");
+          // Deactivate tool to allow dragging
+          currentEditType = "select";
+          // Reset global dragging state to prevent stuck dragging
+          window.isDragging = false;
+          console.log("✅ Tool deactivated after text finalization");
+          console.log(
+            "✅ Text element finalized - readOnly:",
+            textElement.readOnly
+          );
+
+          // Add delete button to container
+          textContainer.appendChild(deleteBtn);
+          console.log("✅ Delete button added to container");
+
+          // Make text element draggable
+          // Only make draggable if not already dragging
+          if (!window.isDragging) {
+            makeElementDraggable(textContainer);
+          }
+
+          // Add resize handles
+          addResizeHandles(textContainer);
+
+          // Add click handler to edit text
+          textElement.addEventListener("click", function (e) {
+            console.log("📝 Text element clicked for editing");
+
+            // If text element is empty, don't show toolbar yet - allow dragging
+            if (!textElement.value || textElement.value.trim() === "") {
+              console.log(
+                "📝 Text element is empty - allowing drag without toolbar"
+              );
+              // Don't stop propagation so overlay can detect this as existing element
+              return;
+            }
+
+            // Only stop propagation if we're showing the toolbar
+            e.stopPropagation();
+            showTextEditToolbar(textElement, textContainer);
+          });
+
+          // Add mousedown handler to prevent drag when clicking on text element
+          textElement.addEventListener("mousedown", function (e) {
+            console.log("📝 Text element mousedown - preventing drag");
+            e.preventDefault();
+            e.stopPropagation();
+          });
+
+          // Deactivate text tool after adding text
+          currentEditType = "select";
+          // Reset global dragging state
+          window.isDragging = false;
+          console.log(
+            "✅ Deactivating text tool, currentEditType:",
+            currentEditType
+          );
+
+          // Send message to parent to deactivate text tool
+          window.parent.postMessage(
+            {
+              type: "EDIT_MODE_SET",
+              mode: "select",
+            },
+            "*"
+          );
+          console.log("✅ Sent EDIT_MODE_SET message to parent");
+        });
+
+        // Assemble and add to overlay
+        textContainer.appendChild(toolbar);
+        textContainer.appendChild(textElement);
+        overlay.appendChild(textContainer);
+        console.log("📝 Added text element to DOM");
+        console.log("📝 Text container children:", textContainer.children);
+
+        // Save state for undo/redo
+        saveStateToUndoStack();
+        console.log("📝 Overlay children count:", overlay.children.length);
+
+        // Ensure signature modal is closed when creating text
+        closeSignatureModal();
+
+        // Focus and select text
+        textElement.focus();
+        textElement.select();
+        console.log("📝 Text element focused and selected");
+
+        // Apply initial formatting
+        applyFormatting();
+        console.log("📝 Initial formatting applied");
+      }
+
+      // Signature Canvas Functions
+      function initializeSignatureCanvas() {
+        signatureCanvas = document.getElementById("signatureCanvas");
+        if (!signatureCanvas) return;
+
+        const ctx = signatureCanvas.getContext("2d");
+        if (!ctx) return;
+
+        // Set canvas size
+        signatureCanvas.width = 400;
+        signatureCanvas.height = 200;
+
+        // Set drawing styles
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 2;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        // Clear canvas with white background
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, 400, 200);
+
+        // Add event listeners
+        signatureCanvas.addEventListener("mousedown", function (e) {
+          console.log("✍️ ===== MOUSE DOWN EVENT ON CANVAS =====");
+          console.log("✍️ Event type:", e.type);
+          console.log("✍️ Mouse button:", e.button);
+          console.log("✍️ Screen position:", e.clientX, e.clientY);
+          console.log("✍️ Event target:", e.target);
+          console.log("✍️ Canvas element:", signatureCanvas);
+          console.log("✍️ Calling startDrawing()...");
+          startDrawing(e);
+          console.log("✍️ ===== MOUSE DOWN EVENT ON CANVAS =====");
+        });
+        signatureCanvas.addEventListener("mousemove", function (e) {
+          console.log("✍️ ===== MOUSE MOVE EVENT ON CANVAS =====");
+          console.log("✍️ Event type:", e.type);
+          console.log("✍️ Screen position:", e.clientX, e.clientY);
+          console.log("✍️ isDrawing flag:", isDrawing);
+          console.log("✍️ Event target:", e.target);
+
+          if (isDrawing) {
+            console.log("✍️ Drawing is active - calling draw()");
+            draw(e);
+          } else {
+            console.log("✍️ Drawing is not active - ignoring mousemove");
+          }
+          console.log("✍️ ===== MOUSE MOVE EVENT ON CANVAS =====");
+        });
+        signatureCanvas.addEventListener("mouseup", function (e) {
+          console.log("✍️ ===== MOUSE UP EVENT ON CANVAS =====");
+          console.log("✍️ Event type:", e.type);
+          console.log("✍️ Mouse button:", e.button);
+          console.log("✍️ Screen position:", e.clientX, e.clientY);
+          console.log("✍️ Event target:", e.target);
+          console.log("✍️ isDrawing flag before stop:", isDrawing);
+          console.log("✍️ Calling stopDrawing()...");
+          stopDrawing();
+          console.log("✍️ ===== MOUSE UP EVENT ON CANVAS =====");
+        });
+
+        // Also handle mouseup on document to catch cases where mouse leaves canvas
+        // Use a flag to prevent multiple listeners
+        if (!window.signatureMouseUpHandlerAdded) {
+          document.addEventListener("mouseup", handleGlobalMouseUp);
+          window.signatureMouseUpHandlerAdded = true;
+        }
+        signatureCanvas.addEventListener("mouseleave", function (e) {
+          console.log("✍️ Mouse leave on signature canvas");
+          stopDrawing();
+        });
+      }
+
+      function startDrawing(e) {
+        console.log("✍️ ===== SIGNATURE DRAWING STARTED =====");
+        console.log("✍️ Mouse down event:", e.type);
+        console.log("✍️ Mouse down at screen position:", e.clientX, e.clientY);
+        console.log("✍️ Mouse down button:", e.button);
+        console.log("✍️ Event target:", e.target);
+        console.log("✍️ Canvas element:", signatureCanvas);
+
+        isDrawing = true;
+        const rect = signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        console.log("✍️ Canvas bounding rect:", rect);
+        console.log("✍️ Relative position on canvas:", x, y);
+        console.log("✍️ isDrawing flag set to:", isDrawing);
+        console.log("✍️ Drawing start time:", new Date().toISOString());
+
+        const ctx = signatureCanvas.getContext("2d");
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        console.log("✍️ Canvas context beginPath() and moveTo() called");
+        console.log("✍️ Drawing started at canvas position:", x, y);
+        console.log("✍️ ===== SIGNATURE DRAWING STARTED =====");
+      }
+
+      function draw(e) {
+        console.log("✍️ DRAW EVENT TRIGGERED");
+        console.log("✍️ isDrawing flag:", isDrawing);
+        console.log("✍️ Mouse move at screen position:", e.clientX, e.clientY);
+        console.log("✍️ Event type:", e.type);
+
+        if (!isDrawing) {
+          console.log("✍️ DRAW BLOCKED - isDrawing is false");
+          console.log("✍️ Drawing should not continue");
+          return;
+        }
+
+        const rect = signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        console.log("✍️ Canvas rect:", rect);
+        console.log("✍️ Relative position on canvas:", x, y);
+        console.log("✍️ Drawing line to:", x, y);
+
+        const ctx = signatureCanvas.getContext("2d");
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        console.log("✍️ Line drawn successfully to:", x, y);
+      }
+
+      function stopDrawing() {
+        console.log("✍️ ===== SIGNATURE DRAWING STOPPED =====");
+        console.log("✍️ stopDrawing() called");
+        console.log("✍️ isDrawing flag before stop:", isDrawing);
+        console.log("✍️ Stop time:", new Date().toISOString());
+        console.log("✍️ Event that triggered stop:", event?.type || "unknown");
+
+        if (isDrawing) {
+          isDrawing = false;
+          hasSignature = true;
+          console.log("✍️ isDrawing flag set to:", isDrawing);
+          console.log("✍️ hasSignature flag set to:", hasSignature);
+          console.log("✍️ Drawing stopped successfully");
+
+          // Additional safety: ensure drawing is completely stopped
+          const ctx = signatureCanvas.getContext("2d");
+          ctx.beginPath(); // Start a new path to break any continuous drawing
+          console.log("✍️ Canvas context beginPath() called for safety");
+          console.log("✍️ Drawing state fully reset");
+        } else {
+          console.log("✍️ Drawing was already stopped");
+        }
+        console.log("✍️ ===== SIGNATURE DRAWING STOPPED =====");
+      }
+
+      // Global mouseup handler to ensure drawing stops
+      function handleGlobalMouseUp(e) {
+        console.log("✍️ ===== GLOBAL MOUSE UP EVENT =====");
+        console.log("✍️ Event type:", e.type);
+        console.log("✍️ Mouse button:", e.button);
+        console.log("✍️ Screen position:", e.clientX, e.clientY);
+        console.log("✍️ Event target:", e.target);
+        console.log("✍️ isDrawing flag:", isDrawing);
+        console.log("✍️ Canvas element:", signatureCanvas);
+
+        if (isDrawing) {
+          console.log("✍️ Drawing was active - calling stopDrawing()");
+          stopDrawing();
+        } else {
+          console.log("✍️ Drawing was not active - no action needed");
+        }
+        console.log("✍️ ===== GLOBAL MOUSE UP EVENT =====");
+
+        // Reset dragging state on any mouse up
+        if (window.isDragging) {
+          console.log("🖱️ Global mouse up - resetting drag state");
+          window.isDragging = false;
+        }
+      }
+
+      function clearSignature() {
+        if (!signatureCanvas) {
+          console.log("✍️ Signature canvas not available for clearing");
+          return;
+        }
+        const ctx = signatureCanvas.getContext("2d");
+        if (!ctx) {
+          console.log("✍️ Could not get canvas context for clearing");
+          return;
+        }
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, 400, 200);
+        hasSignature = false;
+        console.log("✍️ Signature cleared");
+      }
+
+      function saveSignature() {
+        if (!hasSignature || !currentEditElement) return;
+
+        const signatureData = signatureCanvas.toDataURL("image/png");
+        const img = document.createElement("img");
+        img.src = signatureData;
+        img.style.maxWidth = "100%";
+        img.style.maxHeight = "100%";
+        img.style.objectFit = "contain";
+
+        // Replace the signature element content
+        currentEditElement.innerHTML = "";
+        currentEditElement.appendChild(img);
+
+        // Save edit data
+        const rect = currentEditElement.getBoundingClientRect();
+        const containerRect = currentEditElement
+          .closest(".element-container")
+          .getBoundingClientRect();
+        const x =
+          containerRect.left -
+          currentEditElement.closest(".pdf-page").getBoundingClientRect().left;
+        const y =
+          containerRect.top -
+          currentEditElement.closest(".pdf-page").getBoundingClientRect().top;
+
+        edits.push({
+          type: "add_signature",
+          page: currentPage,
+          x: x,
+          y: y,
+          data: signatureData,
+          width: 200,
+          height: 100,
+        });
+
+        console.log("✍️ Signature saved:", {
+          x,
+          y,
+          data: signatureData.substring(0, 50) + "...",
+        });
+
+        // Close modal and deactivate tool
+        closeSignatureModal();
+        currentEditType = "select";
+
+        // Send message to parent
+        window.parent.postMessage(
+          {
+            type: "EDIT_MODE_SET",
+            mode: "select",
+          },
+          "*"
+        );
+
+        // Send signature added message to parent
+        window.parent.postMessage(
+          {
+            type: "SIGNATURE_ADDED",
+            x: x,
+            y: y,
+            data: signatureData,
+          },
+          "*"
+        );
+      }
+
+      function openSignatureModal(element) {
+        // Check if signature modal should only show once and has already been used
+        if (
+          window.signatureModalConfigured &&
+          window.signatureModalShowOnce &&
+          window.signatureModalUsed
+        ) {
+          console.log(
+            "✍️ Signature modal configured to show once and already used - not opening"
+          );
+          return;
+        }
+
+        currentEditElement = element;
+        const modal = document.getElementById("signatureModal");
+        modal.style.display = "block";
+        modal.style.visibility = "visible";
+        modal.style.pointerEvents = "auto";
+        initializeSignatureCanvas();
+
+        // Mark that the signature modal has been used
+        window.signatureModalUsed = true;
+
+        console.log("✍️ Signature modal opened");
+
+        // Ensure the modal doesn't interfere with text input
+        modal.addEventListener("keydown", function (e) {
+          // Only prevent default for specific keys, not all keys
+          if (e.key === "Escape") {
+            closeSignatureModal();
+            e.preventDefault();
+          }
+        });
+      }
+
+      function closeSignatureModal() {
+        const modal = document.getElementById("signatureModal");
+        modal.style.display = "none";
+        modal.style.visibility = "hidden";
+        modal.style.pointerEvents = "none";
+        currentEditElement = null;
+        clearSignature();
+
+        // Ensure focus returns to the document
+        document.body.focus();
+        console.log("✍️ Signature modal closed and focus returned");
+      }
+
+      // Functions to create elements immediately when tool is selected
+      function createTextElementImmediately() {
+        console.log("📝 Creating text element immediately");
+        const overlays = document.querySelectorAll(".interactive-overlay");
+        if (overlays.length === 0) {
+          console.log("❌ No overlays found for text element");
+          return;
+        }
+
+        // Use the first overlay (current page)
+        const overlay = overlays[0];
+        const rect = overlay.getBoundingClientRect();
+
+        // Position element in the upper-center area for better UX
+        // Use 1/3 from top instead of center to avoid bottom placement
+        const x = rect.width / 2 - 100; // Center horizontally, offset for element width
+        const y = rect.height / 3; // 1/3 from top instead of center
+
+        // Create a mock click event at the better position
+        const mockEvent = {
+          clientX: rect.left + x + 100, // Adjust for the offset
+          clientY: rect.top + y,
+          target: overlay,
+        };
+
+        console.log("📝 Positioning text element at:", x, y);
+        addTextElement(mockEvent, overlay);
+      }
+
+      function createSignatureElementImmediately() {
+        console.log("✍️ Creating signature element immediately");
+        const overlays = document.querySelectorAll(".interactive-overlay");
+        if (overlays.length === 0) {
+          console.log("❌ No overlays found for signature element");
+          return;
+        }
+
+        // Use the first overlay (current page)
+        const overlay = overlays[0];
+        const rect = overlay.getBoundingClientRect();
+
+        // Position element in the upper-center area for better UX
+        // Use 1/3 from top instead of center to avoid bottom placement
+        const x = rect.width / 2 - 75; // Center horizontally, offset for signature width
+        const y = rect.height / 3; // 1/3 from top instead of center
+
+        // Create a mock click event at the better position
+        const mockEvent = {
+          clientX: rect.left + x + 75, // Adjust for the offset
+          clientY: rect.top + y,
+          target: overlay,
+        };
+
+        console.log("✍️ Positioning signature element at:", x, y);
+        addSignatureElement(mockEvent, overlay);
+      }
+
+      // COMMENTED OUT: Image functionality temporarily disabled
+      // function createImageElementImmediately() {
+      //   console.log("🖼️ Creating image element immediately");
+      //   const overlays = document.querySelectorAll(".interactive-overlay");
+      //   if (overlays.length === 0) {
+      //     console.log("❌ No overlays found for image element");
+      //     return;
+      //   }
+
+      //   // Use the first overlay (current page)
+      //   const overlay = overlays[0];
+      //   const rect = overlay.getBoundingClientRect();
+
+      //   // Position element in the upper-center area for better UX
+      //   // Use 1/3 from top instead of center to avoid bottom placement
+      //   const x = rect.width / 2 - 100; // Center horizontally, offset for image width
+      //   const y = rect.height / 3; // 1/3 from top instead of center
+
+      //   // Create a mock click event at the better position
+      //   const mockEvent = {
+      //     clientX: rect.left + x + 100, // Adjust for the offset
+      //     clientY: rect.top + y,
+      //     target: overlay,
+      //   };
+
+      //   console.log("🖼️ Positioning image element at:", x, y);
+      //   addImageElement(mockEvent, overlay);
+      // }
+
+      // Resize functionality for elements
+      function addResizeHandles(element) {
+        console.log("🔧 Adding resize handle to element");
+        console.log("🔧 Element:", element);
+        console.log("🔧 Element classList:", element.classList);
+
+        // Remove existing resize handles
+        const existingHandles = element.querySelectorAll(".resize-handle");
+        console.log("🔧 Existing handles found:", existingHandles.length);
+        existingHandles.forEach((handle) => handle.remove());
+
+        // Create single corner resize handle
+        const handle = document.createElement("div");
+        handle.className = "resize-handle se";
+        handle.style.cursor = "se-resize";
+        handle.style.position = "absolute";
+        handle.style.bottom = "-6px";
+        handle.style.right = "-6px";
+        handle.style.width = "12px";
+        handle.style.height = "12px";
+        handle.style.backgroundColor = "#3b82f6";
+        handle.style.border = "2px solid white";
+        handle.style.borderRadius = "50%";
+        handle.style.zIndex = "1000";
+        handle.style.pointerEvents = "all";
+        handle.style.opacity = "0";
+        handle.style.visibility = "visible";
+        element.appendChild(handle);
+        console.log("🔧 Resize handle created and added:", handle);
+
+        // Add resize functionality
+        handle.addEventListener("mousedown", function (e) {
+          console.log("🔧 Resize handle mousedown event triggered");
+          console.log("🔧 Event target:", e.target);
+          console.log("🔧 Event target classList:", e.target.classList);
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+
+          // Prevent the parent container from starting drag
+          if (element.clickCount) {
+            element.clickCount = 0;
+          }
+
+          // Set flags to prevent drag
+          window.isResizing = true;
+          window.isDragging = false;
+
+          startResize(element, e);
+        });
+
+        // Add mouseover to show resize cursor
+        handle.addEventListener("mouseenter", function (e) {
+          console.log("🔧 Resize handle mouseenter");
+          document.body.style.cursor = "se-resize";
+        });
+
+        handle.addEventListener("mouseleave", function (e) {
+          console.log("🔧 Resize handle mouseleave");
+          document.body.style.cursor = "default";
+        });
+
+        // Also prevent other mouse events on the resize handle
+        handle.addEventListener("click", function (e) {
+          console.log("🔧 Resize handle click - preventing all propagation");
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          return false;
+        });
+
+        handle.addEventListener("mouseup", function (e) {
+          console.log("🔧 Resize handle mouseup - allowing resize to end");
+          // Don't prevent propagation - let the document mouseup handler end the resize
+          // Just prevent the signature modal from opening
+          // No stopPropagation() - let the event bubble up to document mouseup handler
+        });
+
+        // Prevent context menu on resize handle
+        handle.addEventListener("contextmenu", function (e) {
+          console.log("🔧 Resize handle contextmenu - preventing");
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          return false;
+        });
+      }
+
+      function startResize(element, e) {
+        console.log("🔧 Starting resize operation");
+        console.log("🔧 Element:", element);
+        console.log("🔧 Event:", e);
+
+        element.classList.add("resizing");
+        const rect = element.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startWidth = rect.width;
+        const startHeight = rect.height;
+
+        console.log("🔧 Start dimensions:", startWidth, startHeight);
+        console.log("🔧 Start position:", startX, startY);
+
+        function handleMouseMove(e) {
+          console.log("🔧 Resize mousemove event");
+          e.preventDefault();
+          e.stopPropagation();
+
+          const deltaX = e.clientX - startX;
+          const deltaY = e.clientY - startY;
+
+          // Calculate new dimensions (bottom-right corner resize)
+          const newWidth = Math.max(50, startWidth + deltaX);
+          const newHeight = Math.max(30, startHeight + deltaY);
+
+          console.log("🔧 New dimensions:", newWidth, newHeight);
+
+          // Apply new dimensions
+          element.style.width = newWidth + "px";
+          element.style.height = newHeight + "px";
+
+          // Update the content element inside
+          const contentElement = element.querySelector(
+            ".signature-element, .text-element"
+            // COMMENTED OUT: .image-element
+          );
+          if (contentElement) {
+            // For signature elements, keep auto sizing
+            if (contentElement.classList.contains("signature-element")) {
+              contentElement.style.width = "auto";
+              contentElement.style.height = "auto";
+            } else {
+              // For other elements, fill the container
+              contentElement.style.width = "100%";
+              contentElement.style.height = "100%";
+            }
+            console.log("🔧 Updated content element size");
+          }
+        }
+
+        function handleMouseUp() {
+          console.log("🔧 Resize operation completed");
+          element.classList.remove("resizing");
+          window.isResizing = false;
+          document.body.style.cursor = "default";
+          document.removeEventListener("mousemove", handleMouseMove);
+          document.removeEventListener("mouseup", handleMouseUp);
+        }
+
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+      }
+
+      // Function to add signature element
+      function addSignatureElement(e, overlay) {
+        console.log("✍️ Adding signature element...");
+        console.log("✍️ Event:", e);
+        console.log("✍️ Overlay:", overlay);
+        console.log("✍️ Current edit type:", currentEditType);
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        console.log("✍️ Click position - x:", x, "y:", y);
+        console.log("✍️ Overlay rect:", rect);
+
+        // Create signature container
+        const signatureContainer = document.createElement("div");
+        signatureContainer.className = "element-container";
+        signatureContainer.style.position = "absolute";
+        signatureContainer.style.left = x + "px";
+        signatureContainer.style.top = y + "px";
+        signatureContainer.style.width = "fit-content";
+        signatureContainer.style.height = "fit-content";
+        signatureContainer.style.minWidth = "0";
+        signatureContainer.style.minHeight = "0";
+        signatureContainer.style.padding = "8px 8px 8px 0";
+        signatureContainer.style.margin = "0";
+        signatureContainer.style.zIndex = "20";
+        signatureContainer.style.setProperty(
+          "background-color",
+          "transparent",
+          "important"
+        );
+        signatureContainer.style.setProperty("background", "none", "important");
+
+        const signatureElement = document.createElement("div");
+        signatureElement.className = "signature-element";
+        signatureElement.style.position = "relative";
+        signatureElement.style.left = "0";
+        signatureElement.style.top = "0";
+        signatureElement.style.width = "fit-content";
+        signatureElement.style.height = "fit-content";
+        signatureElement.style.display = "inline-block";
+        signatureElement.style.padding = "0";
+        signatureElement.style.border = "none";
+        signatureElement.style.margin = "0";
+        signatureElement.style.minWidth = "0";
+        signatureElement.style.minHeight = "0";
+        signatureElement.style.setProperty("background", "none", "important");
+        signatureElement.style.setProperty(
+          "background-color",
+          "transparent",
+          "important"
+        );
+        signatureElement.style.setProperty(
+          "background-image",
+          "none",
+          "important"
+        );
+        signatureElement.style.borderRadius = "0";
+        signatureElement.style.fontSize = "14px";
+        signatureElement.style.whiteSpace = "nowrap";
+        signatureElement.innerHTML = "Signature";
+
+        // Create delete button
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "element-delete-btn";
+        deleteBtn.innerHTML = "×";
+        deleteBtn.title = "Delete signature";
+        console.log("🗑️ Created delete button for signature element");
+
+        // Add protection against drag and selection
+        signatureElement.addEventListener("contextmenu", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        });
+
+        signatureElement.addEventListener("dragstart", function (e) {
+          e.preventDefault();
+          return false;
+        });
+
+        signatureElement.addEventListener("selectstart", function (e) {
+          e.preventDefault();
+          return false;
+        });
+
+        // Set HTML attributes for protection
+        signatureElement.setAttribute("draggable", "false");
+        signatureElement.setAttribute("oncontextmenu", "return false;");
+        signatureElement.setAttribute("ondragstart", "return false;");
+        signatureElement.setAttribute("onselectstart", "return false;");
+
+        // Delete button event handler
+        deleteBtn.addEventListener("click", function (e) {
+          console.log("🗑️ Delete button clicked for signature element");
+          e.preventDefault();
+          e.stopPropagation();
+          if (
+            confirm("Are you sure you want to delete this signature element?")
+          ) {
+            signatureContainer.remove();
+            // Remove from edits array if it was saved
+            const editIndex = edits.findIndex(
+              (edit) =>
+                edit.type === "add_signature" &&
+                edit.page === currentPage &&
+                edit.x === x &&
+                edit.y === y
+            );
+            if (editIndex !== -1) {
+              edits.splice(editIndex, 1);
+            }
+          }
+        });
+
+        signatureElement.addEventListener("click", function (e) {
+          // Check if clicking on resize handle or its children
+          if (
+            e.target.classList.contains("resize-handle") ||
+            e.target.closest(".resize-handle")
+          ) {
+            console.log(
+              "🔧 Clicked on resize handle - preventing signature modal"
+            );
+            return;
+          }
+
+          // Only open signature modal if not clicking on resize handle
+          console.log("✍️ Clicked on signature element - opening modal");
+          openSignatureModal(signatureElement);
+        });
+
+        // Add delete button to container
+        signatureContainer.appendChild(deleteBtn);
+
+        // Deactivate signature tool after adding signature element
+        currentEditType = "select";
+
+        // Send message to parent to deactivate signature tool
+        window.parent.postMessage(
+          {
+            type: "EDIT_MODE_SET",
+            mode: "select",
+          },
+          "*"
+        );
+
+        // Make signature element draggable
+        makeElementDraggable(signatureContainer);
+
+        // Add resize handles
+        addResizeHandles(signatureContainer);
+
+        // Add double-click handler to edit signature
+        signatureElement.addEventListener("dblclick", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log("✍️ Signature element double-clicked for editing");
+          // Open signature modal
+          openSignatureModal(signatureElement);
+        });
+
+        // Assemble and add to overlay
+        signatureContainer.appendChild(signatureElement);
+        overlay.appendChild(signatureContainer);
+
+        // Save state for undo/redo
+        saveStateToUndoStack();
+      }
+
+      // COMMENTED OUT: Image functionality temporarily disabled
+      // Function to add image element
+      // function addImageElement(e, overlay) {
+      //   console.log("🖼️ Adding image element...");
+      //   const rect = overlay.getBoundingClientRect();
+      //   const x = e.clientX - rect.left;
+      //   const y = e.clientY - rect.top;
+
+      //   // Create image container
+      //   const imageContainer = document.createElement("div");
+      //   imageContainer.className = "element-container";
+      //   imageContainer.style.position = "absolute";
+      //   imageContainer.style.left = x + "px";
+      //   imageContainer.style.top = y + "px";
+      //   imageContainer.style.width = "fit-content";
+      //   imageContainer.style.height = "fit-content";
+      //   imageContainer.style.minWidth = "0";
+      //   imageContainer.style.minHeight = "0";
+      //   imageContainer.style.padding = "8px 8px 8px 0";
+      //   imageContainer.style.margin = "0";
+      //   imageContainer.style.zIndex = "20";
+      //   imageContainer.style.setProperty(
+      //     "background-color",
+      //     "transparent",
+      //     "important"
+      //   );
+      //   imageContainer.style.setProperty("background", "none", "important");
+
+      //   // Create file input for image selection
+      //   const fileInput = document.createElement("input");
+      //   fileInput.type = "file";
+      //   fileInput.accept = "image/*";
+      //   fileInput.style.display = "none";
+
+      //   const imageElement = document.createElement("div");
+      //   imageElement.className = "image-element";
+      //   imageElement.style.position = "relative";
+      //   imageElement.style.left = "0";
+      //   imageElement.style.top = "0";
+      //   imageElement.style.width = "fit-content";
+      //   imageElement.style.height = "fit-content";
+      //   imageElement.style.padding = "0";
+      //   imageElement.style.border = "none";
+      //   imageElement.style.margin = "0";
+      //   imageElement.style.setProperty("background", "none", "important");
+      //   imageElement.style.setProperty(
+      //     "background-color",
+      //     "transparent",
+      //     "important"
+      //   );
+      //   imageElement.style.setProperty("background-image", "none", "important");
+      //   imageElement.innerHTML = "Click to add image";
+      //   imageElement.style.cursor = "pointer";
+      //   imageElement.style.color = "#007bff";
+      //   imageElement.style.fontSize = "12px";
+
+      //   // Create delete button
+      //   const deleteBtn = document.createElement("button");
+      //   deleteBtn.className = "element-delete-btn";
+      //   deleteBtn.innerHTML = "×";
+      //   deleteBtn.title = "Delete image";
+      //   console.log("🗑️ Created delete button for image element");
+
+      //   // Add protection against drag and selection for the container
+      //   imageElement.addEventListener("contextmenu", function (e) {
+      //     e.preventDefault();
+      //     e.stopPropagation();
+      //     return false;
+      //   });
+
+      //   imageElement.addEventListener("dragstart", function (e) {
+      //     e.preventDefault();
+      //     return false;
+      //   });
+
+      //   imageElement.addEventListener("selectstart", function (e) {
+      //     e.preventDefault();
+      //     return false;
+      //   });
+
+      //   // Set HTML attributes for protection
+      //   imageElement.setAttribute("draggable", "false");
+      //   imageElement.setAttribute("oncontextmenu", "return false;");
+      //   imageElement.setAttribute("ondragstart", "return false;");
+      //   imageElement.setAttribute("onselectstart", "return false;");
+
+      //   // Click handler to trigger file selection
+      //   imageElement.addEventListener("click", function (e) {
+      //     e.preventDefault();
+      //     e.stopPropagation();
+      //     fileInput.click();
+      //   });
+
+      //   // File input change handler
+      //   fileInput.addEventListener("change", function (e) {
+      //     const file = e.target.files[0];
+      //     if (file) {
+      //       const reader = new FileReader();
+      //       reader.onload = function (e) {
+      //         const img = document.createElement("img");
+      //         img.src = e.target.result;
+      //         img.style.maxWidth = "200px";
+      //         img.style.maxHeight = "200px";
+      //         img.style.width = "auto";
+      //         img.style.height = "auto";
+      //         img.style.display = "block";
+
+      //         // Clear the text and add the image
+      //         imageElement.innerHTML = "";
+      //         imageElement.appendChild(img);
+
+      //         // Update container size to fit the image
+      //         imageContainer.style.width = "fit-content";
+      //         imageContainer.style.height = "fit-content";
+      //       };
+      //       reader.readAsDataURL(file);
+      //     }
+      //   });
+
+      //   // Delete button event handler
+      //   deleteBtn.addEventListener("click", function (e) {
+      //     console.log("🗑️ Delete button clicked for image element");
+      //     e.preventDefault();
+      //     e.stopPropagation();
+      //     if (confirm("Are you sure you want to delete this image element?")) {
+      //       imageContainer.remove();
+      //       // Remove from edits array if it was saved
+      //       const editIndex = edits.findIndex(
+      //         (edit) =>
+      //           edit.type === "add_image" &&
+      //           edit.page === currentPage &&
+      //           edit.x === x &&
+      //           edit.y === y
+      //       );
+      //       if (editIndex !== -1) {
+      //         edits.splice(editIndex, 1);
+      //       }
+      //     }
+      //   });
+
+      //   imageElement.addEventListener("click", function () {
+      //     const input = document.createElement("input");
+      //     input.type = "file";
+      //     input.accept = "image/*";
+      //     input.onchange = function (e) {
+      //       const file = e.target.files[0];
+      //       if (file) {
+      //         const reader = new FileReader();
+      //         reader.onload = function (e) {
+      //           const img = document.createElement("img");
+      //           img.src = e.target.result;
+      //           img.style.maxWidth = "100%";
+      //           img.style.maxHeight = "100%";
+
+      //           // Apply protection to new image
+      //           img.addEventListener("contextmenu", function (e) {
+      //             e.preventDefault();
+      //             e.stopPropagation();
+      //             return false;
+      //           });
+      //           img.addEventListener("dragstart", function (e) {
+      //             e.preventDefault();
+      //             return false;
+      //           });
+      //           img.setAttribute("draggable", "false");
+      //           img.setAttribute("oncontextmenu", "return false;");
+      //           img.setAttribute("ondragstart", "return false;");
+
+      //           imageElement.innerHTML = "";
+      //           imageElement.appendChild(img);
+
+      //           edits.push({
+      //             type: "add_image",
+      //             page: currentPage,
+      //             x: x,
+      //             y: y,
+      //             image_data: e.target.result,
+      //           });
+      //         };
+      //         reader.readAsDataURL(file);
+      //       }
+
+      //       // Add delete button to container
+      //       imageContainer.appendChild(deleteBtn);
+
+      //       // Deactivate image tool after adding image
+      //       currentEditType = "select";
+
+      //       // Send message to parent to deactivate image tool
+      //       window.parent.postMessage(
+      //         {
+      //           type: "EDIT_MODE_SET",
+      //           mode: "select",
+      //         },
+      //         "*"
+      //       );
+      //     };
+      //     input.click();
+      //   });
+
+      //   // Make image element draggable
+      //   makeElementDraggable(imageContainer);
+
+      //   // Add resize handles
+      //   addResizeHandles(imageContainer);
+
+      //   // Add click handler to edit image
+      //   imageElement.addEventListener("click", function (e) {
+      //     e.stopPropagation();
+      //     console.log("🖼️ Image element clicked for editing");
+      //     // You can add image editing functionality here if needed
+      //   });
+
+      //   // Assemble and add to overlay
+      //   imageContainer.appendChild(fileInput);
+      //   imageContainer.appendChild(imageElement);
+      //   overlay.appendChild(imageContainer);
+      // }
+
+      // Global protection against right-click and image saving
+      document.addEventListener("contextmenu", function (e) {
+        // Allow right-click on form elements and text inputs
+        if (
+          e.target.tagName === "INPUT" ||
+          e.target.tagName === "TEXTAREA" ||
+          e.target.tagName === "SELECT"
+        ) {
+          return;
+        }
+        e.preventDefault();
+        return false;
+      });
+
+      // Prevent drag and drop of images
+      document.addEventListener("dragstart", function (e) {
+        if (e.target.tagName === "IMG") {
+          e.preventDefault();
+          return false;
+        }
+      });
+
+      // Undo/Redo state management
+      let undoStack = [];
+      let redoStack = [];
+      let canUndo = false;
+      let canRedo = false;
+
+      // Save current state to undo stack
+      function saveStateToUndoStack() {
+        const currentState = {
+          // Added elements
+          textElements: Array.from(
+            document.querySelectorAll(".text-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.style.left) || 0,
+            y: parseFloat(el.style.top) || 0,
+            text: el.textContent || el.innerHTML,
+            fontSize: parseFloat(el.style.fontSize) || 16,
+            color: el.style.color || "#000000",
+            fontFamily: el.style.fontFamily || "Arial",
+            fontWeight: el.style.fontWeight || "normal",
+            fontStyle: el.style.fontStyle || "normal",
+          })),
+          signatureElements: Array.from(
+            document.querySelectorAll(".signature-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            signatureData: el.innerHTML,
+          })),
+          imageElements: Array.from(
+            document.querySelectorAll(".image-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            src: el.querySelector("img")?.src || "",
+          })),
+          // Existing document content
+          documentContent: Array.from(
+            document.querySelectorAll(
+              ".text-span, .editable-text, [contenteditable='true']"
+            )
+          ).map((el) => ({
+            id: el.id || el.className,
+            text: el.textContent || el.innerHTML,
+            tagName: el.tagName,
+            className: el.className,
+            style: el.getAttribute("style") || "",
+            dataText: el.getAttribute("data-text") || "",
+          })),
+        };
+
+        undoStack.push(currentState);
+        redoStack = []; // Clear redo stack when new action is performed
+        canUndo = true;
+        canRedo = false;
+
+        // Limit undo stack size to prevent memory issues
+        if (undoStack.length > 50) {
+          undoStack.shift();
+        }
+
+        console.log(
+          "💾 State saved to undo stack. Stack size:",
+          undoStack.length
+        );
+      }
+
+      // Undo function
+      function performUndo() {
+        console.log("↶ UNDO BUTTON CLICKED");
+        console.log("↶ Current undo stack length:", undoStack.length);
+        console.log("↶ Current redo stack length:", redoStack.length);
+
+        if (undoStack.length === 0) {
+          console.log("❌ Nothing to undo - stack is empty");
+          return;
+        }
+
+        console.log("↶ Performing undo operation...");
+        const currentState = {
+          textElements: Array.from(
+            document.querySelectorAll(".text-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.style.left) || 0,
+            y: parseFloat(el.style.top) || 0,
+            text: el.textContent || el.innerHTML,
+            fontSize: parseFloat(el.style.fontSize) || 16,
+            color: el.style.color || "#000000",
+            fontFamily: el.style.fontFamily || "Arial",
+            fontWeight: el.style.fontWeight || "normal",
+            fontStyle: el.style.fontStyle || "normal",
+          })),
+          signatureElements: Array.from(
+            document.querySelectorAll(".signature-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            signatureData: el.innerHTML,
+          })),
+          imageElements: Array.from(
+            document.querySelectorAll(".image-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            src: el.querySelector("img")?.src || "",
+          })),
+        };
+
+        const previousState = undoStack[undoStack.length - 1];
+        console.log("↶ Previous state to restore:", previousState);
+        console.log("↶ Current state being saved to redo:", currentState);
+
+        // Move current state to redo stack
+        redoStack.push(currentState);
+        console.log("↶ Current state moved to redo stack");
+
+        // Restore previous state
+        console.log("↶ Restoring previous state...");
+        restoreState(previousState);
+        console.log("↶ Previous state restored");
+
+        // Remove the state we just used from undo stack
+        undoStack.pop();
+        console.log("↶ Used state removed from undo stack");
+
+        // Update button states
+        canUndo = undoStack.length > 0;
+        canRedo = true;
+
+        console.log("↶ UNDO COMPLETED");
+        console.log("↶ New undo stack length:", undoStack.length);
+        console.log("↶ New redo stack length:", redoStack.length);
+        console.log("↶ Can undo:", canUndo, "Can redo:", canRedo);
+      }
+
+      // Redo function
+      function performRedo() {
+        console.log("↷ REDO BUTTON CLICKED");
+        console.log("↷ Current undo stack length:", undoStack.length);
+        console.log("↷ Current redo stack length:", redoStack.length);
+
+        if (redoStack.length === 0) {
+          console.log("❌ Nothing to redo - redo stack is empty");
+          return;
+        }
+
+        console.log("↷ Performing redo operation...");
+        const currentState = {
+          textElements: Array.from(
+            document.querySelectorAll(".text-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.style.left) || 0,
+            y: parseFloat(el.style.top) || 0,
+            text: el.textContent || el.innerHTML,
+            fontSize: parseFloat(el.style.fontSize) || 16,
+            color: el.style.color || "#000000",
+            fontFamily: el.style.fontFamily || "Arial",
+            fontWeight: el.style.fontWeight || "normal",
+            fontStyle: el.style.fontStyle || "normal",
+          })),
+          signatureElements: Array.from(
+            document.querySelectorAll(".signature-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            signatureData: el.innerHTML,
+          })),
+          imageElements: Array.from(
+            document.querySelectorAll(".image-element")
+          ).map((el) => ({
+            id: el.id,
+            x: parseFloat(el.parentElement.style.left) || 0,
+            y: parseFloat(el.parentElement.style.top) || 0,
+            width: parseFloat(el.parentElement.style.width) || 0,
+            height: parseFloat(el.parentElement.style.height) || 0,
+            src: el.querySelector("img")?.src || "",
+          })),
+        };
+
+        const nextState = redoStack[redoStack.length - 1];
+        console.log("↷ Next state to restore:", nextState);
+        console.log("↷ Current state being saved to undo:", currentState);
+
+        // Move current state to undo stack
+        undoStack.push(currentState);
+        console.log("↷ Current state moved to undo stack");
+
+        // Restore next state
+        console.log("↷ Restoring next state...");
+        restoreState(nextState);
+        console.log("↷ Next state restored");
+
+        // Remove the state we just used from redo stack
+        redoStack.pop();
+        console.log("↷ Used state removed from redo stack");
+
+        // Update button states
+        canUndo = true;
+        canRedo = redoStack.length > 0;
+
+        console.log("↷ REDO COMPLETED");
+        console.log("↷ New undo stack length:", undoStack.length);
+        console.log("↷ New redo stack length:", redoStack.length);
+        console.log("↷ Can undo:", canUndo, "Can redo:", canRedo);
+      }
+
+      // Restore state function
+      function restoreState(state) {
+        console.log("🔄 Restoring state:", state);
+
+        // Clear all existing elements
+        document
+          .querySelectorAll(".text-element, .signature-element, .image-element")
+          .forEach((el) => {
+            el.parentElement?.remove();
+          });
+
+        // Restore document content
+        if (state.documentContent) {
+          console.log(
+            "🔄 Restoring document content:",
+            state.documentContent.length,
+            "elements"
+          );
+          state.documentContent.forEach((element) => {
+            // Find the element by its identifier
+            const existingElement = document.querySelector(
+              `[data-text="${element.dataText}"], .${
+                element.className.split(" ")[0]
+              }`
+            );
+            if (existingElement) {
+              console.log(
+                "🔄 Restoring element:",
+                element.dataText,
+                "to:",
+                element.text
+              );
+              existingElement.textContent = element.text;
+              existingElement.innerHTML = element.innerHTML;
+              if (element.style) {
+                existingElement.setAttribute("style", element.style);
+              }
+            }
+          });
+        }
+
+        // Restore text elements
+        state.textElements.forEach((element) => {
+          const textContainer = document.createElement("div");
+          textContainer.className = "element-container";
+          textContainer.style.position = "absolute";
+          textContainer.style.left = element.x + "px";
+          textContainer.style.top = element.y + "px";
+          textContainer.style.width = "fit-content";
+          textContainer.style.height = "fit-content";
+          textContainer.style.zIndex = "20";
+
+          const textElement = document.createElement("div");
+          textElement.className = "text-element";
+          textElement.id = element.id;
+          textElement.contentEditable = "true";
+          textElement.style.position = "relative";
+          textElement.style.left = "0";
+          textElement.style.top = "0";
+          textElement.style.fontSize = element.fontSize + "px";
+          textElement.style.color = element.color;
+          textElement.style.fontFamily = element.fontFamily;
+          textElement.style.fontWeight = element.fontWeight;
+          textElement.style.fontStyle = element.fontStyle;
+          textElement.style.padding = "4px";
+          textElement.style.border = "1px solid transparent";
+          textElement.style.borderRadius = "4px";
+          textElement.style.minWidth = "50px";
+          textElement.style.minHeight = "20px";
+          textElement.style.cursor = "text";
+          textElement.style.outline = "none";
+          textElement.style.backgroundColor = "transparent";
+          textElement.innerHTML = element.text;
+
+          // Add delete button
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "element-delete-btn";
+          deleteBtn.innerHTML = "×";
+          deleteBtn.title = "Delete text";
+
+          deleteBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (confirm("Are you sure you want to delete this text element?")) {
+              textContainer.remove();
+            }
+          });
+
+          textContainer.appendChild(textElement);
+          textContainer.appendChild(deleteBtn);
+
+          // Make draggable
+          makeElementDraggable(textContainer);
+
+          // Add to overlay
+          const overlay = document.querySelector(".interactive-overlay");
+          if (overlay) {
+            overlay.appendChild(textContainer);
+          }
+        });
+
+        // Restore signature elements
+        state.signatureElements.forEach((element) => {
+          const signatureContainer = document.createElement("div");
+          signatureContainer.className = "element-container";
+          signatureContainer.style.position = "absolute";
+          signatureContainer.style.left = element.x + "px";
+          signatureContainer.style.top = element.y + "px";
+          signatureContainer.style.width = element.width + "px";
+          signatureContainer.style.height = element.height + "px";
+          signatureContainer.style.zIndex = "20";
+
+          const signatureElement = document.createElement("div");
+          signatureElement.className = "signature-element";
+          signatureElement.id = element.id;
+          signatureElement.style.position = "relative";
+          signatureElement.style.left = "0";
+          signatureElement.style.top = "0";
+          signatureElement.style.width = "auto";
+          signatureElement.style.height = "auto";
+          signatureElement.style.padding = "0";
+          signatureElement.style.border = "none";
+          signatureElement.style.margin = "0";
+          signatureElement.style.backgroundColor = "transparent";
+          signatureElement.innerHTML = element.signatureData;
+
+          // Add delete button
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "element-delete-btn";
+          deleteBtn.innerHTML = "×";
+          deleteBtn.title = "Delete signature";
+
+          deleteBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (
+              confirm("Are you sure you want to delete this signature element?")
+            ) {
+              signatureContainer.remove();
+            }
+          });
+
+          signatureContainer.appendChild(signatureElement);
+          signatureContainer.appendChild(deleteBtn);
+
+          // Make draggable
+          makeElementDraggable(signatureContainer);
+
+          // Add resize handles
+          addResizeHandles(signatureContainer);
+
+          // Add to overlay
+          const overlay = document.querySelector(".interactive-overlay");
+          if (overlay) {
+            overlay.appendChild(signatureContainer);
+          }
+        });
+
+        // Restore image elements
+        state.imageElements.forEach((element) => {
+          const imageContainer = document.createElement("div");
+          imageContainer.className = "element-container";
+          imageContainer.style.position = "absolute";
+          imageContainer.style.left = element.x + "px";
+          imageContainer.style.top = element.y + "px";
+          imageContainer.style.width = element.width + "px";
+          imageContainer.style.height = element.height + "px";
+          imageContainer.style.zIndex = "20";
+
+          const imageElement = document.createElement("div");
+          imageElement.className = "image-element";
+          imageElement.id = element.id;
+          imageElement.style.position = "relative";
+          imageElement.style.left = "0";
+          imageElement.style.top = "0";
+          imageElement.style.width = "fit-content";
+          imageElement.style.height = "fit-content";
+          imageElement.style.padding = "0";
+          imageElement.style.border = "none";
+          imageElement.style.margin = "0";
+          imageElement.style.backgroundColor = "transparent";
+
+          if (element.src) {
+            const img = document.createElement("img");
+            img.src = element.src;
+            img.style.maxWidth = "200px";
+            img.style.maxHeight = "200px";
+            img.style.width = "auto";
+            img.style.height = "auto";
+            img.style.display = "block";
+            imageElement.appendChild(img);
+          } else {
+            imageElement.innerHTML = "Click to add image";
+          }
+
+          // Add delete button
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "element-delete-btn";
+          deleteBtn.innerHTML = "×";
+          deleteBtn.title = "Delete image";
+
+          deleteBtn.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (
+              confirm("Are you sure you want to delete this image element?")
+            ) {
+              imageContainer.remove();
+            }
+          });
+
+          imageContainer.appendChild(imageElement);
+          imageContainer.appendChild(deleteBtn);
+
+          // Make draggable
+          makeElementDraggable(imageContainer);
+
+          // Add resize handles
+          addResizeHandles(imageContainer);
+
+          // Add to overlay
+          const overlay = document.querySelector(".interactive-overlay");
+          if (overlay) {
+            overlay.appendChild(imageContainer);
+          }
+        });
+      }
+
+      // Save state when document content is edited
+      document.addEventListener("input", function (e) {
+        // Check if the edited element is part of the document content
+        if (
+          e.target.matches(
+            '.text-span, .editable-text, [contenteditable="true"]'
+          )
+        ) {
+          console.log("📝 Document content edited:");
+          console.log("📝 Element:", e.target);
+          console.log("📝 Element class:", e.target.className);
+          console.log("📝 Element text:", e.target.textContent);
+          console.log("📝 Element innerHTML:", e.target.innerHTML);
+          console.log("📝 Element style:", e.target.getAttribute("style"));
+          console.log(
+            "📝 Element data-text:",
+            e.target.getAttribute("data-text")
+          );
+          console.log("📝 Saving state for undo/redo");
+          saveStateToUndoStack();
+        }
+      });
+
+      // Save state when document content loses focus (user finished editing)
+      document.addEventListener(
+        "blur",
+        function (e) {
+          if (
+            e.target.matches(
+              '.text-span, .editable-text, [contenteditable="true"]'
+            )
+          ) {
+            console.log("📝 Document content editing finished:");
+            console.log("📝 Element:", e.target);
+            console.log("📝 Final text:", e.target.textContent);
+            console.log("📝 Final innerHTML:", e.target.innerHTML);
+            console.log("📝 Saving final state for undo/redo");
+            saveStateToUndoStack();
+          }
+        },
+        true
+      );
+
+      // Prevent keyboard shortcuts for saving
+      document.addEventListener("keydown", function (e) {
+        // Handle undo/redo keyboard shortcuts
+        if (e.ctrlKey && e.key === "z" && !e.shiftKey) {
+          e.preventDefault();
+          performUndo();
+          return false;
+        }
+
+        if (
+          (e.ctrlKey && e.key === "y") ||
+          (e.ctrlKey && e.shiftKey && e.key === "Z")
+        ) {
+          e.preventDefault();
+          performRedo();
+          return false;
+        }
+
+        // Prevent Ctrl+S, Ctrl+Shift+S, F12 (dev tools)
+        if (
+          (e.ctrlKey && e.key === "s") ||
+          (e.ctrlKey && e.shiftKey && e.key === "S") ||
+          e.key === "F12" ||
+          (e.ctrlKey && e.shiftKey && e.key === "I")
+        ) {
+          e.preventDefault();
+          return false;
+        }
+      });
+
+      // Disable text selection on images
+      document.addEventListener("selectstart", function (e) {
+        if (e.target.tagName === "IMG") {
+          e.preventDefault();
+          return false;
+        }
+      });
+
+      document.addEventListener("DOMContentLoaded", function () {
+        console.log("📄 Template loaded with total pages:", totalPages);
+        console.log("📄 Current page:", currentPage);
+
+        // Set page dimensions
+        document.querySelectorAll(".pdf-page").forEach((page) => {
+          const width = page.dataset.width;
+          const height = page.dataset.height;
+          page.style.width = width + "px";
+          page.style.height = height + "px";
+          console.log(
+            "📄 Page",
+            page.dataset.page,
+            "dimensions:",
+            width,
+            "x",
+            height
+          );
+        });
+
+        // Make text elements directly editable
+        document.querySelectorAll(".editable-text").forEach((element) => {
+          element.contentEditable = true;
+          element.addEventListener("input", function () {
+            // Track text changes
+            edits.push({
+              type: "text",
+              page: currentPage,
+              old_text: element.dataset.text,
+              new_text: element.textContent,
+            });
+            element.dataset.text = element.textContent;
+          });
+        });
+
+        // Handle image replacement
+        document.querySelectorAll(".editable-image").forEach((element) => {
+          // Prevent right-click context menu
+          element.addEventListener("contextmenu", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+          });
+
+          // Prevent drag and drop
+          element.addEventListener("dragstart", function (e) {
+            e.preventDefault();
+            return false;
+          });
+
+          // Prevent image saving via keyboard shortcuts
+          element.addEventListener("keydown", function (e) {
+            if (e.ctrlKey && (e.key === "s" || e.key === "S")) {
+              e.preventDefault();
+              return false;
+            }
+          });
+
+          // Disable image saving methods
+          element.setAttribute("draggable", "false");
+          element.setAttribute("oncontextmenu", "return false;");
+          element.setAttribute("ondragstart", "return false;");
+          element.setAttribute(
+            "onload",
+            "this.ondragstart=function(){return false};"
+          );
+
+          element.addEventListener("click", function () {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.onchange = function (e) {
+              const file = e.target.files[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                  edits.push({
+                    type: "image",
+                    page: currentPage,
+                    image_id: parseInt(element.dataset.imageId),
+                    image_data: e.target.result,
+                  });
+                  element.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+              }
+            };
+            input.click();
+          });
+        });
+
+        // Set up overlay click handlers
+        document.querySelectorAll(".interactive-overlay").forEach((overlay) => {
+          // Start with overlay disabled
+          overlay.style.pointerEvents = "none";
+          overlay.style.zIndex = "1";
+
+          // Add a simple test click listener to see if overlays are clickable
+          overlay.addEventListener("click", function (e) {
+            console.log("🧪 TEST: Overlay clicked directly!");
+            console.log("🧪 TEST: Event target:", e.target);
+            console.log("🧪 TEST: Current edit type:", currentEditType);
+          });
+
+          overlay.addEventListener("click", function (e) {
+            console.log(
+              "🖱️ Overlay clicked, currentEditType:",
+              currentEditType
+            );
+            console.log("🖱️ Click target:", e.target);
+            console.log("🖱️ Click target class:", e.target.className);
+            console.log("🖱️ Overlay element:", overlay);
+            console.log(
+              "🖱️ Overlay pointer-events:",
+              overlay.style.pointerEvents
+            );
+            console.log("🖱️ Overlay z-index:", overlay.style.zIndex);
+
+            // Check if click is on toolbar or its children
+            if (e.target.closest(".text-formatting-toolbar")) {
+              console.log("🚫 Click on toolbar, ignoring overlay handler");
+              return;
+            }
+
+            // Check if click is on existing elements
+            if (
+              e.target.closest(".text-element") ||
+              e.target.closest(".signature-element") ||
+              // COMMENTED OUT: e.target.closest(".image-element") ||
+              e.target.closest(".element-container")
+            ) {
+              console.log(
+                "🚫 Click on existing element, ignoring overlay handler"
+              );
+              return;
+            }
+
+            // Only handle clicks if we're in an active editing mode
+            if (currentEditType === "text") {
+              addTextElement(e, overlay);
+              // Immediately disable overlay to prevent multiple clicks
+              overlay.style.pointerEvents = "none";
+              overlay.style.zIndex = "1";
+            } else if (currentEditType === "sign") {
+              console.log("✍️ Sign tool active - calling addSignatureElement");
+              addSignatureElement(e, overlay);
+              // Immediately disable overlay to prevent multiple clicks
+              overlay.style.pointerEvents = "none";
+              overlay.style.zIndex = "1";
+              console.log(
+                "✍️ Overlay disabled after signature element creation"
+              );
+            } else if (currentEditType === "image") {
+              // COMMENTED OUT: Image functionality temporarily disabled
+              console.log(
+                "🖼️ Image tool disabled - functionality commented out"
+              );
+              // addImageElement(e, overlay);
+              // // Immediately disable overlay to prevent multiple clicks
+              // overlay.style.pointerEvents = "none";
+              // overlay.style.zIndex = "1";
+            }
+            // If no active editing mode, let the click pass through to underlying elements
+          });
+        });
+
+        const prevPageBtn = document.getElementById("prevPage");
+        const nextPageBtn = document.getElementById("nextPage");
+        if (prevPageBtn) prevPageBtn.disabled = true;
+        if (nextPageBtn) {
+          nextPageBtn.disabled = totalPages === 1;
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF to HTML Converter</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 600px;
+        margin: 50px auto;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+
+      .container {
+        background: white;
+        padding: 40px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        text-align: center;
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+      }
+
+      .upload-area {
+        border: 2px dashed #007bff;
+        border-radius: 8px;
+        padding: 40px;
+        margin: 20px 0;
+        background-color: #f8f9fa;
+        transition: all 0.3s ease;
+      }
+
+      .upload-area:hover {
+        border-color: #0056b3;
+        background-color: #e3f2fd;
+      }
+
+      .upload-area.dragover {
+        border-color: #28a745;
+        background-color: #d4edda;
+      }
+
+      input[type="file"] {
+        display: none;
+      }
+
+      .file-label {
+        display: inline-block;
+        padding: 12px 24px;
+        background: #007bff;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.3s ease;
+      }
+
+      .file-label:hover {
+        background: #0056b3;
+      }
+
+      .upload-btn {
+        background: #28a745;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 20px;
+        font-size: 16px;
+      }
+
+      .upload-btn:hover {
+        background: #218838;
+      }
+
+      .upload-btn:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+
+      .file-info {
+        margin-top: 15px;
+        padding: 10px;
+        background: #e9ecef;
+        border-radius: 4px;
+        display: none;
+      }
+
+      .features {
+        margin-top: 30px;
+        text-align: left;
+      }
+
+      .features h3 {
+        color: #333;
+        margin-bottom: 15px;
+      }
+
+      .features ul {
+        color: #666;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>PDF to HTML Converter</h1>
+      <p class="subtitle">
+        Convert your PDF files to HTML while preserving the original layout
+      </p>
+
+      <form method="post" enctype="multipart/form-data" id="uploadForm">
+        <div class="upload-area" id="uploadArea">
+          <p>📄 Drag and drop your PDF file here or click to browse</p>
+          <label for="pdf" class="file-label">Choose PDF File</label>
+          <input
+            type="file"
+            name="pdf"
+            id="pdf"
+            accept="application/pdf"
+            required
+          />
+          <div class="file-info" id="fileInfo"></div>
+        </div>
+        <button type="submit" class="upload-btn" id="uploadBtn" disabled>
+          Convert to HTML
+        </button>
+      </form>
+
+      <div class="features">
+        <h3>Features:</h3>
+        <ul>
+          <li>Preserves original text positioning and formatting</li>
+          <li>Maintains font styles (bold, italic)</li>
+          <li>Page-by-page navigation</li>
+          <li>Zoom controls for better viewing</li>
+          <li>Responsive design for different screen sizes</li>
+        </ul>
+      </div>
+    </div>
+
+    <script>
+      const fileInput = document.getElementById("pdf");
+      const uploadArea = document.getElementById("uploadArea");
+      const fileInfo = document.getElementById("fileInfo");
+      const uploadBtn = document.getElementById("uploadBtn");
+
+      fileInput.addEventListener("change", function (e) {
+        const file = e.target.files[0];
+        if (file) {
+          fileInfo.innerHTML = `Selected: ${file.name} (${(
+            file.size /
+            1024 /
+            1024
+          ).toFixed(2)} MB)`;
+          fileInfo.style.display = "block";
+          uploadBtn.disabled = false;
+        }
+      });
+
+      uploadArea.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        uploadArea.classList.add("dragover");
+      });
+
+      uploadArea.addEventListener("dragleave", function (e) {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+      });
+
+      uploadArea.addEventListener("drop", function (e) {
+        e.preventDefault();
+        uploadArea.classList.remove("dragover");
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          fileInput.files = files;
+          const file = files[0];
+          fileInfo.innerHTML = `Selected: ${file.name} (${(
+            file.size /
+            1024 /
+            1024
+          ).toFixed(2)} MB)`;
+          fileInfo.style.display = "block";
+          uploadBtn.disabled = false;
+        }
+      });
+
+      uploadArea.addEventListener("click", function () {
+        fileInput.click();
+      });
+    </script>
+  </body>
+</html>

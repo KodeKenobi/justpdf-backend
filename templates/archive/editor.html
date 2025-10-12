@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF Editor - {{ filename }}</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: Arial, sans-serif;
+        background-color: #f5f5f5;
+        overflow: auto;
+      }
+
+      .pdf-container {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+        padding: 20px;
+      }
+
+      .pdf-page {
+        position: relative;
+        margin: 20px auto;
+        transform-origin: top left;
+        max-width: 100%;
+        height: auto;
+        background: white;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .pdf-page.hidden {
+        display: none;
+      }
+
+      .text-line {
+        position: relative;
+        white-space: nowrap;
+      }
+
+      .text-span {
+        position: absolute;
+        white-space: nowrap;
+      }
+
+      .editable-text {
+        cursor: text;
+        border: 1px solid transparent;
+        padding: 2px;
+        outline: none;
+        background: transparent;
+        min-width: 20px;
+        min-height: 16px;
+        transition: all 0.2s ease;
+        position: relative;
+      }
+
+      .editable-text:hover {
+        border: 1px dashed #007bff;
+        background: rgba(0, 123, 255, 0.1);
+      }
+
+      .editable-text:hover::after {
+        content: "✏️";
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        font-size: 12px;
+        background: white;
+        border: 1px solid #007bff;
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+
+      .editable-text:focus {
+        border: 2px solid #007bff;
+        background: rgba(0, 123, 255, 0.1);
+        outline: none;
+      }
+
+      .editable-image {
+        cursor: pointer;
+        border: none;
+        outline: none;
+      }
+
+      .editable-image:hover {
+        outline: 2px dashed #007bff;
+      }
+
+      /* Interactive overlay styles */
+      .interactive-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: auto;
+        z-index: 10;
+      }
+
+      .text-element {
+        position: absolute;
+        cursor: text;
+        border: 1px dashed transparent;
+        padding: 2px;
+        min-width: 20px;
+        min-height: 16px;
+        font-size: 12px;
+        line-height: 1.2;
+        background: transparent;
+        outline: none;
+        resize: none;
+        overflow: hidden;
+      }
+
+      .text-element:hover {
+        border-color: #007bff;
+        background: rgba(0, 123, 255, 0.1);
+      }
+
+      .text-element:focus {
+        border-color: #007bff;
+        background: rgba(0, 123, 255, 0.1);
+        outline: none;
+      }
+
+      .signature-element {
+        position: absolute;
+        cursor: move;
+        border: 1px dashed transparent;
+        min-width: 100px;
+        min-height: 50px;
+        background: rgba(0, 123, 255, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        color: #007bff;
+      }
+
+      .signature-element:hover {
+        border-color: #007bff;
+      }
+
+      .image-element {
+        position: absolute;
+        cursor: move;
+        border: 1px dashed transparent;
+        min-width: 50px;
+        min-height: 50px;
+        background: rgba(0, 123, 255, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        color: #007bff;
+      }
+
+      .image-element:hover {
+        border-color: #007bff;
+      }
+
+      .image-element img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+      }
+
+      /* Modal styles */
+      .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-content {
+        background-color: #fefefe;
+        margin: 15% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 80%;
+        max-width: 500px;
+        border-radius: 8px;
+      }
+
+      .close {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+      }
+
+      .close:hover {
+        color: black;
+      }
+
+      .btn {
+        padding: 8px 16px;
+        margin: 4px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      .btn.primary {
+        background-color: #007bff;
+        color: white;
+      }
+
+      .btn.secondary {
+        background-color: #6c757d;
+        color: white;
+      }
+
+      .btn:hover {
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Instructions -->
+    <div
+      id="instructions"
+      style="
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 12px;
+        z-index: 1000;
+        max-width: 300px;
+        cursor: pointer;
+      "
+    >
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        "
+      >
+        <strong>How to edit:</strong>
+        <span
+          onclick="document.getElementById('instructions').style.display='none'"
+          style="margin-left: 10px; font-size: 16px; cursor: pointer"
+          >&times;</span
+        >
+      </div>
+      <div style="margin-top: 5px">
+        • <strong>Click</strong> on any text to edit it<br />
+        • <strong>Double-click</strong> to select all text<br />
+        • <strong>Hover</strong> over text to see edit icon<br />
+        • Use toolbar tools to add new elements
+      </div>
+    </div>
+
+    <div class="pdf-container">
+      {% for page in pages %}
+      <div
+        class="pdf-page{% if loop.index > 1 %} hidden{% endif %}"
+        id="page-{{ loop.index }}"
+        data-width="{{ page.width }}"
+        data-height="{{ page.height }}"
+      >
+        {{ page.html|safe }}
+
+        <!-- Interactive overlay for editing -->
+        <div class="interactive-overlay" id="overlay-{{ loop.index }}"></div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Signature Modal -->
+    <div id="signatureModal" class="modal">
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h3>Add Signature</h3>
+        <canvas
+          id="signatureCanvas"
+          width="400"
+          height="200"
+          style="border: 1px solid #ccc; cursor: crosshair"
+        ></canvas>
+        <br /><br />
+        <button class="btn primary" onclick="saveSignature()">
+          Save Signature
+        </button>
+        <button class="btn secondary" onclick="clearSignature()">Clear</button>
+        <button class="btn secondary" onclick="closeSignatureModal()">
+          Cancel
+        </button>
+      </div>
+    </div>
+
+    <!-- Image Upload Modal -->
+    <div id="imageModal" class="modal">
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h3>Add Image</h3>
+        <input
+          type="file"
+          id="imageInput"
+          accept="image/*"
+          style="margin-bottom: 10px"
+        />
+        <br />
+        <button class="btn primary" onclick="saveImage()">Add Image</button>
+        <button class="btn secondary" onclick="closeImageModal()">
+          Cancel
+        </button>
+      </div>
+    </div>
+
+    <script>
+      let currentPage = 1;
+      const totalPages = parseInt("{{ pages|length }}");
+      let currentZoom = 1;
+      let edits = [];
+      let currentEditElement = null;
+      let currentEditType = null;
+      let savedHtmlFilename = null;
+      let sessionId = null;
+      let isDrawing = false;
+      let signatureCanvas = null;
+      let signatureCtx = null;
+      let currentImageFile = null;
+
+      // Generate session ID on page load
+      function generateSessionId() {
+        return Math.random().toString(36).substr(2, 8);
+      }
+
+      // Cleanup session files
+      function cleanupSession() {
+        if (sessionId) {
+          fetch(`/cleanup_session/${sessionId}`, {
+            method: "POST",
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              console.log("Session cleanup:", data.message);
+            })
+            .catch((error) => {
+              console.error("Cleanup error:", error);
+            });
+        }
+      }
+
+      // Initialize session and zoom on page load
+      document.addEventListener("DOMContentLoaded", function () {
+        sessionId = generateSessionId();
+        console.log("Generated session ID:", sessionId);
+        changeZoom(currentZoom);
+
+        // Initialize signature canvas
+        signatureCanvas = document.getElementById("signatureCanvas");
+        signatureCtx = signatureCanvas.getContext("2d");
+        signatureCtx.strokeStyle = "#000";
+        signatureCtx.lineWidth = 2;
+
+        // Cleanup on page unload
+        window.addEventListener("beforeunload", cleanupSession);
+
+        // Set up interactive overlays
+        setupInteractiveOverlays();
+      });
+
+      function setupInteractiveOverlays() {
+        // Set page dimensions
+        document.querySelectorAll(".pdf-page").forEach((page) => {
+          const width = page.dataset.width;
+          const height = page.dataset.height;
+          page.style.width = width + "px";
+          page.style.height = height + "px";
+        });
+
+        // Make text elements directly editable
+        document.querySelectorAll(".editable-text").forEach((element) => {
+          element.contentEditable = true;
+          element.style.cursor = "text";
+          element.style.border = "1px solid transparent";
+          element.style.padding = "2px";
+          element.style.minWidth = "20px";
+          element.style.minHeight = "16px";
+
+          // Add hover effect
+          element.addEventListener("mouseenter", function () {
+            this.style.border = "1px dashed #007bff";
+            this.style.background = "rgba(0, 123, 255, 0.1)";
+          });
+
+          element.addEventListener("mouseleave", function () {
+            if (document.activeElement !== this) {
+              this.style.border = "1px solid transparent";
+              this.style.background = "transparent";
+            }
+          });
+
+          // Add focus/blur effects
+          element.addEventListener("focus", function () {
+            this.style.border = "2px solid #007bff";
+            this.style.background = "rgba(0, 123, 255, 0.1)";
+            this.style.outline = "none";
+          });
+
+          element.addEventListener("blur", function () {
+            this.style.border = "1px solid transparent";
+            this.style.background = "transparent";
+          });
+
+          // Add double-click to edit
+          element.addEventListener("dblclick", function (e) {
+            e.preventDefault();
+            this.focus();
+            // Select all text for easy editing
+            if (window.getSelection) {
+              const selection = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(this);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+          });
+
+          element.addEventListener("input", function () {
+            // Track text changes
+            edits.push({
+              type: "text",
+              page: currentPage,
+              old_text: element.dataset.text,
+              new_text: element.textContent,
+            });
+            element.dataset.text = element.textContent;
+          });
+        });
+
+        // Handle image replacement
+        document.querySelectorAll(".editable-image").forEach((element) => {
+          element.addEventListener("click", function () {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.onchange = function (e) {
+              const file = e.target.files[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                  edits.push({
+                    type: "image",
+                    page: currentPage,
+                    image_id: parseInt(element.dataset.imageId),
+                    image_data: e.target.result,
+                  });
+                  element.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+              }
+            };
+            input.click();
+          });
+        });
+
+        // Set up overlay click handlers
+        document.querySelectorAll(".interactive-overlay").forEach((overlay) => {
+          overlay.addEventListener("click", function (e) {
+            if (currentEditType === "text") {
+              addTextElement(e, overlay);
+            } else if (currentEditType === "signature") {
+              addSignatureElement(e, overlay);
+            } else if (currentEditType === "image") {
+              addImageElement(e, overlay);
+            }
+          });
+        });
+      }
+
+      function changePage(direction) {
+        const newPage = currentPage + direction;
+        if (newPage >= 1 && newPage <= totalPages) {
+          document.getElementById(`page-${currentPage}`).style.display = "none";
+          currentPage = newPage;
+          document.getElementById(`page-${currentPage}`).style.display =
+            "block";
+        }
+      }
+
+      function changeZoom(zoom) {
+        currentZoom = zoom;
+        const pages = document.querySelectorAll(".pdf-page");
+        pages.forEach((page) => {
+          page.style.transform = `scale(${zoom})`;
+          page.style.transformOrigin = "top left";
+        });
+      }
+
+      // Listen for messages from parent (React component)
+      window.addEventListener("message", function (event) {
+        if (event.data.type === "CHANGE_PAGE") {
+          changePage(event.data.direction);
+        } else if (event.data.type === "CHANGE_ZOOM") {
+          changeZoom(event.data.zoom);
+        } else if (event.data.type === "SAVE_EDITS") {
+          saveEdits();
+        } else if (event.data.type === "SET_EDIT_MODE") {
+          currentEditType = event.data.mode;
+        }
+      });
+
+      function addTextElement(e, overlay) {
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const textElement = document.createElement("textarea");
+        textElement.className = "text-element";
+        textElement.style.left = x + "px";
+        textElement.style.top = y + "px";
+        textElement.placeholder = "Enter text...";
+        textElement.value = "New Text";
+
+        textElement.addEventListener("blur", function () {
+          if (textElement.value.trim()) {
+            edits.push({
+              type: "add_text",
+              page: currentPage,
+              x: x,
+              y: y,
+              text: textElement.value,
+            });
+          }
+        });
+
+        overlay.appendChild(textElement);
+        textElement.focus();
+        textElement.select();
+      }
+
+      function addSignatureElement(e, overlay) {
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const signatureElement = document.createElement("div");
+        signatureElement.className = "signature-element";
+        signatureElement.style.left = x + "px";
+        signatureElement.style.top = y + "px";
+        signatureElement.innerHTML = "Signature";
+
+        signatureElement.addEventListener("click", function () {
+          openSignatureModal(signatureElement);
+        });
+
+        overlay.appendChild(signatureElement);
+      }
+
+      function addImageElement(e, overlay) {
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const imageElement = document.createElement("div");
+        imageElement.className = "image-element";
+        imageElement.style.left = x + "px";
+        imageElement.style.top = y + "px";
+        imageElement.innerHTML = "Image";
+
+        imageElement.addEventListener("click", function () {
+          openImageModal(imageElement);
+        });
+
+        overlay.appendChild(imageElement);
+      }
+
+      function openSignatureModal(element) {
+        document.getElementById("signatureModal").style.display = "block";
+        currentEditElement = element;
+      }
+
+      function openImageModal(element) {
+        document.getElementById("imageModal").style.display = "block";
+        currentEditElement = element;
+      }
+
+      function closeSignatureModal() {
+        document.getElementById("signatureModal").style.display = "none";
+        currentEditElement = null;
+      }
+
+      function closeImageModal() {
+        document.getElementById("imageModal").style.display = "none";
+        currentEditElement = null;
+      }
+
+      function saveSignature() {
+        if (currentEditElement && signatureCanvas) {
+          const dataURL = signatureCanvas.toDataURL();
+          currentEditElement.innerHTML = `<img src="${dataURL}" style="max-width: 100%; max-height: 100%;">`;
+
+          edits.push({
+            type: "add_signature",
+            page: currentPage,
+            x: parseInt(currentEditElement.style.left),
+            y: parseInt(currentEditElement.style.top),
+            image_data: dataURL,
+          });
+
+          closeSignatureModal();
+        }
+      }
+
+      function clearSignature() {
+        if (signatureCtx) {
+          signatureCtx.clearRect(
+            0,
+            0,
+            signatureCanvas.width,
+            signatureCanvas.height
+          );
+        }
+      }
+
+      function saveImage() {
+        const fileInput = document.getElementById("imageInput");
+        const file = fileInput.files[0];
+
+        if (file && currentEditElement) {
+          const reader = new FileReader();
+          reader.onload = function (e) {
+            currentEditElement.innerHTML = `<img src="${e.target.result}" style="max-width: 100%; max-height: 100%;">`;
+
+            edits.push({
+              type: "add_image",
+              page: currentPage,
+              x: parseInt(currentEditElement.style.left),
+              y: parseInt(currentEditElement.style.top),
+              image_data: e.target.result,
+            });
+
+            closeImageModal();
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+
+      // Signature canvas drawing
+      signatureCanvas.addEventListener("mousedown", function (e) {
+        isDrawing = true;
+        const rect = signatureCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        signatureCtx.beginPath();
+        signatureCtx.moveTo(x, y);
+      });
+
+      signatureCanvas.addEventListener("mousemove", function (e) {
+        if (isDrawing) {
+          const rect = signatureCanvas.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          signatureCtx.lineTo(x, y);
+          signatureCtx.stroke();
+        }
+      });
+
+      signatureCanvas.addEventListener("mouseup", function () {
+        isDrawing = false;
+      });
+
+      // Close modals when clicking outside
+      window.addEventListener("click", function (e) {
+        const signatureModal = document.getElementById("signatureModal");
+        const imageModal = document.getElementById("imageModal");
+
+        if (e.target === signatureModal) {
+          closeSignatureModal();
+        }
+        if (e.target === imageModal) {
+          closeImageModal();
+        }
+      });
+
+      function saveEdits() {
+        console.log("Saving current document state...");
+        // Get the current HTML content
+        const htmlContent = document.documentElement.outerHTML;
+
+        fetch(`/save_html/{{ filename }}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            html_content: htmlContent,
+            session_id: sessionId,
+          }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.status === "success") {
+              savedHtmlFilename = data.html_filename;
+              // Notify parent that save is complete
+              window.parent.postMessage(
+                {
+                  type: "SAVE_COMPLETE",
+                  filename: savedHtmlFilename,
+                },
+                "*"
+              );
+            } else {
+              console.error("Error saving document:", data.message);
+            }
+          })
+          .catch((error) => {
+            console.error("Error saving document:", error);
+          });
+      }
+    </script>
+  </body>
+</html>
