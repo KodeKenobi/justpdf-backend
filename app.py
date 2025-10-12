@@ -14,7 +14,15 @@ CORS(app)  # Enable CORS for all routes
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "message": "Backend is running"})
+    upload_folder_exists = os.path.exists(UPLOAD_FOLDER)
+    upload_folder_contents = os.listdir(UPLOAD_FOLDER) if upload_folder_exists else []
+    return jsonify({
+        "status": "ok", 
+        "message": "Backend is running",
+        "upload_folder": UPLOAD_FOLDER,
+        "upload_folder_exists": upload_folder_exists,
+        "upload_folder_contents": upload_folder_contents
+    })
 UPLOAD_FOLDER = "uploads"
 EDITED_FOLDER = "edited"
 HTML_FOLDER = "saved_html"
@@ -46,14 +54,32 @@ def cleanup_session_files(session_id):
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
+        print(f"DEBUG: Upload endpoint called")
+        print(f"DEBUG: Upload folder: {UPLOAD_FOLDER}")
+        print(f"DEBUG: Upload folder exists: {os.path.exists(UPLOAD_FOLDER)}")
+        print(f"DEBUG: Upload folder contents before: {os.listdir(UPLOAD_FOLDER) if os.path.exists(UPLOAD_FOLDER) else 'Folder does not exist'}")
+        
         if "pdf" not in request.files:
+            print("ERROR: No pdf file in request")
             return "No file uploaded", 400
         file = request.files["pdf"]
         if file.filename == "":
+            print("ERROR: No filename provided")
             return "No selected file", 400
 
+        print(f"DEBUG: Uploading file: {file.filename}")
         filepath = os.path.join(UPLOAD_FOLDER, file.filename)
-        file.save(filepath)
+        print(f"DEBUG: Saving to: {filepath}")
+        
+        try:
+            file.save(filepath)
+            print(f"DEBUG: File saved successfully")
+            print(f"DEBUG: File exists after save: {os.path.exists(filepath)}")
+            print(f"DEBUG: Upload folder contents after: {os.listdir(UPLOAD_FOLDER) if os.path.exists(UPLOAD_FOLDER) else 'Folder does not exist'}")
+        except Exception as e:
+            print(f"ERROR: Failed to save file: {str(e)}")
+            return f"Failed to save file: {str(e)}", 500
+            
         return redirect(url_for("convert_pdf", filename=file.filename))
     return render_template("index.html")
 
