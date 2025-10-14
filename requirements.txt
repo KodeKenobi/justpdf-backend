@@ -3,3 +3,5 @@ flask-cors==6.0.1
 PyMuPDF==1.26.4
 gunicorn==21.2.0
 python-dotenv==1.0.0
+qrcode[pil]==8.2
+Pillow==11.3.0

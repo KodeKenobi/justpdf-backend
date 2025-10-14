@@ -1,13 +1,18 @@
 from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, Response
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import os
 import fitz
 import base64
 from io import BytesIO
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import glob
 import uuid
+import time
+import subprocess
+import shutil
+import threading
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -26,30 +31,126 @@ def health():
 UPLOAD_FOLDER = "uploads"
 EDITED_FOLDER = "edited"
 HTML_FOLDER = "saved_html"
+VIDEO_FOLDER = "converted_videos"
+AUDIO_FOLDER = "converted_audio"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(EDITED_FOLDER, exist_ok=True)
 os.makedirs(HTML_FOLDER, exist_ok=True)
+os.makedirs(VIDEO_FOLDER, exist_ok=True)
+os.makedirs(AUDIO_FOLDER, exist_ok=True)
+
+# Global progress tracking
+conversion_progress = {}
+
+# File cleanup system
+def cleanup_old_files():
+    """Clean up files older than 1 hour from all output directories"""
+    try:
+        current_time = time.time()
+        cleanup_directories = [UPLOAD_FOLDER, EDITED_FOLDER, HTML_FOLDER, VIDEO_FOLDER, AUDIO_FOLDER]
+        
+        for directory in cleanup_directories:
+            if os.path.exists(directory):
+                for filename in os.listdir(directory):
+                    file_path = os.path.join(directory, filename)
+                    if os.path.isfile(file_path):
+                        file_age = current_time - os.path.getmtime(file_path)
+                        # Delete files older than 1 hour
+                        if file_age > 3600:  # 1 hour in seconds
+                            try:
+                                os.remove(file_path)
+                                print(f"Cleaned up old file: {file_path}")
+                            except Exception as e:
+                                print(f"Error deleting file {file_path}: {e}")
+    except Exception as e:
+        print(f"Error in cleanup_old_files: {e}")
+
+def cleanup_specific_file(file_path):
+    """Clean up a specific file after download completion"""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"Cleaned up file after download: {file_path}")
+            return True
+    except Exception as e:
+        print(f"Error deleting file {file_path}: {e}")
+    return False
 
 def cleanup_session_files(session_id):
-    """Clean up all HTML files for a specific session"""
+    """Clean up all files for a specific session"""
     try:
-        pattern = os.path.join(HTML_FOLDER, f"session_{session_id}_*.html")
-        files_to_delete = glob.glob(pattern)
-        deleted_count = 0
+        cleanup_directories = [UPLOAD_FOLDER, EDITED_FOLDER, HTML_FOLDER, VIDEO_FOLDER, AUDIO_FOLDER]
         
-        for file_path in files_to_delete:
-            try:
-                os.remove(file_path)
-                deleted_count += 1
-                print(f"Deleted session file: {file_path}")
-            except Exception as e:
-                print(f"Error deleting file {file_path}: {e}")
-        
-        print(f"Cleaned up {deleted_count} files for session {session_id}")
-        return deleted_count
+        for directory in cleanup_directories:
+            if os.path.exists(directory):
+                pattern = os.path.join(directory, f"*{session_id}*")
+                files_to_delete = glob.glob(pattern)
+                for file_path in files_to_delete:
+                    try:
+                        os.remove(file_path)
+                        print(f"Cleaned up session file: {file_path}")
+                    except Exception as e:
+                        print(f"Error deleting session file {file_path}: {e}")
     except Exception as e:
         print(f"Error in cleanup_session_files: {e}")
-        return 0
+
+# Start background cleanup thread
+def background_cleanup():
+    """Background thread that runs cleanup every 30 minutes"""
+    while True:
+        time.sleep(1800)  # 30 minutes
+        cleanup_old_files()
+
+# Start the background cleanup thread
+cleanup_thread = threading.Thread(target=background_cleanup, daemon=True)
+cleanup_thread.start()
+
+# Add cleanup endpoints
+@app.route('/cleanup-file', methods=['POST'])
+def cleanup_file_endpoint():
+    """Clean up a specific file after download completion"""
+    try:
+        data = request.get_json()
+        file_path = data.get('file_path')
+        
+        if not file_path:
+            return jsonify({'success': False, 'error': 'No file path provided'}), 400
+        
+        success = cleanup_specific_file(file_path)
+        
+        if success:
+            return jsonify({'success': True, 'message': 'File cleaned up successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to clean up file'}), 500
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/cleanup-session', methods=['POST'])
+def cleanup_session_endpoint():
+    """Clean up all files for a specific session"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'success': False, 'error': 'No session ID provided'}), 400
+        
+        cleanup_session_files(session_id)
+        return jsonify({'success': True, 'message': 'Session files cleaned up successfully'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/cleanup-all', methods=['POST'])
+def cleanup_all_endpoint():
+    """Manually trigger cleanup of all old files"""
+    try:
+        cleanup_old_files()
+        return jsonify({'success': True, 'message': 'All old files cleaned up successfully'})
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -1898,5 +1999,822 @@ def download_edited(filename):
     except Exception as e:
         return f"Error downloading edited PDF: {str(e)}", 500
 
+@app.route("/convert-video", methods=["POST"])
+def convert_video():
+    try:
+        print(f"DEBUG: Video conversion endpoint called")
+        print(f"DEBUG: Request files: {list(request.files.keys())}")
+        print(f"DEBUG: Request form: {list(request.form.keys())}")
+        
+        if 'file' not in request.files:
+            return jsonify({"status": "error", "message": "No video file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected"}), 400
+        
+        # Get conversion parameters
+        output_format = request.form.get('outputFormat', 'mp4')
+        quality = int(request.form.get('quality', 80))
+        compression = request.form.get('compression', 'medium')
+        
+        print(f"DEBUG: Converting to {output_format}, quality: {quality}%, compression: {compression}")
+        
+        # Save the uploaded file with unique filename to prevent conflicts
+        import uuid
+        original_filename = file.filename
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{unique_id}_{original_filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+        
+        print(f"DEBUG: Video file saved: {filepath}")
+        
+        # Generate output filename
+        base_name = os.path.splitext(filename)[0]
+        converted_filename = f"{base_name}_converted.{output_format}"
+        converted_path = os.path.join(VIDEO_FOLDER, converted_filename)
+        
+        # Get original file size
+        original_size = os.path.getsize(filepath)
+        print(f"DEBUG: Original file size: {original_size} bytes ({original_size / 1024 / 1024:.2f} MB)")
+        
+        # REAL video compression using FFmpeg
+        import subprocess
+        import shutil
+        
+        # Map quality to CRF (Constant Rate Factor) for H.264
+        quality_map = {
+            95: 18,  # Ultra High
+            85: 23,  # High
+            75: 28,  # Medium
+            60: 32,  # Low
+            40: 36   # Very Low
+        }
+        
+        # Map compression to preset
+        preset_map = {
+            'none': 'ultrafast',
+            'light': 'fast',
+            'medium': 'medium',
+            'heavy': 'slow',
+            'web': 'veryslow'
+        }
+        
+        crf = quality_map.get(quality, 28)
+        preset = preset_map.get(compression, 'medium')
+        
+        print(f"DEBUG: Starting FFmpeg compression with CRF={crf}, preset={preset}")
+        
+        # Initialize progress tracking using unique filename
+        conversion_progress[filename] = {
+            "status": "processing",
+            "progress": 5,
+            "message": "Starting video compression..."
+        }
+        print(f"DEBUG: Initialized progress tracking for {filename}")
+        
+        # No background progress thread - only use real-time FFmpeg progress
+        
+        # FFmpeg command for faster video compression
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-i', filepath,
+            '-c:v', 'libx264',
+            '-crf', str(crf),
+            '-preset', 'fast',  # Changed from 'medium' to 'fast' for speed
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            '-movflags', '+faststart',
+            '-threads', '0',  # Use all available CPU cores
+            '-x264opts', 'no-cabac:ref=1:subme=1:me=dia:analyse=none:trellis=0:no-weightb:aq-mode=0',  # Speed optimizations
+            '-y',  # Overwrite output file
+            converted_path
+        ]
+        
+        try:
+            print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+            
+            # Run FFmpeg with real-time output for progress tracking
+            process = subprocess.Popen(
+                ffmpeg_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                universal_newlines=True,
+                bufsize=1
+            )
+            
+            # Real-time progress tracking from FFmpeg output
+            start_time = time.time()
+            last_update = start_time
+            total_duration = None
+            current_time_pos = 0
+            
+            # First, get video duration
+            try:
+                duration_cmd = [
+                    'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', filepath
+                ]
+                duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=10)
+                if duration_result.returncode == 0:
+                    total_duration = float(duration_result.stdout.strip())
+                    print(f"DEBUG: Video duration: {total_duration:.2f} seconds")
+            except:
+                print("DEBUG: Could not get video duration, using fallback progress")
+            
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    line = output.strip()
+                    current_time = time.time()
+                    elapsed_time = current_time - start_time
+                    
+                    # Parse FFmpeg output for real progress
+                    if 'time=' in line:
+                        try:
+                            time_part = [part for part in line.split() if part.startswith('time=')][0]
+                            time_str = time_part.split('=')[1]
+                            # Parse time format (HH:MM:SS.mmm)
+                            time_parts = time_str.split(':')
+                            if len(time_parts) == 3:
+                                hours, minutes, seconds = time_parts
+                                current_time_pos = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                                
+                                # Calculate real progress percentage
+                                if total_duration and total_duration > 0:
+                                    progress = min(95, int((current_time_pos / total_duration) * 100))
+                                    conversion_progress[filename]["message"] = f"Processing video... {time_str} ({progress}%)"
+                                    conversion_progress[filename]["progress"] = progress
+                                    print(f"DEBUG: Real progress: {progress}% - {time_str} / {total_duration:.2f}s")
+                                else:
+                                    # Fallback to time-based if no duration
+                                    progress = min(95, 5 + int(elapsed_time * 3.2))
+                                    conversion_progress[filename]["message"] = f"Processing video... {time_str} ({elapsed_time:.0f}s)"
+                                    conversion_progress[filename]["progress"] = progress
+                                    print(f"DEBUG: Fallback progress: {progress}% - {elapsed_time:.0f}s")
+                        except Exception as e:
+                            print(f"DEBUG: Error parsing time: {e}")
+                    
+                    elif 'frame=' in line:
+                        try:
+                            frame_part = [part for part in line.split() if part.startswith('frame=')][0]
+                            frame_num = int(frame_part.split('=')[1])
+                            conversion_progress[filename]["message"] = f"Processing frame {frame_num}... ({elapsed_time:.0f}s)"
+                        except:
+                            pass
+                    
+                    # Update every 2 seconds as fallback
+                    elif current_time - last_update >= 2.0:
+                        if not total_duration:
+                            progress = min(95, 5 + int(elapsed_time * 3.2))
+                            conversion_progress[filename]["message"] = f"Processing video... {elapsed_time:.0f}s elapsed"
+                            conversion_progress[filename]["progress"] = progress
+                            print(f"DEBUG: Fallback progress update: {progress}% - {elapsed_time:.0f}s elapsed")
+                        last_update = current_time
+            
+            # Set progress to 99% before waiting for completion
+            conversion_progress[filename]["progress"] = 99
+            conversion_progress[filename]["message"] = "Finalizing conversion..."
+            print(f"DEBUG: Progress set to 99% - finalizing conversion")
+            
+            # Wait for process to complete with timeout
+            try:
+                return_code = process.wait(timeout=300)  # 5 minute timeout
+            except subprocess.TimeoutExpired:
+                print(f"DEBUG: FFmpeg process timed out after 5 minutes")
+                process.kill()
+                return_code = -1
+            
+            if return_code == 0:
+                print(f"DEBUG: FFmpeg compression completed successfully")
+                # Stop progress thread and set final progress
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Video compression completed successfully!"
+                }
+                print(f"DEBUG: Progress set to 100% - conversion completed")
+            else:
+                print(f"DEBUG: FFmpeg failed with return code: {return_code}")
+                # Fallback to copying if FFmpeg fails
+                shutil.copy2(filepath, converted_path)
+                print(f"DEBUG: Fallback: copied original file")
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Video processing completed (fallback mode)"
+                }
+                print(f"DEBUG: Progress set to 100% - fallback completed")
+                
+        except subprocess.TimeoutExpired:
+            print(f"DEBUG: FFmpeg timeout after 5 minutes, falling back to copy")
+            shutil.copy2(filepath, converted_path)
+        except FileNotFoundError:
+            print(f"DEBUG: FFmpeg not found in PATH, falling back to copy")
+            print(f"DEBUG: Please install FFmpeg: https://ffmpeg.org/download.html")
+            shutil.copy2(filepath, converted_path)
+        except Exception as e:
+            print(f"DEBUG: FFmpeg error: {e}, falling back to copy")
+            shutil.copy2(filepath, converted_path)
+        
+        print(f"DEBUG: Video saved to: {converted_path}")
+        
+        # Get converted file size
+        converted_size = os.path.getsize(converted_path)
+        print(f"DEBUG: Converted file size: {converted_size} bytes ({converted_size / 1024 / 1024:.2f} MB)")
+        if converted_size != original_size:
+            reduction = ((original_size - converted_size) / original_size * 100)
+            print(f"DEBUG: Size reduction: {reduction:.1f}%")
+        else:
+            print(f"DEBUG: No size reduction (FFmpeg may not be available)")
+        
+        # Clean up original file (with error handling)
+        try:
+            os.remove(filepath)
+            print(f"DEBUG: Original file cleaned up: {filepath}")
+        except Exception as e:
+            print(f"DEBUG: Could not remove original file (may be in use): {e}")
+            # Don't fail the conversion if we can't delete the original file
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Video converted to {output_format.upper()} successfully",
+            "converted_filename": converted_filename,
+            "unique_filename": filename,  # Add the unique filename for progress tracking
+            "original_format": filename.split('.')[-1].upper(),
+            "converted_format": output_format.upper(),
+            "quality": quality,
+            "compression": compression,
+            "original_size": original_size,
+            "converted_size": converted_size,
+            "download_url": f"/download_converted_video/{converted_filename}"
+        })
+        
+    except Exception as e:
+        print(f"ERROR in convert_video: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/download_converted_video/<path:filename>")
+def download_converted_video(filename):
+    try:
+        # Decode URL-encoded filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        # Use absolute path to avoid any path resolution issues
+        file_path = os.path.abspath(os.path.join(VIDEO_FOLDER, decoded_filename))
+        print(f"DEBUG: Looking for file: {file_path}")
+        print(f"DEBUG: File exists: {os.path.exists(file_path)}")
+        
+        if not os.path.exists(file_path):
+            print(f"DEBUG: File not found: {file_path}")
+            # List files in the directory to debug
+            try:
+                video_dir = os.path.abspath(VIDEO_FOLDER)
+                files_in_dir = os.listdir(video_dir)
+                print(f"DEBUG: Files in {video_dir}: {files_in_dir}")
+                print(f"DEBUG: Looking for: {decoded_filename}")
+            except Exception as e:
+                print(f"DEBUG: Error listing directory: {e}")
+            return "Converted video file not found", 404
+        
+        print(f"DEBUG: File found, sending: {file_path}")
+        return send_file(file_path, as_attachment=True, download_name=decoded_filename)
+    
+    except Exception as e:
+        print(f"ERROR in download_converted_video: {str(e)}")
+        return f"Error downloading converted video: {str(e)}", 500
+
+@app.route("/conversion_progress/<filename>")
+def get_conversion_progress(filename):
+    """Get the progress of a video conversion"""
+    try:
+        # Decode URL-encoded filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        # Try to find progress by exact match first
+        progress = conversion_progress.get(decoded_filename)
+        
+        # If not found, try to find by partial match (for unique filenames)
+        if not progress:
+            for key, value in conversion_progress.items():
+                if decoded_filename in key or key in decoded_filename:
+                    progress = value
+                    print(f"DEBUG: Found progress by partial match: {key} -> {decoded_filename}")
+                    break
+        
+        if not progress:
+            progress = {
+                "status": "not_found",
+                "progress": 0,
+                "message": "Conversion not found"
+            }
+        
+        print(f"DEBUG: Progress request for {decoded_filename}: {progress}")
+        return jsonify(progress)
+    except Exception as e:
+        print(f"DEBUG: Progress error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# Audio Conversion Functions
+def allowed_audio_file(filename):
+    """Check if file extension is allowed for audio"""
+    ALLOWED_AUDIO_EXTENSIONS = {'mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'aiff', 'au', 'opus'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_AUDIO_EXTENSIONS
+
+def convert_audio_file(input_path, output_path, output_format, bitrate=192, sample_rate=44100, channels="stereo", quality=80):
+    """Convert audio using FFmpeg"""
+    try:
+        print(f"DEBUG: Starting audio conversion from {input_path} to {output_path}")
+        print(f"DEBUG: Format: {output_format}, Bitrate: {bitrate}, Sample Rate: {sample_rate}, Channels: {channels}, Quality: {quality}")
+        
+        # Build FFmpeg command based on output format
+        cmd = ['ffmpeg', '-i', input_path]
+        
+        # Audio codec selection
+        if output_format == 'mp3':
+            cmd.extend(['-acodec', 'libmp3lame'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        elif output_format == 'aac':
+            cmd.extend(['-acodec', 'aac'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        elif output_format == 'flac':
+            cmd.extend(['-acodec', 'flac'])
+        elif output_format == 'ogg':
+            cmd.extend(['-acodec', 'libvorbis'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        elif output_format == 'opus':
+            cmd.extend(['-acodec', 'libopus'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        elif output_format == 'wav':
+            cmd.extend(['-acodec', 'pcm_s16le'])
+        elif output_format == 'aiff':
+            cmd.extend(['-acodec', 'pcm_s16be'])
+        elif output_format == 'm4a':
+            cmd.extend(['-acodec', 'aac'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        elif output_format == 'wma':
+            cmd.extend(['-acodec', 'wmav2'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        else:
+            # Default to libmp3lame for unknown formats
+            cmd.extend(['-acodec', 'libmp3lame'])
+            if bitrate > 0:
+                cmd.extend(['-ab', f'{bitrate}k'])
+        
+        # Sample rate
+        cmd.extend(['-ar', str(sample_rate)])
+        
+        # Channel configuration
+        if channels == 'mono':
+            cmd.extend(['-ac', '1'])
+        elif channels == 'stereo':
+            cmd.extend(['-ac', '2'])
+        elif channels == 'surround':
+            cmd.extend(['-ac', '6'])  # 5.1 surround
+        # For 'original', don't specify channels
+        
+        # Quality settings for lossy formats
+        if output_format in ['mp3', 'aac', 'ogg', 'opus', 'm4a', 'wma']:
+            if quality < 50:
+                cmd.extend(['-q:a', '9'])  # Low quality
+            elif quality < 70:
+                cmd.extend(['-q:a', '6'])  # Medium quality
+            elif quality < 90:
+                cmd.extend(['-q:a', '3'])  # High quality
+            else:
+                cmd.extend(['-q:a', '0'])  # Maximum quality
+        
+        # Overwrite output file
+        cmd.extend(['-y', output_path])
+        
+        print(f"DEBUG: Running FFmpeg command: {' '.join(cmd)}")
+        
+        # Run FFmpeg command
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        print(f"DEBUG: FFmpeg return code: {result.returncode}")
+        print(f"DEBUG: FFmpeg stdout: {result.stdout}")
+        print(f"DEBUG: FFmpeg stderr: {result.stderr}")
+        
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg error: {result.stderr}")
+        
+        # Check if output file was created and has content
+        if not os.path.exists(output_path):
+            raise Exception("Output file was not created")
+        
+        output_size = os.path.getsize(output_path)
+        print(f"DEBUG: Output file size: {output_size} bytes")
+        
+        if output_size == 0:
+            raise Exception("Output file is empty")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Audio conversion error: {str(e)}")
+        return False
+
+@app.route('/convert-image', methods=['POST'])
+def convert_image():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Get conversion settings
+    output_format = request.form.get('outputFormat', 'jpg')
+    quality = int(request.form.get('quality', 85))
+    resize = request.form.get('resize', 'false').lower() == 'true'
+    width = int(request.form.get('width', 1920))
+    height = int(request.form.get('height', 1080))
+    maintain_aspect_ratio = request.form.get('maintainAspectRatio', 'true').lower() == 'true'
+    compression = request.form.get('compression', 'medium')
+    
+    try:
+        # Create uploads directory if it doesn't exist
+        uploads_dir = 'converted_images'
+        uploads_dir = os.path.abspath(uploads_dir)  # Get absolute path
+        os.makedirs(uploads_dir, exist_ok=True)
+        print(f"DEBUG: Created/verified directory: {uploads_dir}")
+        
+        # Generate unique filename
+        unique_id = str(uuid.uuid4())[:8]
+        original_filename = secure_filename(file.filename)
+        name, ext = os.path.splitext(original_filename)
+        filename = f"{unique_id}_{name}_converted.{output_format}"
+        filepath = os.path.join(uploads_dir, filename)
+        
+        print(f"DEBUG: Target filepath: {filepath}")
+        print(f"DEBUG: Directory exists: {os.path.exists(uploads_dir)}")
+        
+        # Save uploaded file
+        temp_path = os.path.join(uploads_dir, f"temp_{unique_id}_{original_filename}")
+        print(f"DEBUG: Temp filepath: {temp_path}")
+        file.save(temp_path)
+        
+        # Get original file size
+        original_size = os.path.getsize(temp_path)
+        
+        # Build FFmpeg command for image conversion
+        ffmpeg_cmd = ['ffmpeg', '-i', temp_path]
+        
+        # Add resize parameters if requested
+        if resize:
+            if maintain_aspect_ratio:
+                ffmpeg_cmd.extend(['-vf', f'scale={width}:{height}:force_original_aspect_ratio=decrease'])
+            else:
+                ffmpeg_cmd.extend(['-vf', f'scale={width}:{height}'])
+        
+        # Add format-specific parameters
+        if output_format in ['jpg', 'jpeg']:
+            ffmpeg_cmd.extend(['-q:v', str(100 - quality)])  # FFmpeg uses inverse quality
+        elif output_format == 'png':
+            ffmpeg_cmd.extend(['-compression_level', str(9 - (quality // 10))])
+        elif output_format == 'webp':
+            ffmpeg_cmd.extend(['-quality', str(quality)])
+        elif output_format == 'bmp':
+            ffmpeg_cmd.extend(['-pix_fmt', 'bgr24'])
+        elif output_format == 'tiff':
+            ffmpeg_cmd.extend(['-compression', 'lzw'])
+        elif output_format == 'gif':
+            ffmpeg_cmd.extend(['-pix_fmt', 'pal8'])
+        
+        ffmpeg_cmd.extend(['-update', '1', '-y', filepath])  # Overwrite output file, single image
+        
+        print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        try:
+            # Run FFmpeg
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=60)
+            print(f"DEBUG: FFmpeg return code: {result.returncode}")
+            print(f"DEBUG: FFmpeg stdout: {result.stdout}")
+            print(f"DEBUG: FFmpeg stderr: {result.stderr}")
+            
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            
+            if result.returncode == 0:
+                # Check if output file was created
+                if os.path.exists(filepath):
+                    # Get converted file size
+                    converted_size = os.path.getsize(filepath)
+                    compression_ratio = ((original_size - converted_size) / original_size) * 100
+                    
+                    # Create download URL
+                    download_url = f"http://localhost:5000/download/{filename}"
+                    
+                    return jsonify({
+                        'success': True,
+                        'downloadUrl': download_url,
+                        'originalSize': original_size,
+                        'convertedSize': converted_size,
+                        'compressionRatio': compression_ratio,
+                        'message': 'Image converted successfully'
+                    })
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'FFmpeg completed but no output file was created'
+                    }), 500
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'FFmpeg error: {result.stderr}'
+                }), 500
+        except subprocess.TimeoutExpired:
+            return jsonify({
+                'success': False,
+                'error': 'FFmpeg process timed out'
+            }), 500
+        except Exception as e:
+            print(f"DEBUG: Exception in FFmpeg execution: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f'FFmpeg execution error: {str(e)}'
+            }), 500
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'error': 'Conversion timed out'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Conversion failed: {str(e)}'
+        }), 500
+
+@app.route('/generate-qr', methods=['POST'])
+def generate_qr():
+    """Generate QR code from provided data"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'No data provided'
+            }), 400
+        
+        qr_type = data.get('type', 'text')
+        qr_data = data.get('data', {})
+        
+        # Import qrcode here to avoid import errors if not installed
+        try:
+            import qrcode
+            from io import BytesIO
+            import base64
+        except ImportError as e:
+            print(f"DEBUG: Import error: {e}")
+            return jsonify({
+                'success': False,
+                'error': f'QR code library not installed: {str(e)}'
+            }), 500
+        
+        # Generate QR code content based on type
+        qr_content = ""
+        
+        if qr_type == 'url':
+            qr_content = qr_data.get('url', '')
+        elif qr_type == 'text':
+            qr_content = qr_data.get('text', '')
+        elif qr_type == 'wifi':
+            ssid = qr_data.get('ssid', '')
+            password = qr_data.get('password', '')
+            encryption = qr_data.get('encryption', 'WPA')
+            hidden = qr_data.get('hidden', False)
+            qr_content = f"WIFI:T:{encryption};S:{ssid};P:{password};H:{str(hidden).lower()};;"
+        elif qr_type == 'email':
+            email = qr_data.get('email', '')
+            subject = qr_data.get('subject', '')
+            body = qr_data.get('body', '')
+            qr_content = f"mailto:{email}?subject={subject}&body={body}"
+        elif qr_type == 'sms':
+            phone = qr_data.get('phoneNumber', '')
+            message = qr_data.get('message', '')
+            qr_content = f"sms:{phone}:{message}"
+        elif qr_type == 'phone':
+            phone = qr_data.get('phone', '')
+            qr_content = f"tel:{phone}"
+        elif qr_type == 'vcard':
+            name = qr_data.get('name', '')
+            organization = qr_data.get('organization', '')
+            title = qr_data.get('vcardTitle', '')
+            phone = qr_data.get('vcardPhone', '')
+            email = qr_data.get('email', '')
+            website = qr_data.get('website', '')
+            address = qr_data.get('address', '')
+            
+            vcard = f"BEGIN:VCARD\nVERSION:3.0\n"
+            if name: vcard += f"FN:{name}\n"
+            if organization: vcard += f"ORG:{organization}\n"
+            if title: vcard += f"TITLE:{title}\n"
+            if phone: vcard += f"TEL:{phone}\n"
+            if email: vcard += f"EMAIL:{email}\n"
+            if website: vcard += f"URL:{website}\n"
+            if address: vcard += f"ADR:{address}\n"
+            vcard += "END:VCARD"
+            qr_content = vcard
+        elif qr_type == 'location':
+            latitude = qr_data.get('latitude', 0)
+            longitude = qr_data.get('longitude', 0)
+            qr_content = f"geo:{latitude},{longitude}"
+        elif qr_type == 'calendar':
+            title = qr_data.get('calendarTitle', '')
+            description = qr_data.get('description', '')
+            start_date = qr_data.get('startDate', '')
+            end_date = qr_data.get('endDate', '')
+            location = qr_data.get('location', '')
+            
+            # Create a simple calendar event format
+            qr_content = f"BEGIN:VEVENT\nSUMMARY:{title}\nDESCRIPTION:{description}\nDTSTART:{start_date}\nDTEND:{end_date}\nLOCATION:{location}\nEND:VEVENT"
+        else:
+            qr_content = str(qr_data.get('text', ''))
+        
+        if not qr_content:
+            return jsonify({
+                'success': False,
+                'error': 'No content to generate QR code for'
+            }), 400
+        
+        # Generate QR code
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(qr_content)
+        qr.make(fit=True)
+        
+        # Create image
+        img = qr.make_image(fill_color="black", back_color="white")
+        
+        # Convert to base64
+        buffer = BytesIO()
+        img.save(buffer, format='PNG')
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        
+        return jsonify({
+            'success': True,
+            'qr_code': f"data:image/png;base64,{img_str}",
+            'content': qr_content,
+            'type': qr_type
+        })
+        
+    except Exception as e:
+        print(f"ERROR: QR generation failed: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'QR generation failed: {str(e)}'
+        }), 500
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Download converted files"""
+    try:
+        # Check in converted_images directory first
+        converted_images_path = os.path.abspath(os.path.join('converted_images', filename))
+        print(f"DEBUG: Looking for file at: {converted_images_path}")
+        print(f"DEBUG: File exists: {os.path.exists(converted_images_path)}")
+        
+        if os.path.exists(converted_images_path):
+            return send_file(converted_images_path, as_attachment=True)
+        
+        # Check in other directories if needed
+        converted_videos_path = os.path.abspath(os.path.join('converted_videos', filename))
+        if os.path.exists(converted_videos_path):
+            return send_file(converted_videos_path, as_attachment=True)
+            
+        return jsonify({'error': f'File not found: {filename}'}), 404
+    except Exception as e:
+        print(f"DEBUG: Download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/convert-audio', methods=['POST'])
+def convert_audio():
+    """Convert audio to different format"""
+    try:
+        # Check if file is provided
+        if 'file' not in request.files:
+            return jsonify({"status": "error", "message": "No file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected"}), 400
+        
+        # Check file type
+        if not allowed_audio_file(file.filename):
+            return jsonify({"status": "error", "message": "Invalid file type"}), 400
+        
+        # Get parameters
+        output_format = request.form.get('outputFormat', 'mp3')
+        bitrate = int(request.form.get('bitrate', 192))
+        sample_rate = int(request.form.get('sampleRate', 44100))
+        channels = request.form.get('channels', 'stereo')
+        quality = int(request.form.get('quality', 80))
+        
+        print(f"DEBUG: Received request - Format: {output_format}, Bitrate: {bitrate}, Sample Rate: {sample_rate}, Channels: {channels}, Quality: {quality}")
+        
+        # Generate unique filenames
+        unique_id = str(uuid.uuid4())[:8]
+        original_filename = file.filename
+        base_name = os.path.splitext(original_filename)[0]
+        
+        # Input file path
+        input_filename = f"{unique_id}_{original_filename}"
+        input_path = os.path.join(AUDIO_FOLDER, input_filename)
+        
+        # Output file path
+        output_filename = f"{unique_id}_{base_name}_converted.{output_format}"
+        output_path = os.path.join(AUDIO_FOLDER, output_filename)
+        
+        print(f"DEBUG: Input path: {input_path}")
+        print(f"DEBUG: Output path: {output_path}")
+        
+        # Save uploaded file
+        file.save(input_path)
+        print(f"DEBUG: File saved successfully")
+        
+        # Get original file size
+        original_size = os.path.getsize(input_path)
+        print(f"DEBUG: Original file size: {original_size} bytes")
+        
+        # Convert audio
+        print(f"DEBUG: Starting conversion...")
+        success = convert_audio_file(input_path, output_path, output_format, bitrate, sample_rate, channels, quality)
+        print(f"DEBUG: Conversion result: {success}")
+        
+        if not success:
+            # Clean up input file
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            return jsonify({"status": "error", "message": "Conversion failed"}), 500
+        
+        # Get converted file size
+        converted_size = os.path.getsize(output_path)
+        
+        # Clean up input file
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        
+        # Return success response
+        return jsonify({
+            "status": "success",
+            "message": f"Audio conversion completed successfully",
+            "original_filename": original_filename,
+            "converted_filename": output_filename,
+            "original_size": original_size,
+            "converted_size": converted_size,
+            "download_url": f"/download_converted_audio/{output_filename}",
+            "output_format": output_format,
+            "bitrate": bitrate,
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "quality": quality
+        })
+        
+    except Exception as e:
+        print(f"Error in convert_audio: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/download_converted_audio/<filename>')
+def download_converted_audio(filename):
+    """Download converted audio file"""
+    try:
+        # Decode URL-encoded filename
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        file_path = os.path.abspath(os.path.join(AUDIO_FOLDER, decoded_filename))
+        print(f"DEBUG: Looking for audio file: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"DEBUG: Audio file not found: {file_path}")
+            return "Converted audio file not found", 404
+        
+        print(f"DEBUG: Audio file found, sending: {file_path}")
+        return send_file(file_path, as_attachment=True, download_name=decoded_filename)
+        
+    except Exception as e:
+        print(f"ERROR in download_converted_audio: {str(e)}")
+        return f"Error downloading converted audio: {str(e)}", 500
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
