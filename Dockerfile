@@ -18,8 +18,11 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p uploads edited saved_html converted_videos converted_audio
 
+# Make start script executable
+RUN chmod +x start.sh
+
 # Expose port
 EXPOSE 5000
 
-# Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--timeout", "300", "--workers", "1", "app:app"]
+# Run the application using start script
+CMD ["./start.sh"]
