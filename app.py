@@ -40,12 +40,49 @@ def health():
     upload_folder_exists = os.path.exists(UPLOAD_FOLDER)
     upload_folder_contents = os.listdir(UPLOAD_FOLDER) if upload_folder_exists else []
     return jsonify({
-        "status": "ok", 
+        "status": "ok",
         "message": "Backend is running",
         "upload_folder": UPLOAD_FOLDER,
         "upload_folder_exists": upload_folder_exists,
         "upload_folder_contents": upload_folder_contents
     })
+
+@app.route("/test-ffmpeg")
+def test_ffmpeg():
+    """Test if FFmpeg is working properly"""
+    try:
+        import subprocess
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            version_line = result.stdout.split('\n')[0]
+            return jsonify({
+                "status": "ok",
+                "message": "FFmpeg is working",
+                "version": version_line,
+                "return_code": result.returncode
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "FFmpeg command failed",
+                "return_code": result.returncode,
+                "stderr": result.stderr
+            })
+    except FileNotFoundError:
+        return jsonify({
+            "status": "error",
+            "message": "FFmpeg not found in PATH"
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "status": "error",
+            "message": "FFmpeg command timed out"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Error testing FFmpeg: {str(e)}"
+        })
 
 # Global progress tracking
 conversion_progress = {}
