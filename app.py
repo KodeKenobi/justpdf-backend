@@ -2076,18 +2076,19 @@ def convert_video():
         
         # No background progress thread - only use real-time FFmpeg progress
         
-        # FFmpeg command for faster video compression
+        # FFmpeg command for faster video compression with aggressive speed optimizations
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
             '-c:v', 'libx264',
             '-crf', str(crf),
-            '-preset', 'fast',  # Changed from 'medium' to 'fast' for speed
+            '-preset', 'ultrafast',  # Fastest preset for Railway
             '-c:a', 'aac',
-            '-b:a', '128k',
+            '-b:a', '96k',  # Lower bitrate for faster processing
             '-movflags', '+faststart',
-            '-threads', '0',  # Use all available CPU cores
-            '-x264opts', 'no-cabac:ref=1:subme=1:me=dia:analyse=none:trellis=0:no-weightb:aq-mode=0',  # Speed optimizations
+            '-threads', '2',  # Limit threads to prevent resource exhaustion
+            '-x264opts', 'no-cabac:ref=1:subme=1:me=dia:analyse=none:trellis=0:no-weightb:aq-mode=0:8x8dct=0:weightp=0',
+            '-tune', 'fastdecode',  # Optimize for fast decoding
             '-y',  # Overwrite output file
             converted_path
         ]
@@ -2183,9 +2184,9 @@ def convert_video():
             
             # Wait for process to complete with timeout
             try:
-                return_code = process.wait(timeout=300)  # 5 minute timeout
+                return_code = process.wait(timeout=120)  # 2 minute timeout for Railway
             except subprocess.TimeoutExpired:
-                print(f"DEBUG: FFmpeg process timed out after 5 minutes")
+                print(f"DEBUG: FFmpeg process timed out after 2 minutes")
                 process.kill()
                 return_code = -1
             
@@ -2211,7 +2212,7 @@ def convert_video():
                 print(f"DEBUG: Progress set to 100% - fallback completed")
                 
         except subprocess.TimeoutExpired:
-            print(f"DEBUG: FFmpeg timeout after 5 minutes, falling back to copy")
+            print(f"DEBUG: FFmpeg timeout after 2 minutes, falling back to copy")
             shutil.copy2(filepath, converted_path)
         except FileNotFoundError:
             print(f"DEBUG: FFmpeg not found in PATH, falling back to copy")

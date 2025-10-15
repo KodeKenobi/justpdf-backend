@@ -1,11 +1,12 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS"
+    "builder": "NIXPACKS",
+    "buildCommand": "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT",
-    "healthcheckPath": "/",
+    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --timeout 180 --workers 1 --max-requests 1000 --max-requests-jitter 50 app:app",
+    "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
