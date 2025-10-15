@@ -21,6 +21,20 @@ CORS(app, origins=[
     "http://localhost:8080"
 ])  # Enable CORS for specific origins
 
+# Define folder constants before they are used
+UPLOAD_FOLDER = "uploads"
+EDITED_FOLDER = "edited"
+HTML_FOLDER = "saved_html"
+VIDEO_FOLDER = "converted_videos"
+AUDIO_FOLDER = "converted_audio"
+
+# Create necessary directories
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(EDITED_FOLDER, exist_ok=True)
+os.makedirs(HTML_FOLDER, exist_ok=True)
+os.makedirs(VIDEO_FOLDER, exist_ok=True)
+os.makedirs(AUDIO_FOLDER, exist_ok=True)
+
 @app.route("/health")
 def health():
     upload_folder_exists = os.path.exists(UPLOAD_FOLDER)
@@ -32,16 +46,6 @@ def health():
         "upload_folder_exists": upload_folder_exists,
         "upload_folder_contents": upload_folder_contents
     })
-UPLOAD_FOLDER = "uploads"
-EDITED_FOLDER = "edited"
-HTML_FOLDER = "saved_html"
-VIDEO_FOLDER = "converted_videos"
-AUDIO_FOLDER = "converted_audio"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(EDITED_FOLDER, exist_ok=True)
-os.makedirs(HTML_FOLDER, exist_ok=True)
-os.makedirs(VIDEO_FOLDER, exist_ok=True)
-os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
 # Global progress tracking
 conversion_progress = {}

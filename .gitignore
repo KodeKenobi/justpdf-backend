@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Upload directories (these should be created at runtime)
+uploads/*
+!uploads/.gitkeep
+edited/*
+!edited/.gitkeep
+saved_html/*
+!saved_html/.gitkeep
+converted_videos/*
+!converted_videos/.gitkeep
+converted_audio/*
+!converted_audio/.gitkeep
+converted_images/*
+!converted_images/.gitkeep
