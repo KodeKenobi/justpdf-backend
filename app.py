@@ -15,7 +15,11 @@ import shutil
 import threading
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app, origins=[
+    "https://web-production-ef253.up.railway.app",
+    "http://localhost:3000",
+    "http://localhost:8080"
+])  # Enable CORS for specific origins
 
 @app.route("/health")
 def health():
