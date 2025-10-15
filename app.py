@@ -18,6 +18,7 @@ app = Flask(__name__)
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
     "https://trevnoctilla.com",
+    "https://www.trevnoctilla.com",
     "http://localhost:3000",
     "http://localhost:8080"
 ])  # Enable CORS for specific origins
