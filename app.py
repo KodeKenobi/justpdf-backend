@@ -2091,12 +2091,14 @@ def convert_video():
         import shutil
         
         # Map quality to CRF (Constant Rate Factor) for H.264
+        # LOWER CRF = HIGHER QUALITY = LARGER FILE
+        # HIGHER CRF = LOWER QUALITY = SMALLER FILE
         quality_map = {
-            95: 18,  # Ultra High
-            85: 23,  # High
-            75: 28,  # Medium
-            60: 32,  # Low
-            40: 36   # Very Low
+            95: 18,  # Ultra High - larger file
+            85: 23,  # High - larger file  
+            75: 28,  # Medium - balanced
+            60: 32,  # Low - smaller file
+            40: 36   # Very Low - much smaller file
         }
         
         # Map compression to preset
@@ -2116,8 +2118,8 @@ def convert_video():
         # Initialize progress tracking using unique filename
         conversion_progress[filename] = {
             "status": "processing",
-            "progress": 5,
-            "message": "Starting video compression..."
+            "progress": 0,
+            "message": "Initializing video compression..."
         }
         print(f"DEBUG: Initialized progress tracking for {filename}")
         
@@ -2126,6 +2128,10 @@ def convert_video():
         conversion_thread = threading.Thread(target=convert_video_background, args=(filename, filepath, converted_path, crf, preset))
         conversion_thread.daemon = True
         conversion_thread.start()
+        
+        # Wait a moment to ensure background thread has started
+        import time
+        time.sleep(0.1)
         
         # Return immediately with success status
         converted_size = original_size  # Will be updated by background thread
@@ -2156,14 +2162,15 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
     try:
         print(f"DEBUG: Starting background conversion for {filename}")
         
-        # Update progress to 10%
-        conversion_progress[filename] = {
-            "status": "processing",
-            "progress": 10,
-            "message": "Initializing video compression..."
-        }
+        # Update progress to 0% only if not already set
+        if filename not in conversion_progress or conversion_progress[filename]["progress"] == 0:
+            conversion_progress[filename] = {
+                "status": "processing",
+                "progress": 0,
+                "message": "Initializing video compression..."
+            }
         
-        # FFmpeg command for video compression
+        # FFmpeg command for video compression with aggressive settings
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
@@ -2171,16 +2178,36 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             '-crf', str(crf),
             '-preset', preset,
             '-c:a', 'aac',
-            '-b:a', '96k',
+            '-b:a', '32k',  # Even lower audio bitrate for smaller file
             '-movflags', '+faststart',
+            '-vf', 'scale=iw:ih',  # Maintain aspect ratio
             '-threads', '2',
+            '-profile:v', 'baseline',  # Use baseline profile for better compatibility
+            '-level', '3.0',  # Lower level for smaller file
+            '-maxrate', '500k',  # Much lower maximum bitrate for smaller file
+            '-bufsize', '1000k',  # Smaller buffer size
+            '-x264opts', 'no-scenecut',  # Disable scene cut detection for better compression
+            '-tune', 'film',  # Optimize for film content
             '-y',  # Overwrite output file
             converted_path
         ]
         
         print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
+        # Update progress to show FFmpeg is starting
+        conversion_progress[filename] = {
+            "status": "processing",
+            "progress": 1,
+            "message": "Starting FFmpeg compression..."
+        }
+        print(f"DEBUG: Progress set to 1% - FFmpeg starting")
+        
         # Run FFmpeg with real-time output for progress tracking
+        print(f"DEBUG: Input file exists: {os.path.exists(filepath)}")
+        print(f"DEBUG: Input file size: {os.path.getsize(filepath) if os.path.exists(filepath) else 'N/A'}")
+        print(f"DEBUG: Output path: {converted_path}")
+        print(f"DEBUG: Output directory exists: {os.path.exists(os.path.dirname(converted_path))}")
+        
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -2231,13 +2258,13 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                             
                             # Calculate real progress percentage
                             if total_duration and total_duration > 0:
-                                progress = min(95, int((current_time_pos / total_duration) * 100))
+                                progress = min(95, max(1, int((current_time_pos / total_duration) * 100)))
                                 conversion_progress[filename]["message"] = f"Processing video... {time_str} ({progress}%)"
                                 conversion_progress[filename]["progress"] = progress
                                 print(f"DEBUG: Real progress: {progress}% - {time_str} / {total_duration:.2f}s")
                             else:
                                 # Fallback to time-based if no duration
-                                progress = min(95, 10 + int(elapsed_time * 3.2))
+                                progress = min(95, max(1, 1 + int(elapsed_time * 3.2)))
                                 conversion_progress[filename]["message"] = f"Processing video... {time_str} ({elapsed_time:.0f}s)"
                                 conversion_progress[filename]["progress"] = progress
                                 print(f"DEBUG: Fallback progress: {progress}% - {elapsed_time:.0f}s")
@@ -2255,7 +2282,7 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 # Update every 2 seconds as fallback
                 elif current_time - last_update >= 2.0:
                     if not total_duration:
-                        progress = min(95, 10 + int(elapsed_time * 3.2))
+                        progress = min(95, max(1, 1 + int(elapsed_time * 3.2)))
                         conversion_progress[filename]["message"] = f"Processing video... {elapsed_time:.0f}s elapsed"
                         conversion_progress[filename]["progress"] = progress
                         print(f"DEBUG: Fallback progress update: {progress}% - {elapsed_time:.0f}s elapsed")
@@ -2276,15 +2303,67 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         
         if return_code == 0:
             print(f"DEBUG: FFmpeg compression completed successfully")
-            # Set final progress
-            conversion_progress[filename] = {
-                "status": "completed",
-                "progress": 100,
-                "message": "Video compression completed successfully!"
-            }
-            print(f"DEBUG: Progress set to 100% - conversion completed")
+            # Check if output file was created and get its size
+            if os.path.exists(converted_path):
+                output_size = os.path.getsize(converted_path)
+                input_size = os.path.getsize(filepath)
+                compression_ratio = ((input_size - output_size) / input_size) * 100
+                print(f"DEBUG: Output file created successfully")
+                print(f"DEBUG: Input size: {input_size} bytes")
+                print(f"DEBUG: Output size: {output_size} bytes")
+                print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
+                
+                # Check if compression actually occurred
+                if output_size >= input_size:
+                    print(f"WARNING: No compression occurred! Output size ({output_size}) >= Input size ({input_size})")
+                    print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
+                    # Try a more aggressive compression
+                    print(f"DEBUG: Attempting more aggressive compression...")
+                    aggressive_cmd = [
+                        'ffmpeg',
+                        '-i', filepath,
+                        '-c:v', 'libx264',
+                        '-crf', '35',  # Much higher CRF for smaller file
+                        '-preset', 'ultrafast',
+                        '-c:a', 'aac',
+                        '-b:a', '16k',  # Very low audio bitrate
+                        '-maxrate', '200k',  # Very low max bitrate
+                        '-bufsize', '400k',
+                        '-y',
+                        converted_path
+                    ]
+                    print(f"DEBUG: Running aggressive FFmpeg command: {' '.join(aggressive_cmd)}")
+                    aggressive_result = subprocess.run(aggressive_cmd, capture_output=True, text=True, timeout=60)
+                    if aggressive_result.returncode == 0 and os.path.exists(converted_path):
+                        new_output_size = os.path.getsize(converted_path)
+                        new_compression_ratio = ((input_size - new_output_size) / input_size) * 100
+                        print(f"DEBUG: Aggressive compression result: {new_output_size} bytes ({new_compression_ratio:.2f}% reduction)")
+                        if new_output_size < input_size:
+                            output_size = new_output_size
+                            compression_ratio = new_compression_ratio
+                            print(f"DEBUG: Aggressive compression successful!")
+                        else:
+                            print(f"WARNING: Even aggressive compression failed to reduce file size")
+                
+                # Set final progress
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%"
+                }
+                print(f"DEBUG: Progress set to 100% - conversion completed")
+            else:
+                print(f"DEBUG: Output file not created, falling back to copy")
+                import shutil
+                shutil.copy2(filepath, converted_path)
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Video processing completed (fallback mode)"
+                }
         else:
             print(f"DEBUG: FFmpeg failed with return code: {return_code}")
+            print(f"DEBUG: FFmpeg stdout: {process.stdout.read() if hasattr(process, 'stdout') else 'N/A'}")
             # Fallback to copying if FFmpeg fails
             import shutil
             shutil.copy2(filepath, converted_path)
