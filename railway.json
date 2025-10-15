@@ -5,7 +5,7 @@
     "buildCommand": "apt-get update && apt-get install -y ffmpeg && pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --timeout 180 --workers 1 --max-requests 1000 --max-requests-jitter 50 app:app",
+    "startCommand": "chmod +x start.sh && ./start.sh",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
