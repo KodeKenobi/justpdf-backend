@@ -2145,6 +2145,10 @@ def convert_video():
         print(f"DEBUG: ASYNC MODE - Video conversion started in background thread")
         return jsonify(response_data)
         
+    except Exception as e:
+        print(f"ERROR in convert_video: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 def convert_video_background(filename, filepath, converted_path, crf, preset):
     """Background video conversion function"""
     try:
@@ -2404,13 +2408,6 @@ def convert_video():
         }
         
         print(f"DEBUG: Returning immediate response: {response_data}")
-        print(f"DEBUG: ASYNC MODE - Video conversion started in background thread")
-        return jsonify(response_data)
-        
-    except Exception as e:
-        print(f"ERROR in convert_video: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
 @app.route("/download_converted_video/<path:filename>")
 def download_converted_video(filename):
     try:
