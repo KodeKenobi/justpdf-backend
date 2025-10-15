@@ -2142,6 +2142,7 @@ def convert_video():
         }
         
         print(f"DEBUG: Returning immediate response: {response_data}")
+        print(f"DEBUG: ASYNC MODE - Video conversion started in background thread")
         return jsonify(response_data)
         
 def convert_video_background(filename, filepath, converted_path, crf, preset):
@@ -2403,6 +2404,7 @@ def convert_video():
         }
         
         print(f"DEBUG: Returning immediate response: {response_data}")
+        print(f"DEBUG: ASYNC MODE - Video conversion started in background thread")
         return jsonify(response_data)
         
     except Exception as e:
