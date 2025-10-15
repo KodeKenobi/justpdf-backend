@@ -37,10 +37,12 @@ def convert_video(input_path, output_path, output_format, quality=80, compressio
         print(f"DEBUG: Output format: {output_format}, Quality: {quality}, Compression: {compression}")
         
         # Quality settings based on compression level
+        # Lower CRF = higher quality, larger file
+        # Higher CRF = lower quality, smaller file
         quality_settings = {
-            'low': '18',
-            'medium': '23',
-            'high': '28'
+            'low': '28',    # Lower quality, smaller file
+            'medium': '23', # Medium quality, medium file
+            'high': '18'    # High quality, larger file
         }
         
         crf = quality_settings.get(compression, '23')
@@ -57,14 +59,16 @@ def convert_video(input_path, output_path, output_format, quality=80, compressio
                 output_path
             ]
         else:
-            # Convert video
+            # Convert video with aggressive compression
             cmd = [
                 'ffmpeg', '-i', input_path,
                 '-c:v', 'libx264',  # Video codec
-                '-crf', crf,  # Quality
-                '-preset', 'medium',  # Encoding speed
+                '-crf', crf,  # Quality (lower = better quality, higher = smaller file)
+                '-preset', 'slow',  # Better compression
                 '-c:a', 'aac',  # Audio codec
-                '-b:a', '128k',  # Audio bitrate
+                '-b:a', '96k',  # Lower audio bitrate for smaller file
+                '-movflags', '+faststart',  # Web optimization
+                '-vf', 'scale=iw:ih',  # Maintain aspect ratio
                 '-y',  # Overwrite output file
                 output_path
             ]
