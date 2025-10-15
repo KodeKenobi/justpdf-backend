@@ -2119,186 +2119,191 @@ def convert_video():
         }
         print(f"DEBUG: Initialized progress tracking for {filename}")
         
-        # No background progress thread - only use real-time FFmpeg progress
+        # Start conversion in background thread
+        import threading
+        conversion_thread = threading.Thread(target=convert_video_background, args=(filename, filepath, converted_path, crf, preset))
+        conversion_thread.daemon = True
+        conversion_thread.start()
         
-        # FFmpeg command for faster video compression with aggressive speed optimizations
+        # Return immediately with success status
+        converted_size = original_size  # Will be updated by background thread
+        response_data = {
+            "status": "success",
+            "message": "Video upload successful, conversion started",
+            "unique_filename": filename,
+            "original_size": original_size,
+            "converted_size": converted_size,
+            "original_format": "MP4",
+            "converted_format": output_format.upper(),
+            "quality": quality,
+            "compression": compression,
+            "converted_filename": converted_filename,
+            "download_url": f"/download_converted_video/{converted_filename}"
+        }
+        
+        print(f"DEBUG: Returning immediate response: {response_data}")
+        return jsonify(response_data)
+        
+def convert_video_background(filename, filepath, converted_path, crf, preset):
+    """Background video conversion function"""
+    try:
+        print(f"DEBUG: Starting background conversion for {filename}")
+        
+        # Update progress to 10%
+        conversion_progress[filename] = {
+            "status": "processing",
+            "progress": 10,
+            "message": "Initializing video compression..."
+        }
+        
+        # FFmpeg command for video compression
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
             '-c:v', 'libx264',
             '-crf', str(crf),
-            '-preset', 'ultrafast',  # Fastest preset for Railway
+            '-preset', preset,
             '-c:a', 'aac',
-            '-b:a', '96k',  # Lower bitrate for faster processing
+            '-b:a', '96k',
             '-movflags', '+faststart',
-            '-threads', '2',  # Limit threads to prevent resource exhaustion
-            '-x264opts', 'no-cabac:ref=1:subme=1:me=dia:analyse=none:trellis=0:no-weightb:aq-mode=0:8x8dct=0:weightp=0',
-            '-tune', 'fastdecode',  # Optimize for fast decoding
+            '-threads', '2',
             '-y',  # Overwrite output file
             converted_path
         ]
         
+        print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        # Run FFmpeg with real-time output for progress tracking
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            universal_newlines=True,
+            bufsize=1
+        )
+        
+        # Real-time progress tracking from FFmpeg output
+        start_time = time.time()
+        last_update = start_time
+        total_duration = None
+        current_time_pos = 0
+        
+        # First, get video duration
         try:
-            print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
-            
-            # Run FFmpeg with real-time output for progress tracking
-            process = subprocess.Popen(
-                ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                universal_newlines=True,
-                bufsize=1
-            )
-            
-            # Real-time progress tracking from FFmpeg output
-            start_time = time.time()
-            last_update = start_time
-            total_duration = None
-            current_time_pos = 0
-            
-            # First, get video duration
-            try:
-                duration_cmd = [
-                    'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
-                    '-of', 'default=noprint_wrappers=1:nokey=1', filepath
-                ]
-                duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=10)
-                if duration_result.returncode == 0:
-                    total_duration = float(duration_result.stdout.strip())
-                    print(f"DEBUG: Video duration: {total_duration:.2f} seconds")
-            except:
-                print("DEBUG: Could not get video duration, using fallback progress")
-            
-            while True:
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-                if output:
-                    line = output.strip()
-                    current_time = time.time()
-                    elapsed_time = current_time - start_time
-                    
-                    # Parse FFmpeg output for real progress
-                    if 'time=' in line:
-                        try:
-                            time_part = [part for part in line.split() if part.startswith('time=')][0]
-                            time_str = time_part.split('=')[1]
-                            # Parse time format (HH:MM:SS.mmm)
-                            time_parts = time_str.split(':')
-                            if len(time_parts) == 3:
-                                hours, minutes, seconds = time_parts
-                                current_time_pos = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-                                
-                                # Calculate real progress percentage
-                                if total_duration and total_duration > 0:
-                                    progress = min(95, int((current_time_pos / total_duration) * 100))
-                                    conversion_progress[filename]["message"] = f"Processing video... {time_str} ({progress}%)"
-                                    conversion_progress[filename]["progress"] = progress
-                                    print(f"DEBUG: Real progress: {progress}% - {time_str} / {total_duration:.2f}s")
-                                else:
-                                    # Fallback to time-based if no duration
-                                    progress = min(95, 5 + int(elapsed_time * 3.2))
-                                    conversion_progress[filename]["message"] = f"Processing video... {time_str} ({elapsed_time:.0f}s)"
-                                    conversion_progress[filename]["progress"] = progress
-                                    print(f"DEBUG: Fallback progress: {progress}% - {elapsed_time:.0f}s")
-                        except Exception as e:
-                            print(f"DEBUG: Error parsing time: {e}")
-                    
-                    elif 'frame=' in line:
-                        try:
-                            frame_part = [part for part in line.split() if part.startswith('frame=')][0]
-                            frame_num = int(frame_part.split('=')[1])
-                            conversion_progress[filename]["message"] = f"Processing frame {frame_num}... ({elapsed_time:.0f}s)"
-                        except:
-                            pass
-                    
-                    # Update every 2 seconds as fallback
-                    elif current_time - last_update >= 2.0:
-                        if not total_duration:
-                            progress = min(95, 5 + int(elapsed_time * 3.2))
-                            conversion_progress[filename]["message"] = f"Processing video... {elapsed_time:.0f}s elapsed"
-                            conversion_progress[filename]["progress"] = progress
-                            print(f"DEBUG: Fallback progress update: {progress}% - {elapsed_time:.0f}s elapsed")
-                        last_update = current_time
-            
-            # Set progress to 99% before waiting for completion
-            conversion_progress[filename]["progress"] = 99
-            conversion_progress[filename]["message"] = "Finalizing conversion..."
-            print(f"DEBUG: Progress set to 99% - finalizing conversion")
-            
-            # Wait for process to complete with timeout
-            try:
-                return_code = process.wait(timeout=120)  # 2 minute timeout for Railway
-            except subprocess.TimeoutExpired:
-                print(f"DEBUG: FFmpeg process timed out after 2 minutes")
-                process.kill()
-                return_code = -1
-            
-            if return_code == 0:
-                print(f"DEBUG: FFmpeg compression completed successfully")
-                # Stop progress thread and set final progress
-                conversion_progress[filename] = {
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Video compression completed successfully!"
-                }
-                print(f"DEBUG: Progress set to 100% - conversion completed")
-            else:
-                print(f"DEBUG: FFmpeg failed with return code: {return_code}")
-                # Fallback to copying if FFmpeg fails
-                shutil.copy2(filepath, converted_path)
-                print(f"DEBUG: Fallback: copied original file")
-                conversion_progress[filename] = {
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Video processing completed (fallback mode)"
-                }
-                print(f"DEBUG: Progress set to 100% - fallback completed")
+            duration_cmd = [
+                'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1', filepath
+            ]
+            duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=10)
+            if duration_result.returncode == 0:
+                total_duration = float(duration_result.stdout.strip())
+                print(f"DEBUG: Video duration: {total_duration:.2f} seconds")
+        except:
+            print("DEBUG: Could not get video duration, using fallback progress")
+        
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                line = output.strip()
+                current_time = time.time()
+                elapsed_time = current_time - start_time
                 
-        except subprocess.TimeoutExpired:
-            print(f"DEBUG: FFmpeg timeout after 2 minutes, falling back to copy")
-            shutil.copy2(filepath, converted_path)
-        except FileNotFoundError:
-            print(f"DEBUG: FFmpeg not found in PATH, falling back to copy")
-            print(f"DEBUG: Please install FFmpeg: https://ffmpeg.org/download.html")
-            shutil.copy2(filepath, converted_path)
-        except Exception as e:
-            print(f"DEBUG: FFmpeg error: {e}, falling back to copy")
-            shutil.copy2(filepath, converted_path)
+                # Parse FFmpeg output for real progress
+                if 'time=' in line:
+                    try:
+                        time_part = [part for part in line.split() if part.startswith('time=')][0]
+                        time_str = time_part.split('=')[1]
+                        # Parse time format (HH:MM:SS.mmm)
+                        time_parts = time_str.split(':')
+                        if len(time_parts) == 3:
+                            hours, minutes, seconds = time_parts
+                            current_time_pos = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                            
+                            # Calculate real progress percentage
+                            if total_duration and total_duration > 0:
+                                progress = min(95, int((current_time_pos / total_duration) * 100))
+                                conversion_progress[filename]["message"] = f"Processing video... {time_str} ({progress}%)"
+                                conversion_progress[filename]["progress"] = progress
+                                print(f"DEBUG: Real progress: {progress}% - {time_str} / {total_duration:.2f}s")
+                            else:
+                                # Fallback to time-based if no duration
+                                progress = min(95, 10 + int(elapsed_time * 3.2))
+                                conversion_progress[filename]["message"] = f"Processing video... {time_str} ({elapsed_time:.0f}s)"
+                                conversion_progress[filename]["progress"] = progress
+                                print(f"DEBUG: Fallback progress: {progress}% - {elapsed_time:.0f}s")
+                    except Exception as e:
+                        print(f"DEBUG: Error parsing time: {e}")
+                
+                elif 'frame=' in line:
+                    try:
+                        frame_part = [part for part in line.split() if part.startswith('frame=')][0]
+                        frame_num = int(frame_part.split('=')[1])
+                        conversion_progress[filename]["message"] = f"Processing frame {frame_num}... ({elapsed_time:.0f}s)"
+                    except:
+                        pass
+                
+                # Update every 2 seconds as fallback
+                elif current_time - last_update >= 2.0:
+                    if not total_duration:
+                        progress = min(95, 10 + int(elapsed_time * 3.2))
+                        conversion_progress[filename]["message"] = f"Processing video... {elapsed_time:.0f}s elapsed"
+                        conversion_progress[filename]["progress"] = progress
+                        print(f"DEBUG: Fallback progress update: {progress}% - {elapsed_time:.0f}s elapsed")
+                    last_update = current_time
         
-        print(f"DEBUG: Video saved to: {converted_path}")
+        # Set progress to 99% before waiting for completion
+        conversion_progress[filename]["progress"] = 99
+        conversion_progress[filename]["message"] = "Finalizing conversion..."
+        print(f"DEBUG: Progress set to 99% - finalizing conversion")
         
-        # Get converted file size
-        converted_size = os.path.getsize(converted_path)
-        print(f"DEBUG: Converted file size: {converted_size} bytes ({converted_size / 1024 / 1024:.2f} MB)")
-        if converted_size != original_size:
-            reduction = ((original_size - converted_size) / original_size * 100)
-            print(f"DEBUG: Size reduction: {reduction:.1f}%")
-        else:
-            print(f"DEBUG: No size reduction (FFmpeg may not be available)")
-        
-        # Clean up original file (with error handling)
+        # Wait for process to complete with timeout
         try:
-            os.remove(filepath)
-            print(f"DEBUG: Original file cleaned up: {filepath}")
-        except Exception as e:
-            print(f"DEBUG: Could not remove original file (may be in use): {e}")
-            # Don't fail the conversion if we can't delete the original file
+            return_code = process.wait(timeout=120)  # 2 minute timeout for Railway
+        except subprocess.TimeoutExpired:
+            print(f"DEBUG: FFmpeg process timed out after 2 minutes")
+            process.kill()
+            return_code = -1
         
-        return jsonify({
-            "status": "success",
-            "message": f"Video converted to {output_format.upper()} successfully",
-            "converted_filename": converted_filename,
-            "unique_filename": filename,  # Add the unique filename for progress tracking
-            "original_format": filename.split('.')[-1].upper(),
-            "converted_format": output_format.upper(),
-            "quality": quality,
-            "compression": compression,
-            "original_size": original_size,
-            "converted_size": converted_size,
-            "download_url": f"/download_converted_video/{converted_filename}"
-        })
+        if return_code == 0:
+            print(f"DEBUG: FFmpeg compression completed successfully")
+            # Set final progress
+            conversion_progress[filename] = {
+                "status": "completed",
+                "progress": 100,
+                "message": "Video compression completed successfully!"
+            }
+            print(f"DEBUG: Progress set to 100% - conversion completed")
+        else:
+            print(f"DEBUG: FFmpeg failed with return code: {return_code}")
+            # Fallback to copying if FFmpeg fails
+            import shutil
+            shutil.copy2(filepath, converted_path)
+            print(f"DEBUG: Fallback: copied original file")
+            conversion_progress[filename] = {
+                "status": "completed",
+                "progress": 100,
+                "message": "Video processing completed (fallback mode)"
+            }
+            print(f"DEBUG: Progress set to 100% - fallback completed")
+            
+    except subprocess.TimeoutExpired:
+        print(f"DEBUG: FFmpeg timeout after 2 minutes, falling back to copy")
+        import shutil
+        shutil.copy2(filepath, converted_path)
+    except FileNotFoundError:
+        print(f"DEBUG: FFmpeg not found in PATH, falling back to copy")
+        print(f"DEBUG: Please install FFmpeg: https://ffmpeg.org/download.html")
+        import shutil
+        shutil.copy2(filepath, converted_path)
+    except Exception as e:
+        print(f"DEBUG: FFmpeg error: {e}, falling back to copy")
+        import shutil
+        shutil.copy2(filepath, converted_path)
+    
+    print(f"DEBUG: Background conversion completed for {filename}")
         
     except Exception as e:
         print(f"ERROR in convert_video: {str(e)}")
