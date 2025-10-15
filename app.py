@@ -2194,6 +2194,22 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         
         print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
         
+        # Check if FFmpeg is available first
+        try:
+            ffmpeg_check = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=5)
+            if ffmpeg_check.returncode != 0:
+                print(f"ERROR: FFmpeg is not working! Return code: {ffmpeg_check.returncode}")
+                print(f"ERROR: FFmpeg stderr: {ffmpeg_check.stderr}")
+                raise FileNotFoundError("FFmpeg is not working properly")
+            else:
+                print(f"DEBUG: FFmpeg is available and working")
+        except FileNotFoundError:
+            print(f"ERROR: FFmpeg not found in PATH")
+            raise
+        except Exception as e:
+            print(f"ERROR: FFmpeg check failed: {e}")
+            raise
+        
         # Update progress to show FFmpeg is starting
         conversion_progress[filename] = {
             "status": "processing",
@@ -2313,37 +2329,76 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 print(f"DEBUG: Output size: {output_size} bytes")
                 print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
                 
-                # Check if compression actually occurred
-                if output_size >= input_size:
-                    print(f"WARNING: No compression occurred! Output size ({output_size}) >= Input size ({input_size})")
-                    print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
-                    # Try a more aggressive compression
-                    print(f"DEBUG: Attempting more aggressive compression...")
-                    aggressive_cmd = [
-                        'ffmpeg',
-                        '-i', filepath,
-                        '-c:v', 'libx264',
-                        '-crf', '35',  # Much higher CRF for smaller file
-                        '-preset', 'ultrafast',
-                        '-c:a', 'aac',
-                        '-b:a', '16k',  # Very low audio bitrate
-                        '-maxrate', '200k',  # Very low max bitrate
-                        '-bufsize', '400k',
-                        '-y',
-                        converted_path
-                    ]
-                    print(f"DEBUG: Running aggressive FFmpeg command: {' '.join(aggressive_cmd)}")
-                    aggressive_result = subprocess.run(aggressive_cmd, capture_output=True, text=True, timeout=60)
-                    if aggressive_result.returncode == 0 and os.path.exists(converted_path):
-                        new_output_size = os.path.getsize(converted_path)
-                        new_compression_ratio = ((input_size - new_output_size) / input_size) * 100
-                        print(f"DEBUG: Aggressive compression result: {new_output_size} bytes ({new_compression_ratio:.2f}% reduction)")
-                        if new_output_size < input_size:
-                            output_size = new_output_size
-                            compression_ratio = new_compression_ratio
-                            print(f"DEBUG: Aggressive compression successful!")
-                        else:
-                            print(f"WARNING: Even aggressive compression failed to reduce file size")
+        # Check if compression actually occurred
+        if output_size >= input_size:
+            print(f"WARNING: No compression occurred! Output size ({output_size}) >= Input size ({input_size})")
+            print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
+            # Try a more aggressive compression
+            print(f"DEBUG: Attempting more aggressive compression...")
+            aggressive_cmd = [
+                'ffmpeg',
+                '-i', filepath,
+                '-c:v', 'libx264',
+                '-crf', '35',  # Much higher CRF for smaller file
+                '-preset', 'ultrafast',
+                '-c:a', 'aac',
+                '-b:a', '16k',  # Very low audio bitrate
+                '-maxrate', '200k',  # Very low max bitrate
+                '-bufsize', '400k',
+                '-y',
+                converted_path
+            ]
+            print(f"DEBUG: Running aggressive FFmpeg command: {' '.join(aggressive_cmd)}")
+            aggressive_result = subprocess.run(aggressive_cmd, capture_output=True, text=True, timeout=60)
+            print(f"DEBUG: Aggressive FFmpeg return code: {aggressive_result.returncode}")
+            print(f"DEBUG: Aggressive FFmpeg stdout: {aggressive_result.stdout}")
+            print(f"DEBUG: Aggressive FFmpeg stderr: {aggressive_result.stderr}")
+            
+            if aggressive_result.returncode == 0 and os.path.exists(converted_path):
+                new_output_size = os.path.getsize(converted_path)
+                new_compression_ratio = ((input_size - new_output_size) / input_size) * 100
+                print(f"DEBUG: Aggressive compression result: {new_output_size} bytes ({new_compression_ratio:.2f}% reduction)")
+                if new_output_size < input_size:
+                    output_size = new_output_size
+                    compression_ratio = new_compression_ratio
+                    print(f"DEBUG: Aggressive compression successful!")
+                else:
+                    print(f"WARNING: Even aggressive compression failed to reduce file size")
+            else:
+                print(f"ERROR: Aggressive compression failed! Return code: {aggressive_result.returncode}")
+                print(f"ERROR: This suggests FFmpeg is not working properly on Railway")
+                # Force a smaller file by using a different approach
+                print(f"DEBUG: Trying to force compression by reducing resolution...")
+                force_cmd = [
+                    'ffmpeg',
+                    '-i', filepath,
+                    '-vf', 'scale=320:240',  # Force smaller resolution
+                    '-c:v', 'libx264',
+                    '-crf', '40',  # Very high CRF
+                    '-preset', 'ultrafast',
+                    '-c:a', 'aac',
+                    '-b:a', '8k',  # Very low audio
+                    '-y',
+                    converted_path
+                ]
+                print(f"DEBUG: Running force compression command: {' '.join(force_cmd)}")
+                force_result = subprocess.run(force_cmd, capture_output=True, text=True, timeout=60)
+                print(f"DEBUG: Force compression return code: {force_result.returncode}")
+                print(f"DEBUG: Force compression stdout: {force_result.stdout}")
+                print(f"DEBUG: Force compression stderr: {force_result.stderr}")
+                
+                if force_result.returncode == 0 and os.path.exists(converted_path):
+                    force_output_size = os.path.getsize(converted_path)
+                    force_compression_ratio = ((input_size - force_output_size) / input_size) * 100
+                    print(f"DEBUG: Force compression result: {force_output_size} bytes ({force_compression_ratio:.2f}% reduction)")
+                    if force_output_size < input_size:
+                        output_size = force_output_size
+                        compression_ratio = force_compression_ratio
+                        print(f"DEBUG: Force compression successful!")
+                    else:
+                        print(f"ERROR: Even force compression failed! FFmpeg is not working on Railway!")
+                else:
+                    print(f"ERROR: Force compression also failed! FFmpeg is definitely not working on Railway!")
                 
                 # Set final progress
                 conversion_progress[filename] = {
