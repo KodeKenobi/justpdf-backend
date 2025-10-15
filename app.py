@@ -2304,6 +2304,106 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         shutil.copy2(filepath, converted_path)
     
     print(f"DEBUG: Background conversion completed for {filename}")
+
+@app.route("/convert-video", methods=["POST"])
+def convert_video():
+    try:
+        print(f"DEBUG: Video conversion endpoint called")
+        print(f"DEBUG: Request files: {list(request.files.keys())}")
+        print(f"DEBUG: Request form: {list(request.form.keys())}")
+        
+        if 'file' not in request.files:
+            return jsonify({"status": "error", "message": "No video file provided"}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"status": "error", "message": "No file selected"}), 400
+        
+        # Get conversion parameters
+        output_format = request.form.get('outputFormat', 'mp4')
+        quality = int(request.form.get('quality', 80))
+        compression = request.form.get('compression', 'medium')
+        
+        print(f"DEBUG: Converting to {output_format}, quality: {quality}%, compression: {compression}")
+        
+        # Save the uploaded file with unique filename to prevent conflicts
+        import uuid
+        original_filename = file.filename
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{unique_id}_{original_filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+        
+        print(f"DEBUG: Video file saved: {filepath}")
+        
+        # Generate output filename
+        base_name = os.path.splitext(filename)[0]
+        converted_filename = f"{base_name}_converted.{output_format}"
+        converted_path = os.path.join(VIDEO_FOLDER, converted_filename)
+        
+        # Get original file size
+        original_size = os.path.getsize(filepath)
+        print(f"DEBUG: Original file size: {original_size} bytes ({original_size / 1024 / 1024:.2f} MB)")
+        
+        # REAL video compression using FFmpeg
+        import subprocess
+        import shutil
+        
+        # Map quality to CRF (Constant Rate Factor) for H.264
+        quality_map = {
+            95: 18,  # Ultra High
+            85: 23,  # High
+            75: 28,  # Medium
+            60: 32,  # Low
+            40: 36   # Very Low
+        }
+        
+        # Map compression to preset
+        preset_map = {
+            'none': 'ultrafast',
+            'light': 'fast',
+            'medium': 'medium',
+            'heavy': 'slow',
+            'web': 'veryslow'
+        }
+        
+        crf = quality_map.get(quality, 28)
+        preset = preset_map.get(compression, 'medium')
+        
+        print(f"DEBUG: Starting FFmpeg compression with CRF={crf}, preset={preset}")
+        
+        # Initialize progress tracking using unique filename
+        conversion_progress[filename] = {
+            "status": "processing",
+            "progress": 5,
+            "message": "Starting video compression..."
+        }
+        print(f"DEBUG: Initialized progress tracking for {filename}")
+        
+        # Start conversion in background thread
+        import threading
+        conversion_thread = threading.Thread(target=convert_video_background, args=(filename, filepath, converted_path, crf, preset))
+        conversion_thread.daemon = True
+        conversion_thread.start()
+        
+        # Return immediately with success status
+        converted_size = original_size  # Will be updated by background thread
+        response_data = {
+            "status": "success",
+            "message": "Video upload successful, conversion started",
+            "unique_filename": filename,
+            "original_size": original_size,
+            "converted_size": converted_size,
+            "original_format": "MP4",
+            "converted_format": output_format.upper(),
+            "quality": quality,
+            "compression": compression,
+            "converted_filename": converted_filename,
+            "download_url": f"/download_converted_video/{converted_filename}"
+        }
+        
+        print(f"DEBUG: Returning immediate response: {response_data}")
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"ERROR in convert_video: {str(e)}")
