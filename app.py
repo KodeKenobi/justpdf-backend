@@ -2170,25 +2170,17 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 "message": "Initializing video compression..."
             }
         
-        # FFmpeg command for video compression with aggressive settings
+        # Fast FFmpeg command with resolution scaling
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
+            '-vf', 'scale=1280:720',  # Scale down to 720p for faster compression
             '-c:v', 'libx264',
-            '-crf', str(crf),
-            '-preset', preset,
+            '-crf', '30',  # Higher CRF for faster compression
+            '-preset', 'ultrafast',  # Fastest preset
             '-c:a', 'aac',
-            '-b:a', '32k',  # Even lower audio bitrate for smaller file
-            '-movflags', '+faststart',
-            '-vf', 'scale=iw:ih',  # Maintain aspect ratio
-            '-threads', '2',
-            '-profile:v', 'baseline',  # Use baseline profile for better compatibility
-            '-level', '3.0',  # Lower level for smaller file
-            '-maxrate', '500k',  # Much lower maximum bitrate for smaller file
-            '-bufsize', '1000k',  # Smaller buffer size
-            '-x264opts', 'no-scenecut',  # Disable scene cut detection for better compression
-            '-tune', 'film',  # Optimize for film content
-            '-y',  # Overwrite output file
+            '-b:a', '128k',
+            '-y',
             converted_path
         ]
         
@@ -2312,9 +2304,9 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         # Wait for process to complete with timeout
         return_code = -1  # Initialize return_code
         try:
-            return_code = process.wait(timeout=120)  # 2 minute timeout for Railway
+            return_code = process.wait(timeout=300)  # 5 minute timeout for large videos
         except subprocess.TimeoutExpired:
-            print(f"DEBUG: FFmpeg process timed out after 2 minutes")
+            print(f"DEBUG: FFmpeg process timed out after 5 minutes")
             process.kill()
             return_code = -1
         except Exception as e:
