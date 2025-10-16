@@ -89,6 +89,9 @@ def test_ffmpeg():
 # Global progress tracking
 conversion_progress = {}
 
+# Global process tracking for cancellation
+running_processes = {}
+
 # File cleanup system
 def cleanup_old_files():
     """Clean up files older than 1 hour from all output directories"""
@@ -2134,13 +2137,12 @@ def convert_video():
         time.sleep(0.1)
         
         # Return immediately with success status
-        converted_size = original_size  # Will be updated by background thread
         response_data = {
             "status": "success",
             "message": "Video upload successful, conversion started",
             "unique_filename": filename,
             "original_size": original_size,
-            "converted_size": converted_size,
+            # converted_size will be updated by background thread when conversion completes
             "original_format": "MP4",
             "converted_format": output_format.upper(),
             "quality": quality,
@@ -2161,6 +2163,7 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
     """Background video conversion function"""
     try:
         print(f"DEBUG: Starting background conversion for {filename}")
+        print(f"DEBUG: Using CRF={crf}, preset={preset}")
         
         # Update progress to 0% only if not already set
         if filename not in conversion_progress or conversion_progress[filename]["progress"] == 0:
@@ -2170,21 +2173,30 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 "message": "Initializing video compression..."
             }
         
-        # Fast FFmpeg command with resolution scaling
+        # Get output format from the converted path
+        output_format = os.path.splitext(converted_path)[1][1:]  # Remove the dot
+        
+        # FFmpeg command using user-selected quality and compression settings
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
-            '-vf', 'scale=1280:720',  # Scale down to 720p for faster compression
             '-c:v', 'libx264',
-            '-crf', '30',  # Higher CRF for faster compression
-            '-preset', 'ultrafast',  # Fastest preset
+            '-crf', str(crf),  # Use user-selected CRF value
+            '-preset', preset,  # Use user-selected preset
             '-c:a', 'aac',
             '-b:a', '128k',
-            '-y',
+            '-y',  # Overwrite output file
             converted_path
         ]
         
         print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        print(f"DEBUG: Input file: {filepath}")
+        print(f"DEBUG: Output file: {converted_path}")
+        print(f"DEBUG: Input file exists: {os.path.exists(filepath)}")
+        print(f"DEBUG: Input file size: {os.path.getsize(filepath) if os.path.exists(filepath) else 'N/A'}")
+        print(f"DEBUG: Output directory: {os.path.dirname(converted_path)}")
+        print(f"DEBUG: Output directory exists: {os.path.exists(os.path.dirname(converted_path))}")
+        print(f"DEBUG: Output filename: {os.path.basename(converted_path)}")
         
         # Check if FFmpeg is available first
         try:
@@ -2225,6 +2237,15 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             bufsize=1
         )
         
+        # Track the process for potential cancellation
+        running_processes[filename] = {
+            'process': process,
+            'start_time': time.time(),
+            'filepath': filepath,
+            'converted_path': converted_path
+        }
+        print(f"DEBUG: Process tracked for cancellation: {filename} (PID: {process.pid})")
+        
         # Real-time progress tracking from FFmpeg output
         start_time = time.time()
         last_update = start_time
@@ -2244,14 +2265,20 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         except:
             print("DEBUG: Could not get video duration, using fallback progress")
         
+        # FFmpeg outputs progress to stderr
+        stderr_output = []
         while True:
-            output = process.stdout.readline()
+            output = process.stderr.readline()
             if output == '' and process.poll() is not None:
                 break
             if output:
                 line = output.strip()
+                stderr_output.append(line)
                 current_time = time.time()
                 elapsed_time = current_time - start_time
+                
+                # Debug: Print all FFmpeg output to see what we're getting
+                print(f"DEBUG: FFmpeg output: {line}")
                 
                 # Parse FFmpeg output for real progress
                 if 'time=' in line:
@@ -2266,7 +2293,7 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                             
                             # Calculate real progress percentage
                             if total_duration and total_duration > 0:
-                                progress = max(1, int((current_time_pos / total_duration) * 100))
+                                progress = max(1, min(99, int((current_time_pos / total_duration) * 100)))
                                 conversion_progress[filename]["message"] = f"Processing video... {time_str} ({progress}%)"
                                 conversion_progress[filename]["progress"] = progress
                                 print(f"DEBUG: Real progress: {progress}% - {time_str} / {total_duration:.2f}s")
@@ -2304,9 +2331,15 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         # Wait for process to complete with timeout
         return_code = -1  # Initialize return_code
         try:
+            print(f"DEBUG: Waiting for FFmpeg process to complete...")
+            print(f"DEBUG: Process PID: {process.pid}")
+            print(f"DEBUG: Process is still running: {process.poll() is None}")
+            
             return_code = process.wait(timeout=300)  # 5 minute timeout for large videos
+            print(f"DEBUG: FFmpeg process completed with return code: {return_code}")
         except subprocess.TimeoutExpired:
             print(f"DEBUG: FFmpeg process timed out after 5 minutes")
+            print(f"DEBUG: Killing FFmpeg process...")
             process.kill()
             return_code = -1
         except Exception as e:
@@ -2314,8 +2347,32 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             return_code = -1
         
         print(f"DEBUG: FFmpeg return code: {return_code}")
+        print(f"DEBUG: Process is still running after wait: {process.poll() is None}")
+        print(f"DEBUG: FFmpeg process completed, checking output file...")
+        print(f"DEBUG: Expected output path: {converted_path}")
+        print(f"DEBUG: Output directory exists: {os.path.exists(os.path.dirname(converted_path))}")
+        print(f"DEBUG: Output file exists: {os.path.exists(converted_path)}")
+        
+        # Print full stderr output for debugging
+        print(f"DEBUG: Full FFmpeg stderr output:")
+        for i, line in enumerate(stderr_output[-10:]):  # Show last 10 lines
+            print(f"DEBUG: stderr[{i}]: {line}")
+        
+        # List files in the output directory for debugging
+        try:
+            output_dir = os.path.dirname(converted_path)
+            if os.path.exists(output_dir):
+                files_in_dir = os.listdir(output_dir)
+                print(f"DEBUG: Files in output directory: {files_in_dir}")
+            else:
+                print(f"DEBUG: Output directory does not exist: {output_dir}")
+        except Exception as e:
+            print(f"DEBUG: Error listing output directory: {e}")
+        
         if return_code != 0:
-            print(f"DEBUG: FFmpeg stderr: {process.stderr.read() if hasattr(process, 'stderr') else 'N/A'}")
+            print(f"ERROR: FFmpeg failed with return code: {return_code}")
+            # Don't try to read stderr again as it's already been consumed during progress tracking
+        
         if return_code == 0:
             print(f"DEBUG: FFmpeg compression completed successfully")
             # Check if output file was created and get its size
@@ -2329,6 +2386,7 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
                 
                 # Check if compression actually occurred
+                print(f"DEBUG: Comparing sizes - Output: {output_size}, Input: {input_size}, Comparison: {output_size >= input_size}")
                 if output_size >= input_size:
                     print(f"WARNING: No compression occurred! Output size ({output_size}) >= Input size ({input_size})")
                     print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
@@ -2409,28 +2467,24 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         "compression_ratio": compression_ratio
                     }
                     print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
-                else:  # This 'else' corresponds to 'if os.path.exists(converted_path):' at line 2323
-                    print(f"DEBUG: Output file not created, falling back to copy")
-                    import shutil
-                    shutil.copy2(filepath, converted_path)
-                    # Get file sizes for fallback
-                    input_size = os.path.getsize(filepath)
-                    output_size = os.path.getsize(converted_path)
+                else:
+                    # Compression was successful, no need for aggressive compression
+                    print(f"DEBUG: Compression successful! No aggressive compression needed.")
+                    # Set final progress
                     conversion_progress[filename] = {
                         "status": "completed",
                         "progress": 100,
-                        "message": "Video processing completed (fallback mode)",
+                        "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
                         "original_size": input_size,
                         "converted_size": output_size,
-                        "compression_ratio": 0.0
+                        "compression_ratio": compression_ratio
                     }
-            else:  # This 'else' corresponds to 'if return_code == 0:' at line 2320
-                print(f"DEBUG: FFmpeg failed with return code: {return_code}")
-                print(f"DEBUG: FFmpeg stdout: {process.stdout.read() if hasattr(process, 'stdout') else 'N/A'}")
-                # Fallback to copying if FFmpeg fails
+                    print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
+                    return  # Exit the function here to prevent fallback logic
+            else:  # This 'else' corresponds to 'if os.path.exists(converted_path):' at line 2323
+                print(f"DEBUG: Output file not created, falling back to copy")
                 import shutil
                 shutil.copy2(filepath, converted_path)
-                print(f"DEBUG: Fallback: copied original file")
                 # Get file sizes for fallback
                 input_size = os.path.getsize(filepath)
                 output_size = os.path.getsize(converted_path)
@@ -2457,6 +2511,11 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         print(f"DEBUG: FFmpeg error: {e}, falling back to copy")
         import shutil
         shutil.copy2(filepath, converted_path)
+    
+    # Clean up process tracking
+    if filename in running_processes:
+        del running_processes[filename]
+        print(f"DEBUG: Process tracking cleaned up for {filename}")
     
     print(f"DEBUG: Background conversion completed for {filename}")
 
@@ -2522,6 +2581,76 @@ def get_conversion_progress(filename):
     except Exception as e:
         print(f"DEBUG: Progress error: {e}")
         return jsonify({"error": str(e)}), 500
+
+@app.route("/cancel_conversion/<filename>", methods=["POST"])
+def cancel_conversion(filename):
+    """Cancel a running video conversion"""
+    try:
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        print(f"DEBUG: Cancellation request for {decoded_filename}")
+        
+        # Find the process by filename (exact or partial match)
+        process_to_kill = None
+        for key, process_info in running_processes.items():
+            if decoded_filename in key or key in decoded_filename:
+                process_to_kill = process_info
+                print(f"DEBUG: Found process to cancel: {key}")
+                break
+        
+        if process_to_kill and 'process' in process_to_kill:
+            process = process_to_kill['process']
+            if process.poll() is None:  # Process is still running
+                print(f"DEBUG: Terminating FFmpeg process PID: {process.pid}")
+                process.terminate()
+                
+                # Wait a bit for graceful termination
+                try:
+                    process.wait(timeout=5)
+                    print(f"DEBUG: Process terminated gracefully")
+                except subprocess.TimeoutExpired:
+                    print(f"DEBUG: Process didn't terminate gracefully, killing it")
+                    process.kill()
+                    process.wait()
+                
+                # Update progress to cancelled
+                conversion_progress[decoded_filename] = {
+                    "status": "cancelled",
+                    "progress": 0,
+                    "message": "Conversion cancelled by user"
+                }
+                
+                # Clean up the process from tracking
+                for key in list(running_processes.keys()):
+                    if decoded_filename in key or key in decoded_filename:
+                        del running_processes[key]
+                        break
+                
+                print(f"DEBUG: Conversion cancelled successfully for {decoded_filename}")
+                return jsonify({
+                    "status": "success",
+                    "message": "Conversion cancelled successfully"
+                })
+            else:
+                print(f"DEBUG: Process already completed for {decoded_filename}")
+                return jsonify({
+                    "status": "already_completed",
+                    "message": "Conversion already completed"
+                })
+        else:
+            print(f"DEBUG: No running process found for {decoded_filename}")
+            return jsonify({
+                "status": "not_found",
+                "message": "No running conversion found"
+            }), 404
+            
+    except Exception as e:
+        print(f"ERROR in cancel_conversion: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": f"Error cancelling conversion: {str(e)}"
+        }), 500
 
 # Audio Conversion Functions
 def allowed_audio_file(filename):
@@ -3017,6 +3146,49 @@ def download_converted_audio(filename):
     except Exception as e:
         print(f"ERROR in download_converted_audio: {str(e)}")
         return f"Error downloading converted audio: {str(e)}", 500
+
+def cleanup_all_processes():
+    """Clean up all running processes on shutdown"""
+    print("DEBUG: Cleaning up all running processes...")
+    for filename, process_info in running_processes.items():
+        try:
+            process = process_info['process']
+            if process.poll() is None:  # Process is still running
+                print(f"DEBUG: Terminating process for {filename} (PID: {process.pid})")
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        except Exception as e:
+            print(f"DEBUG: Error cleaning up process for {filename}: {e}")
+    running_processes.clear()
+
+def cleanup_abandoned_processes():
+    """Clean up processes that have been running for too long (1 hour)"""
+    current_time = time.time()
+    abandoned = []
+    for filename, process_info in running_processes.items():
+        if current_time - process_info['start_time'] > 3600:  # 1 hour
+            abandoned.append(filename)
+    
+    for filename in abandoned:
+        try:
+            process = running_processes[filename]['process']
+            if process.poll() is None:
+                print(f"DEBUG: Cleaning up abandoned process for {filename}")
+                process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            del running_processes[filename]
+        except Exception as e:
+            print(f"DEBUG: Error cleaning up abandoned process for {filename}: {e}")
+
+# Register cleanup on shutdown
+import atexit
+atexit.register(cleanup_all_processes)
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5000)
