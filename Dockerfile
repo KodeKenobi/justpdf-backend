@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt .
+COPY justpdf-backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy application code from justpdf-backend
+COPY justpdf-backend/ .
 
 # Create necessary directories
 RUN mkdir -p uploads edited saved_html converted_videos converted_audio

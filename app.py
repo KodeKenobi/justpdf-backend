@@ -2170,16 +2170,24 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 "message": "Initializing video compression..."
             }
         
-        # Fast FFmpeg command with resolution scaling
+        # Use the actual parameters passed to the function instead of hardcoded values
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
-            '-vf', 'scale=1280:720',  # Scale down to 720p for faster compression
             '-c:v', 'libx264',
-            '-crf', '30',  # Higher CRF for faster compression
-            '-preset', 'ultrafast',  # Fastest preset
+            '-crf', str(crf),
+            '-preset', preset,
             '-c:a', 'aac',
-            '-b:a', '128k',
+            '-b:a', '32k',
+            '-movflags', '+faststart',
+            '-vf', 'scale=iw:ih',
+            '-threads', '2',
+            '-profile:v', 'baseline',
+            '-level', '3.0',
+            '-maxrate', '500k',
+            '-bufsize', '1000k',
+            '-x264opts', 'no-scenecut',
+            '-tune', 'film',
             '-y',
             converted_path
         ]
@@ -2322,6 +2330,15 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         if return_code == 0:
             print(f"DEBUG: FFmpeg compression completed successfully")
             # Check if output file was created and get its size
+            print(f"DEBUG: Checking for output file at: {converted_path}")
+            print(f"DEBUG: File exists: {os.path.exists(converted_path)}")
+            
+            # List all files in the output directory for debugging
+            output_dir = os.path.dirname(converted_path)
+            if os.path.exists(output_dir):
+                files_in_dir = os.listdir(output_dir)
+                print(f"DEBUG: Files in output directory: {files_in_dir}")
+            
             if os.path.exists(converted_path):
                 output_size = os.path.getsize(converted_path)
                 input_size = os.path.getsize(filepath)
@@ -2330,8 +2347,41 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 print(f"DEBUG: Input size: {input_size} bytes")
                 print(f"DEBUG: Output size: {output_size} bytes")
                 print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
+            else:
+                # Try to find the actual output file with a different name pattern
+                print(f"DEBUG: Expected file not found, searching for similar files...")
+                base_name = os.path.splitext(os.path.basename(filepath))[0]
+                search_patterns = [
+                    f"{base_name}_converted_converted.mp4",
+                    f"{base_name}_converted.mp4",
+                    f"{base_name}.mp4"
+                ]
                 
-                # Check if compression actually occurred
+                found_file = None
+                for pattern in search_patterns:
+                    potential_path = os.path.join(output_dir, pattern)
+                    if os.path.exists(potential_path):
+                        print(f"DEBUG: Found file with pattern '{pattern}': {potential_path}")
+                        found_file = potential_path
+                        break
+                
+                if found_file:
+                    print(f"DEBUG: Using found file: {found_file}")
+                    output_size = os.path.getsize(found_file)
+                    input_size = os.path.getsize(filepath)
+                    compression_ratio = ((input_size - output_size) / input_size) * 100
+                    print(f"DEBUG: Input size: {input_size} bytes")
+                    print(f"DEBUG: Output size: {output_size} bytes")
+                    print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
+                    
+                    # Update the converted_path to point to the actual file
+                    converted_path = found_file
+                else:
+                    print(f"DEBUG: No output file found with any pattern")
+                    converted_path = None
+                
+            # Check if compression actually occurred
+            if converted_path and os.path.exists(converted_path):
                 if output_size >= input_size:
                     print(f"WARNING: No compression occurred! Output size ({output_size}) >= Input size ({input_size})")
                     print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
@@ -2402,31 +2452,33 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         else:
                             print(f"ERROR: Force compression also failed! FFmpeg is definitely not working on Railway!")
                     
-                    # Set final progress
-                    conversion_progress[filename] = {
-                        "status": "completed",
-                        "progress": 100,
-                        "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
-                        "original_size": input_size,
-                        "converted_size": output_size,
-                        "compression_ratio": compression_ratio
-                    }
-                    print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
-                else:  # This 'else' corresponds to 'if os.path.exists(converted_path):' at line 2323
-                    print(f"DEBUG: Output file not created, falling back to copy")
-                    import shutil
-                    shutil.copy2(filepath, converted_path)
-                    # Get file sizes for fallback
-                    input_size = os.path.getsize(filepath)
-                    output_size = os.path.getsize(converted_path)
-                    conversion_progress[filename] = {
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Video processing completed (fallback mode)",
-                        "original_size": input_size,
-                        "converted_size": output_size,
-                        "compression_ratio": 0.0
-                    }
+                # Set final progress
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
+                    "original_size": input_size,
+                    "converted_size": output_size,
+                    "compression_ratio": compression_ratio
+                }
+                print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
+            else:  # This 'else' corresponds to 'if converted_path and os.path.exists(converted_path):' at line 2384
+                print(f"DEBUG: Output file not created, falling back to copy")
+                import shutil
+                # Use the original converted_path for fallback
+                fallback_path = os.path.join(VIDEO_FOLDER, f"{os.path.splitext(os.path.basename(filepath))[0]}_converted.mp4")
+                shutil.copy2(filepath, fallback_path)
+                # Get file sizes for fallback
+                input_size = os.path.getsize(filepath)
+                output_size = os.path.getsize(fallback_path)
+                conversion_progress[filename] = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Video processing completed (fallback mode)",
+                    "original_size": input_size,
+                    "converted_size": output_size,
+                    "compression_ratio": 0.0
+                }
             else:  # This 'else' corresponds to 'if return_code == 0:' at line 2320
                 print(f"DEBUG: FFmpeg failed with return code: {return_code}")
                 print(f"DEBUG: FFmpeg stdout: {process.stdout.read() if hasattr(process, 'stdout') else 'N/A'}")
