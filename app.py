@@ -2134,13 +2134,13 @@ def convert_video():
         time.sleep(0.1)
         
         # Return immediately with success status
-        converted_size = original_size  # Will be updated by background thread
+        # Note: converted_size will be available after compression completes via progress endpoint
         response_data = {
             "status": "success",
             "message": "Video upload successful, conversion started",
             "unique_filename": filename,
             "original_size": original_size,
-            "converted_size": converted_size,
+            "converted_size": None,  # Will be available after compression via progress endpoint
             "original_format": "MP4",
             "converted_format": output_format.upper(),
             "quality": quality,
@@ -2400,21 +2400,30 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         else:
                             print(f"ERROR: Force compression also failed! FFmpeg is definitely not working on Railway!")
                 
-                # Set final progress
-                conversion_progress[filename] = {
-                    "status": "completed",
-                    "progress": 100,
-                    "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%"
-                }
-                print(f"DEBUG: Progress set to 100% - conversion completed")
+                       # Set final progress with actual file sizes
+                       conversion_progress[filename] = {
+                           "status": "completed",
+                           "progress": 100,
+                           "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
+                           "original_size": input_size,
+                           "converted_size": output_size,
+                           "compression_ratio": compression_ratio
+                       }
+                       print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
             else:
                 print(f"DEBUG: Output file not created, falling back to copy")
                 import shutil
                 shutil.copy2(filepath, converted_path)
+                # Get file sizes for fallback
+                input_size = os.path.getsize(filepath)
+                output_size = os.path.getsize(converted_path)
                 conversion_progress[filename] = {
                     "status": "completed",
                     "progress": 100,
-                    "message": "Video processing completed (fallback mode)"
+                    "message": "Video processing completed (fallback mode)",
+                    "original_size": input_size,
+                    "converted_size": output_size,
+                    "compression_ratio": 0.0
                 }
         else:
             print(f"DEBUG: FFmpeg failed with return code: {return_code}")
@@ -2423,10 +2432,16 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             import shutil
             shutil.copy2(filepath, converted_path)
             print(f"DEBUG: Fallback: copied original file")
+            # Get file sizes for fallback
+            input_size = os.path.getsize(filepath)
+            output_size = os.path.getsize(converted_path)
             conversion_progress[filename] = {
                 "status": "completed",
                 "progress": 100,
-                "message": "Video processing completed (fallback mode)"
+                "message": "Video processing completed (fallback mode)",
+                "original_size": input_size,
+                "converted_size": output_size,
+                "compression_ratio": 0.0
             }
             print(f"DEBUG: Progress set to 100% - fallback completed")
             
@@ -2434,15 +2449,48 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         print(f"DEBUG: FFmpeg timeout after 2 minutes, falling back to copy")
         import shutil
         shutil.copy2(filepath, converted_path)
+        # Set progress with file sizes
+        input_size = os.path.getsize(filepath)
+        output_size = os.path.getsize(converted_path)
+        conversion_progress[filename] = {
+            "status": "completed",
+            "progress": 100,
+            "message": "Video processing completed (timeout fallback)",
+            "original_size": input_size,
+            "converted_size": output_size,
+            "compression_ratio": 0.0
+        }
     except FileNotFoundError:
         print(f"DEBUG: FFmpeg not found in PATH, falling back to copy")
         print(f"DEBUG: Please install FFmpeg: https://ffmpeg.org/download.html")
         import shutil
         shutil.copy2(filepath, converted_path)
+        # Set progress with file sizes
+        input_size = os.path.getsize(filepath)
+        output_size = os.path.getsize(converted_path)
+        conversion_progress[filename] = {
+            "status": "completed",
+            "progress": 100,
+            "message": "Video processing completed (FFmpeg not found fallback)",
+            "original_size": input_size,
+            "converted_size": output_size,
+            "compression_ratio": 0.0
+        }
     except Exception as e:
         print(f"DEBUG: FFmpeg error: {e}, falling back to copy")
         import shutil
         shutil.copy2(filepath, converted_path)
+        # Set progress with file sizes
+        input_size = os.path.getsize(filepath)
+        output_size = os.path.getsize(converted_path)
+        conversion_progress[filename] = {
+            "status": "completed",
+            "progress": 100,
+            "message": "Video processing completed (error fallback)",
+            "original_size": input_size,
+            "converted_size": output_size,
+            "compression_ratio": 0.0
+        }
     
     print(f"DEBUG: Background conversion completed for {filename}")
 
