@@ -2400,16 +2400,16 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         else:
                             print(f"ERROR: Force compression also failed! FFmpeg is definitely not working on Railway!")
                 
-                       # Set final progress with actual file sizes
-                       conversion_progress[filename] = {
-                           "status": "completed",
-                           "progress": 100,
-                           "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
-                           "original_size": input_size,
-                           "converted_size": output_size,
-                           "compression_ratio": compression_ratio
-                       }
-                       print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
+                        # Set final progress with actual file sizes
+                        conversion_progress[filename] = {
+                            "status": "completed",
+                            "progress": 100,
+                            "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
+                            "original_size": input_size,
+                            "converted_size": output_size,
+                            "compression_ratio": compression_ratio
+                        }
+                        print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
             else:
                 print(f"DEBUG: Output file not created, falling back to copy")
                 import shutil
