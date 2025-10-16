@@ -2069,6 +2069,9 @@ def convert_video():
         compression = request.form.get('compression', 'medium')
         
         print(f"DEBUG: Converting to {output_format}, quality: {quality}%, compression: {compression}")
+        print(f"DEBUG: Quality type: {type(quality)}, Quality value: {quality}")
+        print(f"DEBUG: Quality from form: {request.form.get('quality')}")
+        print(f"DEBUG: Quality as int: {int(request.form.get('quality', 80))}")
         
         # Save the uploaded file with unique filename to prevent conflicts
         import uuid
@@ -2116,6 +2119,8 @@ def convert_video():
         crf = quality_map.get(quality, 28)
         preset = preset_map.get(compression, 'medium')
         
+        print(f"DEBUG: Quality mapping - Input quality: {quality}, Mapped CRF: {crf}")
+        print(f"DEBUG: Compression mapping - Input compression: {compression}, Mapped preset: {preset}")
         print(f"DEBUG: Starting FFmpeg compression with CRF={crf}, preset={preset}")
         
         # Initialize progress tracking using unique filename
