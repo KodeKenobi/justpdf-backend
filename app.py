@@ -2310,11 +2310,15 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         print(f"DEBUG: Progress set to 99% - finalizing conversion")
         
         # Wait for process to complete with timeout
+        return_code = -1  # Initialize return_code
         try:
             return_code = process.wait(timeout=120)  # 2 minute timeout for Railway
         except subprocess.TimeoutExpired:
             print(f"DEBUG: FFmpeg process timed out after 2 minutes")
             process.kill()
+            return_code = -1
+        except Exception as e:
+            print(f"DEBUG: FFmpeg process error: {e}")
             return_code = -1
         
         if return_code == 0:
