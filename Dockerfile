@@ -10,6 +10,7 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt /app/requirements.txt
+COPY test-files.txt /app/test-files.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Copy application code
