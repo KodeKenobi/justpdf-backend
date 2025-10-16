@@ -2227,7 +2227,7 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         process = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             universal_newlines=True,
             bufsize=1
@@ -2321,6 +2321,9 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             print(f"DEBUG: FFmpeg process error: {e}")
             return_code = -1
         
+        print(f"DEBUG: FFmpeg return code: {return_code}")
+        if return_code != 0:
+            print(f"DEBUG: FFmpeg stderr: {process.stderr.read() if hasattr(process, 'stderr') else 'N/A'}")
         if return_code == 0:
             print(f"DEBUG: FFmpeg compression completed successfully")
             # Check if output file was created and get its size
