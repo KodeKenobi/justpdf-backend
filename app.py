@@ -2185,6 +2185,9 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         ]
         
         print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        print(f"DEBUG: Input file exists: {os.path.exists(filepath)}")
+        print(f"DEBUG: Output directory exists: {os.path.exists(os.path.dirname(converted_path))}")
+        print(f"DEBUG: Output path: {converted_path}")
         
         # Check if FFmpeg is available first
         try:
