@@ -55,6 +55,17 @@ app.config['JWT_HEADER_TYPE'] = 'Bearer'
 jwt.init_app(app)
 init_db(app)
 
+# Create database tables if they don't exist
+with app.app_context():
+    try:
+        from database import db
+        db.create_all()
+        print("✅ Database tables created/verified successfully!")
+    except Exception as e:
+        print(f"❌ Error creating database tables: {e}")
+        # Don't fail the app startup if database creation fails
+        pass
+
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
     "https://trevnoctilla.com",
@@ -3256,4 +3267,8 @@ import atexit
 atexit.register(cleanup_all_processes)
 
 if __name__ == "__main__":
+    print("🚀 Starting Flask application...")
+    print(f"📊 Database URL: {os.getenv('DATABASE_URL', 'sqlite:///justpdf_api.db')}")
+    print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
+    print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
     app.run(debug=True, host='0.0.0.0', port=5000)
