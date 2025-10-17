@@ -15,6 +15,10 @@ import shutil
 import threading
 
 # Import new API modules
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from database import init_db
 from auth import jwt
 from auth_routes import auth_bp

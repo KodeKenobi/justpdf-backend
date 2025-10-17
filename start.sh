@@ -10,6 +10,10 @@ echo "Current directory: $(pwd)"
 echo "Files in current directory: $(ls -la)"
 echo "Checking if app.py exists: $(ls -la app.py)"
 
+# Add current directory to Python path
+export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+echo "PYTHONPATH: $PYTHONPATH"
+
 # Test if we can import the app
 echo "Testing Python import..."
 python -c "import app; print('App import successful')"
