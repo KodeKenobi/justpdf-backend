@@ -206,6 +206,7 @@ def admin_update_password():
         
         email = data.get('email', '').strip().lower()
         new_password = data.get('password', '')
+        new_role = data.get('role', '')
         
         if not email or not new_password:
             return jsonify({'error': 'Email and password are required'}), 400
@@ -219,9 +220,17 @@ def admin_update_password():
         
         # Update password
         user.set_password(new_password)
+        
+        # Update role if provided
+        if new_role:
+            user.role = new_role
+        
         db.session.commit()
         
-        return jsonify({'message': f'Password updated successfully for {email}'}), 200
+        return jsonify({
+            'message': f'User updated successfully for {email}',
+            'user': user.to_dict()
+        }), 200
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
