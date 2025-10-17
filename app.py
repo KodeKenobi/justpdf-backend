@@ -3280,4 +3280,5 @@ if __name__ == "__main__":
     print(f"📊 Database URL: {os.getenv('DATABASE_URL', 'sqlite:///justpdf_api.db')}")
     print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
     print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
+    print(f"✅ All dependencies loaded successfully")
     app.run(debug=True, host='0.0.0.0', port=5000)
