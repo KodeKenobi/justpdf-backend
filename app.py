@@ -3295,4 +3295,9 @@ if __name__ == "__main__":
     print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
     print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
     print(f"✅ All dependencies loaded successfully")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    
+    # Get port from environment variable (Railway provides this)
+    port = int(os.getenv('PORT', 5000))
+    print(f"🌐 Starting server on port {port}")
+    
+    app.run(debug=False, host='0.0.0.0', port=port)
