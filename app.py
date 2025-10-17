@@ -28,6 +28,8 @@ print("📦 Importing modules...")
 try:
     from database import init_db
     print("✅ Database module imported successfully")
+    from models import *  # Import all models to register them with SQLAlchemy
+    print("✅ Models imported successfully")
     from auth import jwt
     print("✅ Auth module imported successfully")
 except ImportError as e:
