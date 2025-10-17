@@ -86,29 +86,7 @@ CORS(app, origins=[
     "http://localhost:8080"
 ], supports_credentials=True)  # Enable CORS for specific origins
 
-# Add CORS headers manually for additional debugging
-@app.after_request
-def after_request(response):
-    # Get the origin from the request
-    origin = request.headers.get('Origin')
-    
-    # Check if origin is in our allowed list
-    allowed_origins = [
-        "https://web-production-ef253.up.railway.app",
-        "https://trevnoctilla.com", 
-        "https://www.trevnoctilla.com",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8080"
-    ]
-    
-    if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-    
-    return response
+# Flask-CORS handles all CORS headers automatically
 
 # Health check endpoint
 @app.route("/health", methods=["GET"])
