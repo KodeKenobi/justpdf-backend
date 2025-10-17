@@ -82,6 +82,7 @@ CORS(app, origins=[
     "https://trevnoctilla.com",
     "https://www.trevnoctilla.com",
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://localhost:8080"
 ], supports_credentials=True)  # Enable CORS for specific origins
 
@@ -97,6 +98,7 @@ def after_request(response):
         "https://trevnoctilla.com", 
         "https://www.trevnoctilla.com",
         "http://localhost:3000",
+        "http://localhost:3001",
         "http://localhost:8080"
     ]
     
