@@ -14,7 +14,31 @@ import subprocess
 import shutil
 import threading
 
+# Import new API modules
+from database import init_db
+from auth import jwt
+from auth_routes import auth_bp
+from api.v1.routes import api_v1
+from api.admin.routes import admin_api
+from api.client.routes import client_api
+
 app = Flask(__name__)
+
+# Configuration
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-change-in-production')
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
+app.config['JWT_IDENTITY_CLAIM'] = 'sub'
+app.config['JWT_JSON_KEY'] = 'access_token'
+app.config['JWT_ALGORITHM'] = 'HS256'
+app.config['JWT_TOKEN_LOCATION'] = ['headers']
+app.config['JWT_HEADER_NAME'] = 'Authorization'
+app.config['JWT_HEADER_TYPE'] = 'Bearer'
+
+# Initialize extensions
+jwt.init_app(app)
+init_db(app)
+
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
     "https://trevnoctilla.com",
@@ -3190,6 +3214,12 @@ def cleanup_abandoned_processes():
             del running_processes[filename]
         except Exception as e:
             print(f"DEBUG: Error cleaning up abandoned process for {filename}: {e}")
+
+# Register API blueprints
+app.register_blueprint(auth_bp)
+app.register_blueprint(api_v1)
+app.register_blueprint(admin_api)
+app.register_blueprint(client_api)
 
 # Register cleanup on shutdown
 import atexit
