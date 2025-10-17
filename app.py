@@ -24,14 +24,19 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 # Import database and auth modules
+print("📦 Importing modules...")
 try:
     from database import init_db
+    print("✅ Database module imported successfully")
     from auth import jwt
+    print("✅ Auth module imported successfully")
 except ImportError as e:
-    print(f"Import error: {e}")
+    print(f"❌ Import error: {e}")
     print(f"Current directory: {current_dir}")
     print(f"Python path: {sys.path}")
     print(f"Files in current directory: {os.listdir(current_dir)}")
+    import traceback
+    traceback.print_exc()
     raise
 from auth_routes import auth_bp
 from api.v1.routes import api_v1
@@ -56,13 +61,17 @@ jwt.init_app(app)
 init_db(app)
 
 # Create database tables if they don't exist
+print("🔧 Initializing database...")
 with app.app_context():
     try:
         from database import db
+        print("📊 Creating database tables...")
         db.create_all()
         print("✅ Database tables created/verified successfully!")
     except Exception as e:
         print(f"❌ Error creating database tables: {e}")
+        import traceback
+        traceback.print_exc()
         # Don't fail the app startup if database creation fails
         pass
 
