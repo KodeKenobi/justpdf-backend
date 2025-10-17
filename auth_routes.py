@@ -1,7 +1,5 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, g
 from auth import register_user, login_user, reset_password, change_password, require_auth
-from database import db
-from models import User
 
 # Create Blueprint
 auth_bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -102,7 +100,9 @@ def change_password_endpoint():
         if not old_password or not new_password:
             return jsonify({'error': 'Old and new passwords are required'}), 400
         
-        success, message = change_password(g.current_user.id, old_password, new_password)
+        from flask_jwt_extended import get_jwt_identity
+        user_id = get_jwt_identity()
+        success, message = change_password(user_id, old_password, new_password)
         
         if success:
             return jsonify({'message': message}), 200
@@ -137,6 +137,7 @@ def get_profile():
                 user_id = int(user_id)
             
             # Get user from database
+            from models import User
             user = User.query.get(user_id)
             if not user:
                 return jsonify({'error': 'User not found'}), 404
@@ -161,6 +162,15 @@ def update_profile():
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
+        from flask_jwt_extended import get_jwt_identity
+        from database import db
+        from models import User
+        
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
         # Only allow updating certain fields
         if 'email' in data:
             new_email = data['email'].strip().lower()
@@ -169,16 +179,16 @@ def update_profile():
             
             # Check if email is already taken
             existing_user = User.query.filter_by(email=new_email).first()
-            if existing_user and existing_user.id != g.current_user.id:
+            if existing_user and existing_user.id != user.id:
                 return jsonify({'error': 'Email already taken'}), 400
             
-            g.current_user.email = new_email
+            user.email = new_email
         
         db.session.commit()
         
         return jsonify({
             'message': 'Profile updated successfully',
-            'user': g.current_user.to_dict()
+            'user': user.to_dict()
         }), 200
         
     except Exception as e:

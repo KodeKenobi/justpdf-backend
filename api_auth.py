@@ -1,18 +1,20 @@
 from functools import wraps
 from flask import request, jsonify, g
-from models import APIKey, User, UsageLog, RateLimit
-from database import db
 from datetime import datetime, timedelta
 import time
 
 def generate_api_key():
     """Generate a secure API key"""
+    from models import APIKey
     return APIKey.generate_key()
 
 def verify_api_key(api_key_string):
     """Verify API key and return associated user"""
     if not api_key_string:
         return None
+    
+    from database import db
+    from models import APIKey
     
     # Find API key
     api_key = APIKey.query.filter_by(key=api_key_string, is_active=True).first()
@@ -46,6 +48,7 @@ def require_api_key(f):
         
         # Store user in g for use in route
         g.current_user = user
+        from models import APIKey
         g.current_api_key = APIKey.query.filter_by(key=api_key).first()
         
         return f(*args, **kwargs)
@@ -57,6 +60,9 @@ def log_api_usage(endpoint, method, status_code, file_size=None, processing_time
         return
     
     try:
+        from database import db
+        from models import UsageLog
+        
         usage_log = UsageLog(
             api_key_id=g.current_api_key.id,
             user_id=g.current_user.id,
@@ -79,6 +85,9 @@ def log_api_usage(endpoint, method, status_code, file_size=None, processing_time
 def check_rate_limit(api_key_id):
     """Check if API key has exceeded rate limit"""
     try:
+        from database import db
+        from models import RateLimit
+        
         # Get or create rate limit record for current hour
         now = datetime.utcnow()
         window_start = now.replace(minute=0, second=0, microsecond=0)
@@ -140,6 +149,10 @@ def require_rate_limit(f):
 def get_user_stats(user_id):
     """Get usage statistics for a user"""
     try:
+        from database import db
+        from models import UsageLog
+        from sqlalchemy import func
+        
         # Get total API calls
         total_calls = UsageLog.query.filter_by(user_id=user_id).count()
         
@@ -162,7 +175,6 @@ def get_user_stats(user_id):
         ).count()
         
         # Get most used endpoints
-        from sqlalchemy import func
         popular_endpoints = db.session.query(
             UsageLog.endpoint,
             func.count(UsageLog.id).label('count')

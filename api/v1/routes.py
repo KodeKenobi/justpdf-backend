@@ -8,8 +8,6 @@ import subprocess
 import threading
 
 from api_auth import require_api_key, require_rate_limit, log_api_usage
-from database import db
-from models import Job
 
 # Create Blueprint
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
@@ -28,6 +26,9 @@ os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 def create_job(endpoint, input_file_path=None):
     """Create a new job record"""
+    from database import db
+    from models import Job
+    
     job_id = str(uuid.uuid4())
     job = Job(
         job_id=job_id,
@@ -36,12 +37,15 @@ def create_job(endpoint, input_file_path=None):
         endpoint=endpoint,
         input_file_path=input_file_path
     )
-    database.session.add(job)
-    database.session.commit()
+    db.session.add(job)
+    db.session.commit()
     return job
 
 def update_job_status(job_id, status, output_file_path=None, error_message=None, processing_time=None):
     """Update job status"""
+    from database import db
+    from models import Job
+    
     job = Job.query.filter_by(job_id=job_id).first()
     if job:
         job.status = status
@@ -57,7 +61,7 @@ def update_job_status(job_id, status, output_file_path=None, error_message=None,
         elif status in ['completed', 'failed']:
             job.completed_at = datetime.utcnow()
         
-        database.session.commit()
+        db.session.commit()
 
 @api_v1.route('/convert/video', methods=['POST'])
 @require_api_key
@@ -295,6 +299,8 @@ def convert_audio():
 def get_job_status(job_id):
     """Get status of a job"""
     try:
+        from models import Job
+        
         job = Job.query.filter_by(job_id=job_id, user_id=g.current_user.id).first()
         if not job:
             return jsonify({'error': 'Job not found'}), 404
@@ -309,6 +315,8 @@ def get_job_status(job_id):
 def download_job_result(job_id):
     """Download result of a completed job"""
     try:
+        from models import Job
+        
         job = Job.query.filter_by(job_id=job_id, user_id=g.current_user.id).first()
         if not job:
             return jsonify({'error': 'Job not found'}), 404

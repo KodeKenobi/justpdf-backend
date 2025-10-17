@@ -1,8 +1,6 @@
 from flask import request, jsonify, g
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
-from database import db
-from models import User
 import re
 
 # Initialize JWT manager (will be initialized in app.py)
@@ -32,6 +30,9 @@ def validate_password(password):
 def register_user(email, password, role='user'):
     """Register a new user"""
     try:
+        from database import db
+        from models import User
+        
         # Validate email
         if not validate_email(email):
             return None, "Invalid email format"
@@ -55,12 +56,16 @@ def register_user(email, password, role='user'):
         return user, "User registered successfully"
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return None, str(e)
 
 def login_user(email, password):
     """Login user and return JWT token"""
     try:
+        from database import db
+        from models import User
+        
         # Find user
         user = User.query.filter_by(email=email, is_active=True).first()
         if not user:
@@ -93,6 +98,8 @@ def login_user(email, password):
 def reset_password(email):
     """Initiate password reset (placeholder for email sending)"""
     try:
+        from models import User
+        
         user = User.query.filter_by(email=email, is_active=True).first()
         if not user:
             # Don't reveal if email exists
@@ -112,6 +119,9 @@ def reset_password(email):
 def change_password(user_id, old_password, new_password):
     """Change user password"""
     try:
+        from database import db
+        from models import User
+        
         user = User.query.get(user_id)
         if not user:
             return False, "User not found"
@@ -132,6 +142,7 @@ def change_password(user_id, old_password, new_password):
         return True, "Password changed successfully"
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return False, str(e)
 
@@ -143,13 +154,19 @@ def user_identity_lookup(user_id):
 @jwt.user_lookup_loader
 def user_lookup_callback(_jwt_header, jwt_data):
     """Load user from JWT token"""
-    identity = jwt_data["sub"]
-    # Handle both string and integer identity
     try:
-        user_id = int(identity) if isinstance(identity, str) else identity
-        return User.query.get(user_id)
-    except (ValueError, TypeError) as e:
-        print(f"Error in user lookup: {e}, identity: {identity}, type: {type(identity)}")
+        from models import User
+        
+        identity = jwt_data["sub"]
+        # Handle both string and integer identity
+        try:
+            user_id = int(identity) if isinstance(identity, str) else identity
+            return User.query.get(user_id)
+        except (ValueError, TypeError) as e:
+            print(f"Error in user lookup: {e}, identity: {identity}, type: {type(identity)}")
+            return None
+    except Exception as e:
+        print(f"Error importing User model: {e}")
         return None
 
 def require_auth(f):
@@ -169,6 +186,8 @@ def require_admin(f):
     @wraps(f)
     @jwt_required()
     def decorated_function(*args, **kwargs):
+        from models import User
+        
         user = User.query.get(get_jwt_identity())
         if not user or user.role != 'admin':
             return jsonify({'error': 'Admin access required'}), 403

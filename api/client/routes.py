@@ -1,8 +1,6 @@
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy import desc
 from datetime import datetime, timedelta
-from database import db
-from models import APIKey, UsageLog, Job
 from api_auth import get_user_stats
 
 # Create Blueprint
@@ -12,6 +10,8 @@ client_api = Blueprint('client_api', __name__, url_prefix='/api/client')
 def get_api_keys():
     """Get user's API keys"""
     try:
+        from models import APIKey
+        
         api_keys = APIKey.query.filter_by(
             user_id=g.current_user.id,
             is_active=True
@@ -26,6 +26,9 @@ def get_api_keys():
 def create_api_key():
     """Create new API key for user"""
     try:
+        from database import db
+        from models import APIKey
+        
         data = request.get_json()
         name = data.get('name', f'API Key {datetime.utcnow().strftime("%Y-%m-%d %H:%M")}')
         rate_limit = data.get('rate_limit', 1000)
@@ -49,6 +52,7 @@ def create_api_key():
         return jsonify(api_key.to_dict(include_key=True)), 201
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -56,6 +60,9 @@ def create_api_key():
 def update_api_key(key_id):
     """Update API key settings"""
     try:
+        from database import db
+        from models import APIKey
+        
         api_key = APIKey.query.filter_by(
             id=key_id,
             user_id=g.current_user.id
@@ -75,6 +82,7 @@ def update_api_key(key_id):
         return jsonify(api_key.to_dict()), 200
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -82,6 +90,9 @@ def update_api_key(key_id):
 def delete_api_key(key_id):
     """Delete API key"""
     try:
+        from database import db
+        from models import APIKey
+        
         api_key = APIKey.query.filter_by(
             id=key_id,
             user_id=g.current_user.id
@@ -97,6 +108,7 @@ def delete_api_key(key_id):
         return jsonify({'message': 'API key deleted successfully'}), 200
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -104,6 +116,9 @@ def delete_api_key(key_id):
 def get_usage_stats():
     """Get user's usage statistics"""
     try:
+        from database import db
+        from models import UsageLog
+        
         # Time range
         days = request.args.get('days', 30, type=int)
         start_date = datetime.utcnow() - timedelta(days=days)
@@ -163,6 +178,8 @@ def get_usage_stats():
 def get_user_jobs():
     """Get user's jobs"""
     try:
+        from models import Job
+        
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 20, type=int), 100)
         status = request.args.get('status', '')
@@ -211,6 +228,9 @@ def get_profile():
 def update_profile():
     """Update user profile"""
     try:
+        from database import db
+        from models import User
+        
         data = request.get_json()
         
         # Only allow updating certain fields
@@ -226,5 +246,6 @@ def update_profile():
         return jsonify(g.current_user.to_dict()), 200
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500

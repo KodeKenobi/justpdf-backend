@@ -1,8 +1,6 @@
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
-from database import db
-from models import User, APIKey, UsageLog, Job
 from api_auth import require_api_key, get_user_stats
 
 # Create Blueprint
@@ -24,6 +22,8 @@ def require_admin(f):
 def list_users():
     """List all users with pagination and filtering"""
     try:
+        from models import User
+        
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 20, type=int), 100)
         search = request.args.get('search', '')
@@ -71,6 +71,8 @@ def list_users():
 def get_user(user_id):
     """Get detailed user information"""
     try:
+        from models import User, APIKey, Job
+        
         user = User.query.get_or_404(user_id)
         
         # Get user stats
@@ -102,6 +104,9 @@ def get_user(user_id):
 def create_api_key(user_id):
     """Create API key for a user"""
     try:
+        from database import db
+        from models import User, APIKey
+        
         user = User.query.get_or_404(user_id)
         
         data = request.get_json()
@@ -131,6 +136,9 @@ def create_api_key(user_id):
 def revoke_api_key(key_id):
     """Revoke an API key"""
     try:
+        from database import db
+        from models import APIKey
+        
         api_key = APIKey.query.get_or_404(key_id)
         api_key.is_active = False
         db.session.commit()
@@ -138,6 +146,7 @@ def revoke_api_key(key_id):
         return jsonify({'message': 'API key revoked successfully'}), 200
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -147,6 +156,9 @@ def revoke_api_key(key_id):
 def update_api_key(key_id):
     """Update API key settings"""
     try:
+        from database import db
+        from models import APIKey
+        
         api_key = APIKey.query.get_or_404(key_id)
         
         data = request.get_json()
@@ -162,6 +174,7 @@ def update_api_key(key_id):
         return jsonify(api_key.to_dict()), 200
         
     except Exception as e:
+        from database import db
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
@@ -171,6 +184,9 @@ def update_api_key(key_id):
 def get_usage_stats():
     """Get system-wide usage statistics"""
     try:
+        from database import db
+        from models import User, UsageLog
+        
         # Time range
         days = request.args.get('days', 30, type=int)
         start_date = datetime.utcnow() - timedelta(days=days)
@@ -263,6 +279,8 @@ def get_usage_stats():
 def list_jobs():
     """List all jobs with filtering"""
     try:
+        from models import Job
+        
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 20, type=int), 100)
         status = request.args.get('status', '')
@@ -307,6 +325,9 @@ def list_jobs():
 def system_health():
     """Get system health information"""
     try:
+        from database import db
+        from models import UsageLog
+        
         # Database health
         db_healthy = True
         try:

@@ -17,10 +17,22 @@ import threading
 # Import new API modules
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from database import init_db
-from auth import jwt
+# Add current directory to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# Import database and auth modules
+try:
+    from database import init_db
+    from auth import jwt
+except ImportError as e:
+    print(f"Import error: {e}")
+    print(f"Current directory: {current_dir}")
+    print(f"Python path: {sys.path}")
+    print(f"Files in current directory: {os.listdir(current_dir)}")
+    raise
 from auth_routes import auth_bp
 from api.v1.routes import api_v1
 from api.admin.routes import admin_api
