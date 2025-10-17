@@ -86,10 +86,24 @@ CORS(app, origins=[
 # Add CORS headers manually for additional debugging
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    # Get the origin from the request
+    origin = request.headers.get('Origin')
+    
+    # Check if origin is in our allowed list
+    allowed_origins = [
+        "https://web-production-ef253.up.railway.app",
+        "https://trevnoctilla.com", 
+        "https://www.trevnoctilla.com",
+        "http://localhost:3000",
+        "http://localhost:8080"
+    ]
+    
+    if origin in allowed_origins:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+    
     return response
 
 # Health check endpoint
