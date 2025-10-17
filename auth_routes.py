@@ -194,3 +194,34 @@ def update_profile():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/admin/update-password', methods=['POST'])
+def admin_update_password():
+    """Admin endpoint to update any user's password (for setup purposes)"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        email = data.get('email', '').strip().lower()
+        new_password = data.get('password', '')
+        
+        if not email or not new_password:
+            return jsonify({'error': 'Email and password are required'}), 400
+        
+        from models import User
+        from database import db
+        
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Update password
+        user.set_password(new_password)
+        db.session.commit()
+        
+        return jsonify({'message': f'Password updated successfully for {email}'}), 200
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
