@@ -3040,7 +3040,7 @@ def convert_image():
                     compression_ratio = ((original_size - converted_size) / original_size) * 100
                     
                     # Create download URL
-                    download_url = f"http://localhost:5000/download/{filename}"
+                    download_url = f"/download/{filename}"
                     
                     return jsonify({
                         'success': True,
