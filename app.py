@@ -62,21 +62,6 @@ app.config['JWT_HEADER_TYPE'] = 'Bearer'
 jwt.init_app(app)
 init_db(app)
 
-# Create database tables if they don't exist
-print("🔧 Initializing database...")
-with app.app_context():
-    try:
-        from database import db
-        print("📊 Creating database tables...")
-        db.create_all()
-        print("✅ Database tables created/verified successfully!")
-    except Exception as e:
-        print(f"❌ Error creating database tables: {e}")
-        import traceback
-        traceback.print_exc()
-        # Don't fail the app startup if database creation fails
-        pass
-
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
     "https://trevnoctilla.com",
@@ -3582,16 +3567,7 @@ if __name__ == "__main__":
     print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
     print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
     
-    try:
-        # Initialize database
-        print("🗄️ Initializing database...")
-        init_db(app)
-        print("✅ Database initialized successfully")
-    except Exception as e:
-        print(f"❌ Database initialization failed: {e}")
-        print("⚠️ Continuing without database (some features may not work)")
-        import traceback
-        traceback.print_exc()
+    # Database is already initialized above
     
     print(f"✅ All dependencies loaded successfully")
     
