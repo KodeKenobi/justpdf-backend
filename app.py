@@ -3270,102 +3270,23 @@ def convert_pdf_to_html():
         # Get original file size
         original_size = os.path.getsize(temp_path)
         
-        # Convert PDF to HTML using the working logic from /convert/<filename> endpoint
+        # Convert PDF to HTML using the EXACT same logic as the working /convert/<filename> endpoint
         try:
             import fitz  # PyMuPDF
             import base64
             
             # Open PDF document
             doc = fitz.open(temp_path)
+            print(f"DEBUG: PDF opened successfully, total pages: {len(doc)}")
+            pages_data = []
+            image_counter = 0
             
-            # Create HTML content using the same logic as the working converter
-            html_content = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Converted PDF - """ + original_filename + """</title>
-                <style>
-                    body {
-                        margin: 0;
-                        padding: 20px;
-                        background: #f5f5f5;
-                        font-family: Arial, sans-serif;
-                    }
-                    .pdf-container {
-                        max-width: 1200px;
-                        margin: 0 auto;
-                    }
-                    .pdf-page {
-                        position: relative;
-                        background: white;
-                        transform-origin: top left;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                        border-radius: 4px;
-                        overflow: hidden;
-                        margin: 20px auto;
-                    }
-                    .text-line {
-                        position: relative;
-                    }
-                    .text-span {
-                        position: absolute;
-                        white-space: nowrap;
-                    }
-                    .editable-text {
-                        cursor: text;
-                        border: 1px solid transparent;
-                        padding: 2px;
-                        margin: -2px;
-                    }
-                    .editable-text:hover {
-                        border: 1px dashed #007bff;
-                        background: rgba(0, 123, 255, 0.1);
-                    }
-                    .editable-image {
-                        position: absolute;
-                        cursor: pointer;
-                    }
-                    .editable-image:hover {
-                        outline: 2px dashed #007bff;
-                    }
-                    .controls {
-                        position: fixed;
-                        top: 20px;
-                        right: 20px;
-                        z-index: 1000;
-                        background: white;
-                        padding: 15px;
-                        border-radius: 8px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                    }
-                    .controls button {
-                        margin: 5px;
-                        padding: 8px 16px;
-                        border: none;
-                        border-radius: 4px;
-                        background: #007bff;
-                        color: white;
-                        cursor: pointer;
-                    }
-                    .controls button:hover {
-                        background: #0056b3;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="controls">
-                    <button onclick="window.print()">Print</button>
-                    <button onclick="window.close()">Close</button>
-                </div>
-                <div class="pdf-container">
-            """
-            
-            # Process each page using the same logic as the working converter
+            # Process all pages using the EXACT same logic as the working converter
             for page_idx in range(len(doc)):
+                print(f"DEBUG: Processing page {page_idx + 1}")
                 page = doc[page_idx]
                 page_dict = page.get_text("dict")
+                print(f"DEBUG: Page {page_idx + 1} has {len(page_dict['blocks'])} blocks")
                 
                 page_html = f'<div class="pdf-page" data-page="{page_idx + 1}">'
                 
@@ -3392,34 +3313,41 @@ def convert_pdf_to_html():
                             page_html += line_html
                     
                     elif "image" in block:
-                        # Handle images if requested
-                        if include_images:
-                            try:
-                                img_data = block["image"]
-                                img_base64 = fitz.Pixmap(doc, block["xref"]).tobytes("png")
-                                img_base64_str = base64.b64encode(img_base64).decode()
-                                bbox = block["bbox"]
-                                style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; width: {bbox[2]-bbox[0]}px; height: {bbox[3]-bbox[1]}px;"
-                                page_html += f'<img class="editable-image" src="data:image/png;base64,{img_base64_str}" style="{style}" alt="Image">'
-                            except Exception as e:
-                                print(f"DEBUG: Error extracting image: {e}")
-                                continue
+                        image_counter += 1
+                        bbox = block["bbox"]
+                        image_data = block["image"]
+                        image_base64 = base64.b64encode(image_data).decode()
+                        
+                        style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; width: {bbox[2] - bbox[0]}px; height: {bbox[3] - bbox[1]}px;"
+                        page_html += f'<img class="editable-image" data-image-id="{image_counter}" src="data:image/png;base64,{image_base64}" style="{style}">'
                 
                 page_html += '</div>'
-                html_content += page_html
+                pages_data.append({
+                    'html': page_html,
+                    'width': page.rect.width,
+                    'height': page.rect.height
+                })
+                print(f"DEBUG: Page {page_idx + 1} HTML length: {len(page_html)}")
             
-            html_content += """
-                </div>
-            </body>
-            </html>
-            """
+            doc.close()
+            print(f"DEBUG: Total pages processed: {len(pages_data)}")
+            
+            # Use the EXACT same template rendering logic as the working converter
+            from flask import render_template_string
+            
+            # Read the converted.html template content
+            template_path = os.path.join(os.path.dirname(__file__), 'templates', 'converted.html')
+            with open(template_path, 'r', encoding='utf-8') as f:
+                template_content = f.read()
+            
+            # Render the template with the pages data
+            html_content = render_template_string(template_content, 
+                                               filename=original_filename, 
+                                               pages=pages_data)
             
             # Write HTML content to file
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(html_content)
-            
-            # Close PDF document
-            doc.close()
             
             # Clean up temp file
             if os.path.exists(temp_path):
