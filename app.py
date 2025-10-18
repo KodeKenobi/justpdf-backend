@@ -3339,6 +3339,193 @@ def download_converted_audio(filename):
         print(f"ERROR in download_converted_audio: {str(e)}")
         return f"Error downloading converted audio: {str(e)}", 500
 
+@app.route('/convert-pdf-to-html', methods=['POST'])
+def convert_pdf_to_html():
+    """Convert PDF to HTML format"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    # Get conversion settings
+    include_images = request.form.get('includeImages', 'true').lower() == 'true'
+    preserve_layout = request.form.get('preserveLayout', 'true').lower() == 'true'
+    include_css = request.form.get('includeCSS', 'true').lower() == 'true'
+    image_format = request.form.get('imageFormat', 'embedded')
+    css_level = request.form.get('cssLevel', 'basic')
+    
+    try:
+        # Create uploads directory if it doesn't exist
+        uploads_dir = 'converted_html'
+        uploads_dir = os.path.abspath(uploads_dir)
+        os.makedirs(uploads_dir, exist_ok=True)
+        print(f"DEBUG: Created/verified directory: {uploads_dir}")
+        
+        # Generate unique filename
+        unique_id = str(uuid.uuid4())[:8]
+        original_filename = secure_filename(file.filename)
+        name, ext = os.path.splitext(original_filename)
+        html_filename = f"{unique_id}_{name}_converted.html"
+        filepath = os.path.join(uploads_dir, html_filename)
+        
+        print(f"DEBUG: Target filepath: {filepath}")
+        
+        # Save uploaded file
+        temp_path = os.path.join(uploads_dir, f"temp_{unique_id}_{original_filename}")
+        print(f"DEBUG: Temp filepath: {temp_path}")
+        file.save(temp_path)
+        
+        # Get original file size
+        original_size = os.path.getsize(temp_path)
+        
+        # Convert PDF to HTML using pdf2htmlEX or similar tool
+        # For now, we'll use a simple approach with pdfplumber and create basic HTML
+        try:
+            import pdfplumber
+            import base64
+            
+            html_content = []
+            html_content.append('<!DOCTYPE html>')
+            html_content.append('<html lang="en">')
+            html_content.append('<head>')
+            html_content.append('    <meta charset="UTF-8">')
+            html_content.append('    <meta name="viewport" content="width=device-width, initial-scale=1.0">')
+            html_content.append('    <title>Converted PDF</title>')
+            
+            if include_css:
+                if css_level == 'advanced':
+                    html_content.append('    <style>')
+                    html_content.append('        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }')
+                    html_content.append('        .page { background: white; margin: 20px auto; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 800px; }')
+                    html_content.append('        .text { line-height: 1.6; color: #333; }')
+                    html_content.append('        .image { max-width: 100%; height: auto; margin: 10px 0; }')
+                    html_content.append('        h1, h2, h3 { color: #2c3e50; margin-top: 30px; }')
+                    html_content.append('        p { margin: 10px 0; }')
+                    html_content.append('    </style>')
+                else:
+                    html_content.append('    <style>')
+                    html_content.append('        body { font-family: Arial, sans-serif; margin: 20px; }')
+                    html_content.append('        .page { margin: 20px 0; }')
+                    html_content.append('        .image { max-width: 100%; height: auto; }')
+                    html_content.append('    </style>')
+            
+            html_content.append('</head>')
+            html_content.append('<body>')
+            
+            with pdfplumber.open(temp_path) as pdf:
+                for page_num, page in enumerate(pdf.pages, 1):
+                    html_content.append(f'    <div class="page">')
+                    html_content.append(f'        <h2>Page {page_num}</h2>')
+                    
+                    # Extract text
+                    text = page.extract_text()
+                    if text:
+                        # Clean and format text
+                        text = text.replace('\n', '<br>')
+                        html_content.append(f'        <div class="text">{text}</div>')
+                    
+                    # Extract images if requested
+                    if include_images:
+                        images = page.images
+                        for img_num, img in enumerate(images):
+                            try:
+                                # Extract image from PDF
+                                bbox = (img['x0'], img['top'], img['x1'], img['bottom'])
+                                cropped_page = page.crop(bbox)
+                                img_obj = cropped_page.to_image()
+                                
+                                if image_format == 'embedded':
+                                    # Convert to base64
+                                    img_buffer = img_obj.original
+                                    img_base64 = base64.b64encode(img_buffer).decode('utf-8')
+                                    img_tag = f'<img class="image" src="data:image/png;base64,{img_base64}" alt="Image {img_num + 1}">'
+                                else:
+                                    # Save as separate file (simplified for now)
+                                    img_filename = f"{unique_id}_page{page_num}_img{img_num + 1}.png"
+                                    img_path = os.path.join(uploads_dir, img_filename)
+                                    img_obj.save(img_path)
+                                    img_tag = f'<img class="image" src="{img_filename}" alt="Image {img_num + 1}">'
+                                
+                                html_content.append(f'        {img_tag}')
+                            except Exception as e:
+                                print(f"DEBUG: Error extracting image {img_num} from page {page_num}: {e}")
+                                continue
+                    
+                    html_content.append('    </div>')
+            
+            html_content.append('</body>')
+            html_content.append('</html>')
+            
+            # Write HTML content to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(html_content))
+            
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            
+            # Get converted file size
+            converted_size = os.path.getsize(filepath)
+            compression_ratio = ((original_size - converted_size) / original_size * 100) if original_size > 0 else 0
+            
+            # Create download URL
+            download_url = f"/download_html/{html_filename}"
+            
+            return jsonify({
+                'success': True,
+                'downloadUrl': download_url,
+                'originalSize': original_size,
+                'convertedSize': converted_size,
+                'compressionRatio': round(compression_ratio, 2),
+                'message': 'PDF converted to HTML successfully',
+                'settings': {
+                    'includeImages': include_images,
+                    'preserveLayout': preserve_layout,
+                    'includeCSS': include_css,
+                    'imageFormat': image_format,
+                    'cssLevel': css_level
+                }
+            })
+            
+        except ImportError:
+            return jsonify({
+                'success': False,
+                'error': 'PDF processing library not available. Please install pdfplumber.'
+            }), 500
+        except Exception as e:
+            print(f"DEBUG: Error in PDF to HTML conversion: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f'PDF to HTML conversion failed: {str(e)}'
+            }), 500
+            
+    except Exception as e:
+        print(f"Error in convert_pdf_to_html: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/download_html/<filename>')
+def download_html(filename):
+    """Download converted HTML file"""
+    try:
+        from urllib.parse import unquote
+        decoded_filename = unquote(filename)
+        
+        file_path = os.path.abspath(os.path.join('converted_html', decoded_filename))
+        print(f"DEBUG: Looking for HTML file: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"DEBUG: HTML file not found: {file_path}")
+            return "Converted HTML file not found", 404
+        
+        print(f"DEBUG: HTML file found, sending: {file_path}")
+        return send_file(file_path, as_attachment=True, download_name=decoded_filename)
+        
+    except Exception as e:
+        print(f"ERROR in download_html: {str(e)}")
+        return f"Error downloading HTML file: {str(e)}", 500
+
 def cleanup_all_processes():
     """Clean up all running processes on shutdown"""
     print("DEBUG: Cleaning up all running processes...")
