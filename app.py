@@ -2293,23 +2293,43 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
             video_codec = 'libtheora'
             audio_codec = 'libvorbis'
             quality_param = '-q:v'
+        elif output_format.lower() == 'mp3':
+            # MP3 is audio-only, no video codec needed
+            video_codec = None
+            audio_codec = 'libmp3lame'
+            quality_param = '-q:a'  # Audio quality instead of video
         else:
             # Default to MP4 settings
             video_codec = 'libx264'
             audio_codec = 'aac'
             quality_param = '-crf'
         
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-i', filepath,
-            '-c:v', video_codec,
-            quality_param, str(crf),  # Use user-selected CRF value
-            '-preset', preset,  # Use user-selected preset
-            '-c:a', audio_codec,
-            '-b:a', '128k',
-            '-y',  # Overwrite output file
-            converted_path
-        ]
+        # Build FFmpeg command based on output format
+        if output_format.lower() == 'mp3':
+            # MP3 is audio-only, no video processing needed
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-i', filepath,
+                '-vn',  # No video
+                '-c:a', audio_codec,
+                quality_param, str(crf),  # Use audio quality
+                '-b:a', '128k',
+                '-y',  # Overwrite output file
+                converted_path
+            ]
+        else:
+            # Video conversion with both video and audio codecs
+            ffmpeg_cmd = [
+                'ffmpeg',
+                '-i', filepath,
+                '-c:v', video_codec,
+                quality_param, str(crf),  # Use user-selected CRF value
+                '-preset', preset,  # Use user-selected preset
+                '-c:a', audio_codec,
+                '-b:a', '128k',
+                '-y',  # Overwrite output file
+                converted_path
+            ]
         
         print(f"DEBUG: Running FFmpeg command: {' '.join(ffmpeg_cmd)}")
         print(f"DEBUG: Input file: {filepath}")
@@ -2517,19 +2537,33 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                     print(f"WARNING: This might indicate FFmpeg failed to compress or the file is already optimized")
                     # Try a more aggressive compression
                     print(f"DEBUG: Attempting more aggressive compression...")
-                    aggressive_cmd = [
-                        'ffmpeg',
-                        '-i', filepath,
-                        '-c:v', video_codec,
-                        quality_param, '35',  # Much higher CRF for smaller file
-                        '-preset', 'ultrafast',
-                        '-c:a', audio_codec,
-                        '-b:a', '16k',  # Very low audio bitrate
-                        '-maxrate', '200k',  # Very low max bitrate
-                        '-bufsize', '400k',
-                        '-y',
-                        converted_path
-                    ]
+                    if output_format.lower() == 'mp3':
+                        # MP3 aggressive compression (audio-only)
+                        aggressive_cmd = [
+                            'ffmpeg',
+                            '-i', filepath,
+                            '-vn',  # No video
+                            '-c:a', audio_codec,
+                            quality_param, '9',  # Much higher audio quality for smaller file
+                            '-b:a', '64k',  # Very low audio bitrate
+                            '-y',
+                            converted_path
+                        ]
+                    else:
+                        # Video aggressive compression
+                        aggressive_cmd = [
+                            'ffmpeg',
+                            '-i', filepath,
+                            '-c:v', video_codec,
+                            quality_param, '35',  # Much higher CRF for smaller file
+                            '-preset', 'ultrafast',
+                            '-c:a', audio_codec,
+                            '-b:a', '16k',  # Very low audio bitrate
+                            '-maxrate', '200k',  # Very low max bitrate
+                            '-bufsize', '400k',
+                            '-y',
+                            converted_path
+                        ]
                     print(f"DEBUG: Running aggressive FFmpeg command: {' '.join(aggressive_cmd)}")
                     aggressive_result = subprocess.run(aggressive_cmd, capture_output=True, text=True, timeout=60)
                     print(f"DEBUG: Aggressive FFmpeg return code: {aggressive_result.returncode}")
@@ -2551,18 +2585,32 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         print(f"ERROR: This suggests FFmpeg is not working properly on Railway")
                         # Force a smaller file by using a different approach
                         print(f"DEBUG: Trying to force compression by reducing resolution...")
-                        force_cmd = [
-                            'ffmpeg',
-                            '-i', filepath,
-                            '-vf', 'scale=320:240',  # Force smaller resolution
-                            '-c:v', video_codec,
-                            quality_param, '40',  # Very high CRF
-                            '-preset', 'ultrafast',
-                            '-c:a', audio_codec,
-                            '-b:a', '8k',  # Very low audio
-                            '-y',
-                            converted_path
-                        ]
+                        if output_format.lower() == 'mp3':
+                            # MP3 force compression (audio-only)
+                            force_cmd = [
+                                'ffmpeg',
+                                '-i', filepath,
+                                '-vn',  # No video
+                                '-c:a', audio_codec,
+                                quality_param, '9',  # Very high audio quality
+                                '-b:a', '32k',  # Very low audio bitrate
+                                '-y',
+                                converted_path
+                            ]
+                        else:
+                            # Video force compression
+                            force_cmd = [
+                                'ffmpeg',
+                                '-i', filepath,
+                                '-vf', 'scale=320:240',  # Force smaller resolution
+                                '-c:v', video_codec,
+                                quality_param, '40',  # Very high CRF
+                                '-preset', 'ultrafast',
+                                '-c:a', audio_codec,
+                                '-b:a', '8k',  # Very low audio
+                                '-y',
+                                converted_path
+                            ]
                         print(f"DEBUG: Running force compression command: {' '.join(force_cmd)}")
                         force_result = subprocess.run(force_cmd, capture_output=True, text=True, timeout=60)
                         print(f"DEBUG: Force compression return code: {force_result.returncode}")
