@@ -2252,13 +2252,60 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
         output_format = os.path.splitext(converted_path)[1][1:]  # Remove the dot
         
         # FFmpeg command using user-selected quality and compression settings
+        # Choose codec based on output format
+        if output_format.lower() == 'webm':
+            video_codec = 'libvpx-vp9'
+            audio_codec = 'libvorbis'
+            quality_param = '-crf'
+        elif output_format.lower() == 'mp4':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'avi':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'mov':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'mkv':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'flv':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'wmv':
+            video_codec = 'wmv2'
+            audio_codec = 'wmav2'
+            quality_param = '-q:v'
+        elif output_format.lower() == 'm4v':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == '3gp':
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        elif output_format.lower() == 'ogv':
+            video_codec = 'libtheora'
+            audio_codec = 'libvorbis'
+            quality_param = '-q:v'
+        else:
+            # Default to MP4 settings
+            video_codec = 'libx264'
+            audio_codec = 'aac'
+            quality_param = '-crf'
+        
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', filepath,
-            '-c:v', 'libx264',
-            '-crf', str(crf),  # Use user-selected CRF value
+            '-c:v', video_codec,
+            quality_param, str(crf),  # Use user-selected CRF value
             '-preset', preset,  # Use user-selected preset
-            '-c:a', 'aac',
+            '-c:a', audio_codec,
             '-b:a', '128k',
             '-y',  # Overwrite output file
             converted_path
@@ -2470,10 +2517,10 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                     aggressive_cmd = [
                         'ffmpeg',
                         '-i', filepath,
-                        '-c:v', 'libx264',
-                        '-crf', '35',  # Much higher CRF for smaller file
+                        '-c:v', video_codec,
+                        quality_param, '35',  # Much higher CRF for smaller file
                         '-preset', 'ultrafast',
-                        '-c:a', 'aac',
+                        '-c:a', audio_codec,
                         '-b:a', '16k',  # Very low audio bitrate
                         '-maxrate', '200k',  # Very low max bitrate
                         '-bufsize', '400k',
@@ -2505,10 +2552,10 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                             'ffmpeg',
                             '-i', filepath,
                             '-vf', 'scale=320:240',  # Force smaller resolution
-                            '-c:v', 'libx264',
-                            '-crf', '40',  # Very high CRF
+                            '-c:v', video_codec,
+                            quality_param, '40',  # Very high CRF
                             '-preset', 'ultrafast',
-                            '-c:a', 'aac',
+                            '-c:a', audio_codec,
                             '-b:a', '8k',  # Very low audio
                             '-y',
                             converted_path
