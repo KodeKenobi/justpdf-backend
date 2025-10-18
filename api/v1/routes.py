@@ -69,15 +69,26 @@ def update_job_status(job_id, status, output_file_path=None, error_message=None,
 def convert_video():
     """Convert video file to different format"""
     start_time = time.time()
+    request_timestamp = datetime.now().isoformat()
+    
+    # COMPREHENSIVE BACKEND LOGGING - REQUEST RECEIVED
+    print("🚀 [BACKEND CONVERSION START] =================================")
+    print(f"⏰ [TIMESTAMP] {request_timestamp}")
+    print(f"⏰ [TIMING] Request received at: {start_time}")
+    print(f"🔑 [AUTH] API Key ID: {g.current_api_key.id if hasattr(g, 'current_api_key') else 'Unknown'}")
+    print(f"👤 [USER] User ID: {g.current_user.id if hasattr(g, 'current_user') else 'Unknown'}")
+    print("🚀 [BACKEND CONVERSION START] =================================")
     
     try:
         # Check if file is provided
         if 'file' not in request.files:
+            print("❌ [ERROR] No file provided in request")
             log_api_usage('/api/v1/convert/video', 'POST', 400, error_message='No file provided')
             return jsonify({'error': 'No file provided'}), 400
         
         file = request.files['file']
         if file.filename == '':
+            print("❌ [ERROR] No file selected")
             log_api_usage('/api/v1/convert/video', 'POST', 400, error_message='No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
@@ -87,17 +98,39 @@ def convert_video():
         compression = request.form.get('compression', 'medium')
         async_mode = request.form.get('async', 'false').lower() == 'true'
         
+        # COMPREHENSIVE BACKEND LOGGING - REQUEST PARAMETERS
+        print("📋 [BACKEND REQUEST PARAMS] ===============================")
+        print(f"📁 [FILE] Filename: {file.filename}")
+        print(f"📁 [FILE] Content Type: {file.content_type}")
+        print(f"🎯 [OUTPUT] Format: {output_format}")
+        print(f"🎯 [OUTPUT] Quality: {quality}")
+        print(f"🎯 [OUTPUT] Compression: {compression}")
+        print(f"🔄 [MODE] Async: {async_mode}")
+        print("📋 [BACKEND REQUEST PARAMS] ===============================")
+        
         # Secure filename
         filename = secure_filename(file.filename)
         unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
         input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
         
         # Save uploaded file
+        file_save_time = time.time()
         file.save(input_path)
         file_size = os.path.getsize(input_path)
+        file_save_duration = time.time() - file_save_time
+        
+        # COMPREHENSIVE BACKEND LOGGING - FILE SAVED
+        print("💾 [BACKEND FILE SAVED] =====================================")
+        print(f"⏰ [TIMESTAMP] {datetime.now().isoformat()}")
+        print(f"⏰ [TIMING] File save duration: {file_save_duration:.3f}s")
+        print(f"📁 [FILE] Saved as: {unique_filename}")
+        print(f"📁 [FILE] Input path: {input_path}")
+        print(f"📁 [FILE] File size: {file_size} bytes ({file_size / 1024 / 1024:.2f} MB)")
+        print("💾 [BACKEND FILE SAVED] =====================================")
         
         # Create job record
         job = create_job('/api/v1/convert/video', input_path)
+        print(f"📝 [JOB] Created job ID: {job.job_id}")
         
         if async_mode or file_size > 50 * 1024 * 1024:  # 50MB threshold for async
             # Process asynchronously
@@ -123,7 +156,33 @@ def convert_video():
                         '-y', output_path
                     ]
                     
+                    # COMPREHENSIVE BACKEND LOGGING - FFMPEG START
+                    ffmpeg_start_time = time.time()
+                    ffmpeg_start_timestamp = datetime.now().isoformat()
+                    print("🎬 [BACKEND FFMPEG START] ==================================")
+                    print(f"⏰ [TIMESTAMP] {ffmpeg_start_timestamp}")
+                    print(f"⏰ [TIMING] FFmpeg started at: {ffmpeg_start_time}")
+                    print(f"🎬 [FFMPEG] Command: {' '.join(cmd)}")
+                    print(f"🎬 [FFMPEG] Input: {input_path}")
+                    print(f"🎬 [FFMPEG] Output: {output_path}")
+                    print(f"🎬 [FFMPEG] CRF: {crf}, Preset: {preset}")
+                    print("🎬 [BACKEND FFMPEG START] ==================================")
+                    
                     result = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    # COMPREHENSIVE BACKEND LOGGING - FFMPEG COMPLETE
+                    ffmpeg_end_time = time.time()
+                    ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
+                    ffmpeg_end_timestamp = datetime.now().isoformat()
+                    print("🏁 [BACKEND FFMPEG COMPLETE] ==============================")
+                    print(f"⏰ [TIMESTAMP] {ffmpeg_end_timestamp}")
+                    print(f"⏰ [TIMING] FFmpeg duration: {ffmpeg_duration:.3f}s")
+                    print(f"⏰ [TIMING] FFmpeg duration: {ffmpeg_duration:.1f} seconds")
+                    print(f"🎬 [FFMPEG] Return code: {result.returncode}")
+                    print(f"🎬 [FFMPEG] Success: {result.returncode == 0}")
+                    if result.stderr:
+                        print(f"🎬 [FFMPEG] Error output: {result.stderr[:200]}...")
+                    print("🏁 [BACKEND FFMPEG COMPLETE] ==============================")
                     
                     if result.returncode == 0:
                         update_job_status(job.job_id, 'completed', output_path)
@@ -143,6 +202,18 @@ def convert_video():
             
             processing_time = time.time() - start_time
             log_api_usage('/api/v1/convert/video', 'POST', 202, file_size, processing_time)
+            
+            # COMPREHENSIVE BACKEND LOGGING - RESPONSE SENT
+            response_time = time.time()
+            response_timestamp = datetime.now().isoformat()
+            print("📤 [BACKEND RESPONSE SENT] ================================")
+            print(f"⏰ [TIMESTAMP] {response_timestamp}")
+            print(f"⏰ [TIMING] Total request processing time: {processing_time:.3f}s")
+            print(f"📤 [RESPONSE] Status: 202 (Processing)")
+            print(f"📤 [RESPONSE] Job ID: {job.job_id}")
+            print(f"📤 [RESPONSE] Unique filename: {unique_filename}")
+            print(f"📤 [RESPONSE] File size: {file_size} bytes")
+            print("📤 [BACKEND RESPONSE SENT] ================================")
             
             return jsonify({
                 'job_id': job.job_id,
