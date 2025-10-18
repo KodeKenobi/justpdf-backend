@@ -2506,6 +2506,9 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                 print(f"DEBUG: Input size: {input_size} bytes")
                 print(f"DEBUG: Output size: {output_size} bytes")
                 print(f"DEBUG: Compression ratio: {compression_ratio:.2f}%")
+                print(f"DEBUG: Converted file path: {converted_path}")
+                print(f"DEBUG: Converted file exists: {os.path.exists(converted_path)}")
+                print(f"DEBUG: Converted file size: {os.path.getsize(converted_path) if os.path.exists(converted_path) else 'N/A'}")
                 
                 # Check if compression actually occurred
                 print(f"DEBUG: Comparing sizes - Output: {output_size}, Input: {input_size}, Comparison: {output_size >= input_size}")
@@ -2586,7 +2589,8 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
                         "original_size": input_size,
                         "converted_size": output_size,
-                        "compression_ratio": compression_ratio
+                        "compression_ratio": compression_ratio,
+                        "converted_filename": os.path.basename(converted_path)
                     }
                     print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
                 else:
@@ -2599,7 +2603,8 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                         "message": f"Video compression completed! Size reduced by {compression_ratio:.1f}%",
                         "original_size": input_size,
                         "converted_size": output_size,
-                        "compression_ratio": compression_ratio
+                        "compression_ratio": compression_ratio,
+                        "converted_filename": os.path.basename(converted_path)
                     }
                     print(f"DEBUG: Progress set to 100% - conversion completed with sizes: {input_size} -> {output_size}")
                     return  # Exit the function here to prevent fallback logic
@@ -2616,7 +2621,8 @@ def convert_video_background(filename, filepath, converted_path, crf, preset):
                     "message": "Video processing completed (fallback mode)",
                     "original_size": input_size,
                     "converted_size": output_size,
-                    "compression_ratio": 0.0
+                    "compression_ratio": 0.0,
+                    "converted_filename": os.path.basename(converted_path)
                 }
                 print(f"DEBUG: Progress set to 100% - fallback completed")
             
@@ -2650,8 +2656,15 @@ def download_converted_video(filename):
         
         # Use absolute path to avoid any path resolution issues
         file_path = os.path.abspath(os.path.join(VIDEO_FOLDER, decoded_filename))
+        print(f"DEBUG: Download request for filename: {filename}")
+        print(f"DEBUG: Decoded filename: {decoded_filename}")
+        print(f"DEBUG: VIDEO_FOLDER: {VIDEO_FOLDER}")
+        print(f"DEBUG: VIDEO_FOLDER absolute path: {os.path.abspath(VIDEO_FOLDER)}")
         print(f"DEBUG: Looking for file: {file_path}")
         print(f"DEBUG: File exists: {os.path.exists(file_path)}")
+        print(f"DEBUG: Current working directory: {os.getcwd()}")
+        print(f"DEBUG: VIDEO_FOLDER exists: {os.path.exists(VIDEO_FOLDER)}")
+        print(f"DEBUG: VIDEO_FOLDER is directory: {os.path.isdir(VIDEO_FOLDER)}")
         
         if not os.path.exists(file_path):
             print(f"DEBUG: File not found: {file_path}")
@@ -2697,6 +2710,15 @@ def get_conversion_progress(filename):
                 "progress": 0,
                 "message": "Conversion not found"
             }
+        
+        # Add converted_filename to the progress response if conversion is completed
+        if progress.get("status") == "completed" and "converted_filename" not in progress:
+            # Extract the converted filename from the original filename
+            base_name = os.path.splitext(decoded_filename)[0]
+            # Get the output format from the progress data or default to mp4
+            output_format = progress.get("converted_format", "mp4").lower()
+            converted_filename = f"{base_name}_converted.{output_format}"
+            progress["converted_filename"] = converted_filename
         
         print(f"DEBUG: Progress request for {decoded_filename}: {progress}")
         return jsonify(progress)
