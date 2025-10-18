@@ -3270,7 +3270,7 @@ def convert_pdf_to_html():
         # Get original file size
         original_size = os.path.getsize(temp_path)
         
-        # Convert PDF to HTML using PyMuPDF (fitz) for better layout preservation
+        # Convert PDF to HTML using the working logic from /convert/<filename> endpoint
         try:
             import fitz  # PyMuPDF
             import base64
@@ -3278,174 +3278,145 @@ def convert_pdf_to_html():
             # Open PDF document
             doc = fitz.open(temp_path)
             
-            html_content = []
-            html_content.append('<!DOCTYPE html>')
-            html_content.append('<html lang="en">')
-            html_content.append('<head>')
-            html_content.append('    <meta charset="UTF-8">')
-            html_content.append('    <meta name="viewport" content="width=device-width, initial-scale=1.0">')
-            html_content.append('    <title>Converted PDF - ' + original_filename + '</title>')
+            # Create HTML content using the same logic as the working converter
+            html_content = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Converted PDF - """ + original_filename + """</title>
+                <style>
+                    body {
+                        margin: 0;
+                        padding: 20px;
+                        background: #f5f5f5;
+                        font-family: Arial, sans-serif;
+                    }
+                    .pdf-container {
+                        max-width: 1200px;
+                        margin: 0 auto;
+                    }
+                    .pdf-page {
+                        position: relative;
+                        background: white;
+                        transform-origin: top left;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        border-radius: 4px;
+                        overflow: hidden;
+                        margin: 20px auto;
+                    }
+                    .text-line {
+                        position: relative;
+                    }
+                    .text-span {
+                        position: absolute;
+                        white-space: nowrap;
+                    }
+                    .editable-text {
+                        cursor: text;
+                        border: 1px solid transparent;
+                        padding: 2px;
+                        margin: -2px;
+                    }
+                    .editable-text:hover {
+                        border: 1px dashed #007bff;
+                        background: rgba(0, 123, 255, 0.1);
+                    }
+                    .editable-image {
+                        position: absolute;
+                        cursor: pointer;
+                    }
+                    .editable-image:hover {
+                        outline: 2px dashed #007bff;
+                    }
+                    .controls {
+                        position: fixed;
+                        top: 20px;
+                        right: 20px;
+                        z-index: 1000;
+                        background: white;
+                        padding: 15px;
+                        border-radius: 8px;
+                        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    }
+                    .controls button {
+                        margin: 5px;
+                        padding: 8px 16px;
+                        border: none;
+                        border-radius: 4px;
+                        background: #007bff;
+                        color: white;
+                        cursor: pointer;
+                    }
+                    .controls button:hover {
+                        background: #0056b3;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="controls">
+                    <button onclick="window.print()">Print</button>
+                    <button onclick="window.close()">Close</button>
+                </div>
+                <div class="pdf-container">
+            """
             
-            if include_css:
-                if css_level == 'advanced':
-                    html_content.append('    <style>')
-                    html_content.append('        * { box-sizing: border-box; }')
-                    html_content.append('        body { margin: 0; padding: 20px; background: #f5f5f5; font-family: Arial, sans-serif; }')
-                    html_content.append('        .pdf-container { max-width: 1200px; margin: 0 auto; }')
-                    html_content.append('        .page { background: white; margin: 20px auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); border-radius: 8px; overflow: hidden; position: relative; }')
-                    html_content.append('        .page-content { position: relative; width: 100%; height: 100%; }')
-                    html_content.append('        .text-block { position: absolute; white-space: nowrap; }')
-                    html_content.append('        .image-block { position: absolute; }')
-                    html_content.append('        .image-block img { max-width: 100%; height: auto; display: block; }')
-                    html_content.append('        .page-number { position: absolute; bottom: 10px; right: 20px; background: rgba(0,0,0,0.7); color: white; padding: 5px 10px; border-radius: 4px; font-size: 12px; }')
-                    html_content.append('        .controls { position: fixed; top: 20px; right: 20px; z-index: 1000; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }')
-                    html_content.append('        .controls button { margin: 5px; padding: 8px 16px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer; }')
-                    html_content.append('        .controls button:hover { background: #0056b3; }')
-                    html_content.append('        .zoom-controls { margin-top: 10px; }')
-                    html_content.append('        .zoom-controls input { width: 60px; margin: 0 5px; }')
-                    html_content.append('    </style>')
-                else:
-                    html_content.append('    <style>')
-                    html_content.append('        body { margin: 20px; font-family: Arial, sans-serif; }')
-                    html_content.append('        .page { margin: 20px 0; border: 1px solid #ddd; }')
-                    html_content.append('        .text-block { position: absolute; }')
-                    html_content.append('        .image-block { position: absolute; }')
-                    html_content.append('        .image-block img { max-width: 100%; height: auto; }')
-                    html_content.append('    </style>')
-            
-            html_content.append('</head>')
-            html_content.append('<body>')
-            
-            # Add controls for viewing
-            html_content.append('    <div class="controls">')
-            html_content.append('        <div>')
-            html_content.append('            <button onclick="window.print()">Print</button>')
-            html_content.append('            <button onclick="window.close()">Close</button>')
-            html_content.append('        </div>')
-            html_content.append('        <div class="zoom-controls">')
-            html_content.append('            <button onclick="zoomOut()">-</button>')
-            html_content.append('            <span id="zoomLevel">100%</span>')
-            html_content.append('            <button onclick="zoomIn()">+</button>')
-            html_content.append('        </div>')
-            html_content.append('    </div>')
-            
-            html_content.append('    <div class="pdf-container">')
-            
-            # Process each page
-            for page_num in range(len(doc)):
-                page = doc[page_num]
+            # Process each page using the same logic as the working converter
+            for page_idx in range(len(doc)):
+                page = doc[page_idx]
+                page_dict = page.get_text("dict")
                 
-                # Get page dimensions
-                page_rect = page.rect
-                page_width = page_rect.width
-                page_height = page_rect.height
+                page_html = f'<div class="pdf-page" data-page="{page_idx + 1}">'
                 
-                # Scale factor for display (make it fit in 800px width)
-                scale_factor = 800 / page_width
-                display_width = int(page_width * scale_factor)
-                display_height = int(page_height * scale_factor)
-                
-                html_content.append(f'    <div class="page" style="width: {display_width}px; height: {display_height}px;">')
-                html_content.append(f'        <div class="page-content" style="width: {display_width}px; height: {display_height}px; transform-origin: top left;">')
-                
-                # Extract text blocks with positioning
-                text_dict = page.get_text("dict")
-                for block in text_dict["blocks"]:
-                    if "lines" in block:  # Text block
-                        bbox = block["bbox"]
-                        x0, y0, x1, y1 = bbox
-                        
-                        # Scale coordinates
-                        x = int(x0 * scale_factor)
-                        y = int(y0 * scale_factor)
-                        width = int((x1 - x0) * scale_factor)
-                        height = int((y1 - y0) * scale_factor)
-                        
-                        # Extract text content
-                        text_content = ""
+                for block in page_dict["blocks"]:
+                    if "lines" in block:
                         for line in block["lines"]:
+                            line_html = '<div class="text-line">'
                             for span in line["spans"]:
-                                text_content += span["text"]
-                            text_content += " "
-                        
-                        if text_content.strip():
-                            # Get font info
-                            font_size = 12
-                            font_weight = "normal"
-                            font_style = "normal"
-                            
-                            if block["lines"]:
-                                first_span = block["lines"][0]["spans"][0]
-                                font_size = int(first_span["size"] * scale_factor)
-                                if "Bold" in first_span["font"]:
-                                    font_weight = "bold"
-                                if "Italic" in first_span["font"]:
-                                    font_style = "italic"
-                            
-                            html_content.append(f'            <div class="text-block" style="left: {x}px; top: {y}px; width: {width}px; height: {height}px; font-size: {font_size}px; font-weight: {font_weight}; font-style: {font_style};">{text_content.strip()}</div>')
+                                text = span["text"]
+                                if text.strip():
+                                    bbox = span["bbox"]
+                                    font = span["font"]
+                                    size = span["size"]
+                                    flags = span["flags"]
+                                    
+                                    style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; font-size: {size}px; font-family: {font};"
+                                    if flags & 2**4:
+                                        style += " font-weight: bold;"
+                                    if flags & 2**1:
+                                        style += " font-style: italic;"
+                                    
+                                    line_html += f'<span class="text-span editable-text" data-text="{text}" style="{style}">{text}</span>'
+                            line_html += '</div>'
+                            page_html += line_html
+                    
+                    elif "image" in block:
+                        # Handle images if requested
+                        if include_images:
+                            try:
+                                img_data = block["image"]
+                                img_base64 = fitz.Pixmap(doc, block["xref"]).tobytes("png")
+                                img_base64_str = base64.b64encode(img_base64).decode()
+                                bbox = block["bbox"]
+                                style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; width: {bbox[2]-bbox[0]}px; height: {bbox[3]-bbox[1]}px;"
+                                page_html += f'<img class="editable-image" src="data:image/png;base64,{img_base64_str}" style="{style}" alt="Image">'
+                            except Exception as e:
+                                print(f"DEBUG: Error extracting image: {e}")
+                                continue
                 
-                # Extract images if requested
-                if include_images:
-                    image_list = page.get_images()
-                    for img_index, img in enumerate(image_list):
-                        try:
-                            # Get image
-                            xref = img[0]
-                            pix = fitz.Pixmap(doc, xref)
-                            
-                            if pix.n - pix.alpha < 4:  # GRAY or RGB
-                                # Get image position from page
-                                img_rect = page.get_image_rects(xref)[0]
-                                x0, y0, x1, y1 = img_rect
-                                
-                                # Scale coordinates
-                                x = int(x0 * scale_factor)
-                                y = int(y0 * scale_factor)
-                                width = int((x1 - x0) * scale_factor)
-                                height = int((y1 - y0) * scale_factor)
-                                
-                                if image_format == 'embedded':
-                                    # Convert to base64
-                                    img_data = pix.tobytes("png")
-                                    img_base64 = base64.b64encode(img_data).decode('utf-8')
-                                    img_tag = f'<img src="data:image/png;base64,{img_base64}" alt="Image {img_index + 1}">'
-                                else:
-                                    # Save as separate file
-                                    img_filename = f"{unique_id}_page{page_num + 1}_img{img_index + 1}.png"
-                                    img_path = os.path.join(uploads_dir, img_filename)
-                                    pix.save(img_path)
-                                    img_tag = f'<img src="{img_filename}" alt="Image {img_index + 1}">'
-                                
-                                html_content.append(f'            <div class="image-block" style="left: {x}px; top: {y}px; width: {width}px; height: {height}px;">{img_tag}</div>')
-                            
-                            pix = None
-                        except Exception as e:
-                            print(f"DEBUG: Error extracting image {img_index} from page {page_num}: {e}")
-                            continue
-                
-                html_content.append(f'            <div class="page-number">Page {page_num + 1}</div>')
-                html_content.append('        </div>')
-                html_content.append('    </div>')
+                page_html += '</div>'
+                html_content += page_html
             
-            html_content.append('    </div>')
-            
-            # Add JavaScript for controls
-            html_content.append('    <script>')
-            html_content.append('        let currentZoom = 1;')
-            html_content.append('        function zoomIn() { currentZoom += 0.1; updateZoom(); }')
-            html_content.append('        function zoomOut() { currentZoom = Math.max(0.1, currentZoom - 0.1); updateZoom(); }')
-            html_content.append('        function updateZoom() {')
-            html_content.append('            document.querySelector(".pdf-container").style.transform = `scale(${currentZoom})`;')
-            html_content.append('            document.getElementById("zoomLevel").textContent = Math.round(currentZoom * 100) + "%";')
-            html_content.append('        }')
-            html_content.append('    </script>')
-            
-            html_content.append('</body>')
-            html_content.append('</html>')
+            html_content += """
+                </div>
+            </body>
+            </html>
+            """
             
             # Write HTML content to file
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(html_content))
+                f.write(html_content)
             
             # Close PDF document
             doc.close()
