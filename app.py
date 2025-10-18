@@ -99,6 +99,7 @@ EDITED_FOLDER = "edited"
 HTML_FOLDER = "saved_html"
 VIDEO_FOLDER = "converted_videos"
 AUDIO_FOLDER = "converted_audio"
+HTML_CONVERTED_FOLDER = "converted_html"
 
 # Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -106,6 +107,7 @@ os.makedirs(EDITED_FOLDER, exist_ok=True)
 os.makedirs(HTML_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
+os.makedirs(HTML_CONVERTED_FOLDER, exist_ok=True)
 
 @app.route("/health")
 def health():
@@ -3358,8 +3360,7 @@ def convert_pdf_to_html():
     
     try:
         # Create uploads directory if it doesn't exist
-        uploads_dir = 'converted_html'
-        uploads_dir = os.path.abspath(uploads_dir)
+        uploads_dir = os.path.abspath(HTML_CONVERTED_FOLDER)
         os.makedirs(uploads_dir, exist_ok=True)
         print(f"DEBUG: Created/verified directory: {uploads_dir}")
         
@@ -3512,7 +3513,7 @@ def download_html(filename):
         from urllib.parse import unquote
         decoded_filename = unquote(filename)
         
-        file_path = os.path.abspath(os.path.join('converted_html', decoded_filename))
+        file_path = os.path.abspath(os.path.join(HTML_CONVERTED_FOLDER, decoded_filename))
         print(f"DEBUG: Looking for HTML file: {file_path}")
         
         if not os.path.exists(file_path):
@@ -3580,6 +3581,18 @@ if __name__ == "__main__":
     print(f"📊 Database URL: {os.getenv('DATABASE_URL', 'sqlite:///justpdf_api.db')}")
     print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
     print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
+    
+    try:
+        # Initialize database
+        print("🗄️ Initializing database...")
+        init_db(app)
+        print("✅ Database initialized successfully")
+    except Exception as e:
+        print(f"❌ Database initialization failed: {e}")
+        print("⚠️ Continuing without database (some features may not work)")
+        import traceback
+        traceback.print_exc()
+    
     print(f"✅ All dependencies loaded successfully")
     
     # Get port from environment variable (Railway provides this)
