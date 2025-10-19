@@ -3329,9 +3329,6 @@ def convert_pdf_to_html():
                 })
                 print(f"DEBUG: Page {page_idx + 1} HTML length: {len(page_html)}")
             
-            doc.close()
-            print(f"DEBUG: Total pages processed: {len(pages_data)}")
-            
             # Generate clean HTML with simple text extraction
             html_content = f"""<!DOCTYPE html>
 <html>
@@ -3377,7 +3374,7 @@ def convert_pdf_to_html():
 """
             
             # Add each page's content as simple text
-            for page_idx, page_data in enumerate(pages_data):
+            for page_idx in range(len(doc)):
                 page = doc[page_idx]
                 page_text = page.get_text()
                 
@@ -3392,6 +3389,9 @@ def convert_pdf_to_html():
     </div>
 </body>
 </html>"""
+            
+            doc.close()
+            print(f"DEBUG: Total pages processed: {len(pages_data)}")
             
             # Write HTML content to file
             with open(filepath, 'w', encoding='utf-8') as f:
