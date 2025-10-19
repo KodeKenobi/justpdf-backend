@@ -3270,67 +3270,26 @@ def convert_pdf_to_html():
         # Get original file size
         original_size = os.path.getsize(temp_path)
         
-        # Convert PDF to HTML using the EXACT same logic as the working /convert/<filename> endpoint
+        # Convert PDF to HTML using simple approach like the working /convert_pdf_to_word endpoint
         try:
             import fitz  # PyMuPDF
-            import base64
             
             # Open PDF document
             doc = fitz.open(temp_path)
             print(f"DEBUG: PDF opened successfully, total pages: {len(doc)}")
-            pages_data = []
-            image_counter = 0
             
-            # Process all pages using the EXACT same logic as the working converter
-            for page_idx in range(len(doc)):
-                print(f"DEBUG: Processing page {page_idx + 1}")
-                page = doc[page_idx]
-                page_dict = page.get_text("dict")
-                print(f"DEBUG: Page {page_idx + 1} has {len(page_dict['blocks'])} blocks")
-                
-                page_html = f'<div class="pdf-page" data-page="{page_idx + 1}">'
-                
-                for block in page_dict["blocks"]:
-                    if "lines" in block:
-                        for line in block["lines"]:
-                            line_html = '<div class="text-line">'
-                            for span in line["spans"]:
-                                text = span["text"]
-                                if text.strip():
-                                    bbox = span["bbox"]
-                                    font = span["font"]
-                                    size = span["size"]
-                                    flags = span["flags"]
-                                    
-                                    style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; font-size: {size}px; font-family: {font};"
-                                    if flags & 2**4:
-                                        style += " font-weight: bold;"
-                                    if flags & 2**1:
-                                        style += " font-style: italic;"
-                                    
-                                    line_html += f'<span class="text-span editable-text" data-text="{text}" style="{style}">{text}</span>'
-                            line_html += '</div>'
-                            page_html += line_html
-                    
-                    elif "image" in block:
-                        image_counter += 1
-                        bbox = block["bbox"]
-                        image_data = block["image"]
-                        image_base64 = base64.b64encode(image_data).decode()
-                        
-                        style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; width: {bbox[2] - bbox[0]}px; height: {bbox[3] - bbox[1]}px;"
-                        page_html += f'<img class="editable-image" data-image-id="{image_counter}" src="data:image/png;base64,{image_base64}" style="{style}">'
-                
-                page_html += '</div>'
-                pages_data.append({
-                    'html': page_html,
-                    'width': page.rect.width,
-                    'height': page.rect.height
-                })
-                print(f"DEBUG: Page {page_idx + 1} HTML length: {len(page_html)}")
+            # Simple HTML conversion using page.get_text("html")
+            html_content = ""
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                page_html = page.get_text("html")
+                html_content += f'<div class="pdf-page" data-page="{page_num + 1}">'
+                html_content += page_html
+                html_content += '</div>'
+                print(f"DEBUG: Page {page_num + 1} processed")
             
-            # Generate HTML using the EXACT same template structure as the working converter
-            html_content = f"""<!DOCTYPE html>
+            # Wrap in proper HTML structure
+            full_html_content = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -3351,41 +3310,27 @@ def convert_pdf_to_html():
             margin: 0 auto;
         }}
         .pdf-page {{
-            position: relative;
             background: white;
-            transform-origin: top left;
+            padding: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border-radius: 4px;
-            overflow: hidden;
-        }}
-        .text-span {{
-            position: absolute;
-            white-space: nowrap;
-        }}
-        .editable-image {{
-            position: absolute;
+            margin-bottom: 20px;
         }}
     </style>
 </head>
 <body>
     <div class="pdf-container">
-"""
-            
-            # Add each page's content using the EXACT same structure
-            for page_data in pages_data:
-                html_content += page_data['html']
-            
-            html_content += """
+        {html_content}
     </div>
 </body>
 </html>"""
             
             doc.close()
-            print(f"DEBUG: Total pages processed: {len(pages_data)}")
+            print(f"DEBUG: Total pages processed: {len(doc)}")
             
             # Write HTML content to file
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(html_content)
+                f.write(full_html_content)
             
             # Clean up temp file
             if os.path.exists(temp_path):
