@@ -3332,18 +3332,63 @@ def convert_pdf_to_html():
             doc.close()
             print(f"DEBUG: Total pages processed: {len(pages_data)}")
             
-            # Use the EXACT same template rendering logic as the working converter
-            from flask import render_template_string
+            # Generate clean HTML without template wrapper - just the PDF content
+            html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Converted PDF - {original_filename}</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+            font-family: Arial, sans-serif;
+        }}
+        .pdf-container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .pdf-page {{
+            position: relative;
+            background: white;
+            margin: 20px auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }}
+        .text-line {{
+            position: relative;
+        }}
+        .text-span {{
+            position: absolute;
+            white-space: nowrap;
+        }}
+        .editable-text {{
+            cursor: text;
+            border: 1px solid transparent;
+            padding: 2px;
+            margin: -2px;
+        }}
+        .editable-image {{
+            position: absolute;
+            cursor: pointer;
+        }}
+    </style>
+</head>
+<body>
+    <div class="pdf-container">
+"""
             
-            # Read the converted.html template content
-            template_path = os.path.join(os.path.dirname(__file__), 'templates', 'converted.html')
-            with open(template_path, 'r', encoding='utf-8') as f:
-                template_content = f.read()
+            # Add each page's HTML content
+            for page_data in pages_data:
+                html_content += page_data['html']
             
-            # Render the template with the pages data
-            html_content = render_template_string(template_content, 
-                                               filename=original_filename, 
-                                               pages=pages_data)
+            html_content += """
+    </div>
+</body>
+</html>"""
             
             # Write HTML content to file
             with open(filepath, 'w', encoding='utf-8') as f:
