@@ -3329,7 +3329,7 @@ def convert_pdf_to_html():
                 })
                 print(f"DEBUG: Page {page_idx + 1} HTML length: {len(page_html)}")
             
-            # Generate clean HTML with simple text extraction
+            # Generate HTML using the EXACT same template structure as the working converter
             html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -3342,30 +3342,28 @@ def convert_pdf_to_html():
             padding: 20px;
             background: #f5f5f5;
             font-family: Arial, sans-serif;
-            line-height: 1.6;
         }}
         .pdf-container {{
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
             max-width: 1200px;
             margin: 0 auto;
         }}
         .pdf-page {{
+            position: relative;
             background: white;
-            margin: 20px auto;
-            padding: 40px;
+            transform-origin: top left;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border-radius: 4px;
-            min-height: 800px;
+            overflow: hidden;
         }}
-        .page-title {{
-            font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 20px;
-            color: #333;
+        .text-span {{
+            position: absolute;
+            white-space: nowrap;
         }}
-        .text-content {{
-            font-size: 14px;
-            color: #333;
-            white-space: pre-wrap;
+        .editable-image {{
+            position: absolute;
         }}
     </style>
 </head>
@@ -3373,17 +3371,9 @@ def convert_pdf_to_html():
     <div class="pdf-container">
 """
             
-            # Add each page's content as simple text
-            for page_idx in range(len(doc)):
-                page = doc[page_idx]
-                page_text = page.get_text()
-                
-                html_content += f"""
-        <div class="pdf-page">
-            <div class="page-title">Page {page_idx + 1}</div>
-            <div class="text-content">{page_text}</div>
-        </div>
-"""
+            # Add each page's content using the EXACT same structure
+            for page_data in pages_data:
+                html_content += page_data['html']
             
             html_content += """
     </div>
