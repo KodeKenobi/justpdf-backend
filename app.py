@@ -3332,7 +3332,7 @@ def convert_pdf_to_html():
             doc.close()
             print(f"DEBUG: Total pages processed: {len(pages_data)}")
             
-            # Generate clean HTML without template wrapper - just the PDF content
+            # Generate clean HTML with simple text extraction
             html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -3345,35 +3345,30 @@ def convert_pdf_to_html():
             padding: 20px;
             background: #f5f5f5;
             font-family: Arial, sans-serif;
+            line-height: 1.6;
         }}
         .pdf-container {{
             max-width: 1200px;
             margin: 0 auto;
         }}
         .pdf-page {{
-            position: relative;
             background: white;
             margin: 20px auto;
+            padding: 40px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             border-radius: 4px;
-            overflow: hidden;
+            min-height: 800px;
         }}
-        .text-line {{
-            position: relative;
+        .page-title {{
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #333;
         }}
-        .text-span {{
-            position: absolute;
-            white-space: nowrap;
-        }}
-        .editable-text {{
-            cursor: text;
-            border: 1px solid transparent;
-            padding: 2px;
-            margin: -2px;
-        }}
-        .editable-image {{
-            position: absolute;
-            cursor: pointer;
+        .text-content {{
+            font-size: 14px;
+            color: #333;
+            white-space: pre-wrap;
         }}
     </style>
 </head>
@@ -3381,9 +3376,17 @@ def convert_pdf_to_html():
     <div class="pdf-container">
 """
             
-            # Add each page's HTML content
-            for page_data in pages_data:
-                html_content += page_data['html']
+            # Add each page's content as simple text
+            for page_idx, page_data in enumerate(pages_data):
+                page = doc[page_idx]
+                page_text = page.get_text()
+                
+                html_content += f"""
+        <div class="pdf-page">
+            <div class="page-title">Page {page_idx + 1}</div>
+            <div class="text-content">{page_text}</div>
+        </div>
+"""
             
             html_content += """
     </div>
