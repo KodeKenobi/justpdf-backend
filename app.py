@@ -84,7 +84,6 @@ EDITED_FOLDER = "edited"
 HTML_FOLDER = "saved_html"
 VIDEO_FOLDER = "converted_videos"
 AUDIO_FOLDER = "converted_audio"
-HTML_CONVERTED_FOLDER = "converted_html"
 
 # Create necessary directories
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -92,7 +91,6 @@ os.makedirs(EDITED_FOLDER, exist_ok=True)
 os.makedirs(HTML_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
-os.makedirs(HTML_CONVERTED_FOLDER, exist_ok=True)
 
 @app.route("/health")
 def health():
@@ -3230,171 +3228,6 @@ def download_converted_audio(filename):
         print(f"ERROR in download_converted_audio: {str(e)}")
         return f"Error downloading converted audio: {str(e)}", 500
 
-@app.route('/convert-pdf-to-html', methods=['POST'])
-def convert_pdf_to_html():
-    """Convert PDF to HTML format"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-    
-    # Get conversion settings
-    include_images = request.form.get('includeImages', 'true').lower() == 'true'
-    preserve_layout = request.form.get('preserveLayout', 'true').lower() == 'true'
-    include_css = request.form.get('includeCSS', 'true').lower() == 'true'
-    image_format = request.form.get('imageFormat', 'embedded')
-    css_level = request.form.get('cssLevel', 'basic')
-    
-    try:
-        # Create uploads directory if it doesn't exist
-        uploads_dir = os.path.abspath(HTML_CONVERTED_FOLDER)
-        os.makedirs(uploads_dir, exist_ok=True)
-        print(f"DEBUG: Created/verified directory: {uploads_dir}")
-        
-        # Generate unique filename
-        unique_id = str(uuid.uuid4())[:8]
-        original_filename = secure_filename(file.filename)
-        name, ext = os.path.splitext(original_filename)
-        html_filename = f"{unique_id}_{name}_converted.html"
-        filepath = os.path.join(uploads_dir, html_filename)
-        
-        print(f"DEBUG: Target filepath: {filepath}")
-        
-        # Save uploaded file
-        temp_path = os.path.join(uploads_dir, f"temp_{unique_id}_{original_filename}")
-        print(f"DEBUG: Temp filepath: {temp_path}")
-        file.save(temp_path)
-        
-        # Get original file size
-        original_size = os.path.getsize(temp_path)
-        
-        # Convert PDF to HTML using simple approach like the working /convert_pdf_to_word endpoint
-        try:
-            import fitz  # PyMuPDF
-            
-            # Open PDF document
-            doc = fitz.open(temp_path)
-            print(f"DEBUG: PDF opened successfully, total pages: {len(doc)}")
-            
-            # Simple HTML conversion using page.get_text("html")
-            html_content = ""
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                page_html = page.get_text("html")
-                html_content += f'<div class="pdf-page" data-page="{page_num + 1}">'
-                html_content += page_html
-                html_content += '</div>'
-                print(f"DEBUG: Page {page_num + 1} processed")
-            
-            # Wrap in proper HTML structure
-            full_html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Converted PDF - {original_filename}</title>
-    <style>
-        body {{
-            margin: 0;
-            padding: 20px;
-            background: #f5f5f5;
-            font-family: Arial, sans-serif;
-        }}
-        .pdf-container {{
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }}
-        .pdf-page {{
-            background: white;
-            padding: 20px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            border-radius: 4px;
-            margin-bottom: 20px;
-        }}
-    </style>
-</head>
-<body>
-    <div class="pdf-container">
-        {html_content}
-    </div>
-</body>
-</html>"""
-            
-            doc.close()
-            print(f"DEBUG: Total pages processed: {len(doc)}")
-            
-            # Write HTML content to file
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(full_html_content)
-            
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            
-            # Get converted file size
-            converted_size = os.path.getsize(filepath)
-            compression_ratio = ((original_size - converted_size) / original_size * 100) if original_size > 0 else 0
-            
-            # Create download URL
-            download_url = f"/download_html/{html_filename}"
-            
-            return jsonify({
-                'success': True,
-                'downloadUrl': download_url,
-                'originalSize': original_size,
-                'convertedSize': converted_size,
-                'compressionRatio': round(compression_ratio, 2),
-                'message': 'PDF converted to HTML successfully',
-                'settings': {
-                    'includeImages': include_images,
-                    'preserveLayout': preserve_layout,
-                    'includeCSS': include_css,
-                    'imageFormat': image_format,
-                    'cssLevel': css_level
-                }
-            })
-            
-        except ImportError:
-            return jsonify({
-                'success': False,
-                'error': 'PDF processing library not available. Please install pdfplumber.'
-            }), 500
-        except Exception as e:
-            print(f"DEBUG: Error in PDF to HTML conversion: {str(e)}")
-            return jsonify({
-                'success': False,
-                'error': f'PDF to HTML conversion failed: {str(e)}'
-            }), 500
-            
-    except Exception as e:
-        print(f"Error in convert_pdf_to_html: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/download_html/<filename>')
-def download_html(filename):
-    """Download converted HTML file"""
-    try:
-        from urllib.parse import unquote
-        decoded_filename = unquote(filename)
-        
-        file_path = os.path.abspath(os.path.join(HTML_CONVERTED_FOLDER, decoded_filename))
-        print(f"DEBUG: Looking for HTML file: {file_path}")
-        
-        if not os.path.exists(file_path):
-            print(f"DEBUG: HTML file not found: {file_path}")
-            return "Converted HTML file not found", 404
-        
-        print(f"DEBUG: HTML file found, sending: {file_path}")
-        return send_file(file_path, as_attachment=True, download_name=decoded_filename)
-        
-    except Exception as e:
-        print(f"ERROR in download_html: {str(e)}")
-        return f"Error downloading HTML file: {str(e)}", 500
 
 def cleanup_all_processes():
     """Clean up all running processes on shutdown"""

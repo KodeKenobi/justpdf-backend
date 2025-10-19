@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create necessary directories
-RUN mkdir -p uploads edited saved_html converted_videos converted_audio converted_html
+RUN mkdir -p uploads edited saved_html converted_videos converted_audio
 
 # Make start script executable
 RUN chmod +x start.sh
