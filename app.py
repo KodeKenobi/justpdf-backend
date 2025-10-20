@@ -45,6 +45,7 @@ from api.v1.routes import api_v1
 from api.admin.routes import admin_api
 from api.client.routes import client_api
 from test_routes import test_bp
+from debug_routes import debug_bp
 
 app = Flask(__name__)
 
@@ -3275,6 +3276,7 @@ app.register_blueprint(api_v1)
 app.register_blueprint(admin_api)
 app.register_blueprint(client_api)
 app.register_blueprint(test_bp)
+app.register_blueprint(debug_bp)
 
 # Register cleanup on shutdown
 import atexit
