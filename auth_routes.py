@@ -38,26 +38,42 @@ def login():
     try:
         data = request.get_json()
         
+        print(f"🔍 LOGIN DEBUG - Raw data: {data}")
+        
         if not data:
+            print("🔍 LOGIN DEBUG - No data provided")
             return jsonify({'error': 'No data provided'}), 400
         
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
         
+        print(f"🔍 LOGIN DEBUG - Email: '{email}' (len: {len(email)})")
+        print(f"🔍 LOGIN DEBUG - Password: '{password}' (len: {len(password)})")
+        
         if not email or not password:
+            print("🔍 LOGIN DEBUG - Missing email or password")
             return jsonify({'error': 'Email and password are required'}), 400
         
+        print(f"🔍 LOGIN DEBUG - Calling login_user...")
         result, message = login_user(email, password)
         
+        print(f"🔍 LOGIN DEBUG - Result: {result is not None}")
+        print(f"🔍 LOGIN DEBUG - Message: {message}")
+        
         if result:
+            print("🔍 LOGIN DEBUG - Login successful, returning token")
             return jsonify({
                 'message': message,
                 **result
             }), 200
         else:
+            print("🔍 LOGIN DEBUG - Login failed, returning error")
             return jsonify({'error': message}), 401
             
     except Exception as e:
+        print(f"🔍 LOGIN DEBUG - Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @auth_bp.route('/reset-password', methods=['POST'])
