@@ -365,6 +365,81 @@ def convert_audio():
         log_api_usage('/api/v1/convert/audio', 'POST', 500, error_message=str(e))
         return jsonify({'error': str(e)}), 500
 
+@api_v1.route('/convert/pdf-extract-text', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def pdf_extract_text():
+    """Extract text from PDF file"""
+    start_time = time.time()
+    
+    try:
+        if 'file' not in request.files:
+            log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 400, error_message='No file provided')
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 400, error_message='No file selected')
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get parameters
+        output_format = request.form.get('output_format', 'txt')
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save uploaded file
+        file.save(input_path)
+        
+        # Create job record
+        job = create_job('/api/v1/convert/pdf-extract-text', input_path)
+        
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(input_path)
+            text_content = ""
+            
+            for page in doc:
+                text_content += page.get_text()
+            
+            doc.close()
+            
+            # Save extracted text to file
+            output_filename = f"{uuid.uuid4().hex[:8]}_extracted_text.{output_format}"
+            output_path = os.path.join(UPLOAD_FOLDER, output_filename)
+            
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(text_content)
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 200, processing_time=processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'message': 'Text extracted successfully',
+                'output_file': output_filename,
+                'processing_time': processing_time
+            }), 200
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 500, processing_time=processing_time, error_message=str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
 @api_v1.route('/jobs/<job_id>/status', methods=['GET'])
 @require_api_key
 def get_job_status(job_id):
