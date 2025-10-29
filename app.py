@@ -76,11 +76,6 @@ CORS(app, origins=[
     expose_headers=["Content-Type", "Content-Length"],
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])  # Enable CORS for specific origins with custom headers
 
-# Health check endpoint
-@app.route("/health", methods=["GET"])
-def health_check():
-    return jsonify({"status": "healthy", "message": "Backend is running"}), 200
-
 # Define folder constants before they are used
 UPLOAD_FOLDER = "uploads"
 EDITED_FOLDER = "edited"
@@ -94,6 +89,42 @@ os.makedirs(EDITED_FOLDER, exist_ok=True)
 os.makedirs(HTML_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
+
+# Health check endpoint
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Backend is running"}), 200
+
+# PDF Upload endpoint for frontend tools
+@app.route("/api/upload", methods=["POST"])
+def api_upload():
+    """Upload PDF file for processing"""
+    try:
+        if "pdf" not in request.files:
+            return jsonify({"error": "No file uploaded"}), 400
+        
+        file = request.files["pdf"]
+        if file.filename == "":
+            return jsonify({"error": "No file selected"}), 400
+        
+        # Secure filename and make unique
+        filename = secure_filename(file.filename)
+        # Add unique prefix to prevent conflicts
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save file
+        file.save(filepath)
+        
+        return jsonify({
+            "success": True,
+            "filename": unique_filename,
+            "message": "File uploaded successfully"
+        }), 200
+        
+    except Exception as e:
+        print(f"ERROR: Failed to upload file: {str(e)}")
+        return jsonify({"error": f"Failed to upload file: {str(e)}"}), 500
 
 @app.route("/health")
 def health():
