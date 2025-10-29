@@ -2,23 +2,16 @@ from flask import Blueprint, request, jsonify, g
 from sqlalchemy import desc
 from datetime import datetime, timedelta
 from api_auth import get_user_stats
-from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 # Create Blueprint
 client_api = Blueprint('client_api', __name__, url_prefix='/api/client')
 
 @client_api.before_request
+@jwt_required()
 def load_user():
     """Set g.current_user from JWT token"""
-    # Skip JWT check for OPTIONS requests (CORS preflight)
-    if request.method == 'OPTIONS':
-        return None
-    
-    # Require JWT for all other requests
     try:
-        from flask_jwt_extended import verify_jwt_in_request
-        verify_jwt_in_request()
-        
         from models import User
         user_id = get_jwt_identity()
         if isinstance(user_id, str):
@@ -40,7 +33,8 @@ def get_api_keys():
             is_active=True
         ).order_by(desc(APIKey.created_at)).all()
         
-        return jsonify([key.to_dict() for key in api_keys]), 200
+        # Return keys with full key value so users can see their keys after refresh
+        return jsonify([key.to_dict(include_key=True) for key in api_keys]), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
