@@ -92,11 +92,18 @@ def convert_video():
             log_api_usage('/api/v1/convert/video', 'POST', 400, error_message='No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
-        # Get parameters
-        output_format = request.form.get('format', 'mp4')
-        quality = int(request.form.get('quality', 80))
-        compression = request.form.get('compression', 'medium')
-        async_mode = request.form.get('async', 'false').lower() == 'true'
+        # Get parameters - can come from form or JSON
+        if request.is_json:
+            data = request.get_json()
+            output_format = data.get('output_format') or data.get('format', 'mp4')
+            quality = int(data.get('quality', 80))
+            compression = data.get('compression', 'medium')
+            async_mode = data.get('async', 'false').lower() == 'true'
+        else:
+            output_format = request.form.get('output_format') or request.form.get('format', 'mp4')
+            quality = int(request.form.get('quality', 80))
+            compression = request.form.get('compression', 'medium')
+            async_mode = request.form.get('async', 'false').lower() == 'true'
         
         # COMPREHENSIVE BACKEND LOGGING - REQUEST PARAMETERS
         print("📋 [BACKEND REQUEST PARAMS] ===============================")
@@ -299,9 +306,14 @@ def convert_audio():
             log_api_usage('/api/v1/convert/audio', 'POST', 400, error_message='No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
-        # Get parameters
-        output_format = request.form.get('format', 'mp3')
-        bitrate = request.form.get('bitrate', '192')
+        # Get parameters - can come from form or JSON
+        if request.is_json:
+            data = request.get_json()
+            output_format = data.get('output_format') or data.get('format', 'mp3')
+            bitrate = data.get('bitrate', '192')
+        else:
+            output_format = request.form.get('output_format') or request.form.get('format', 'mp3')
+            bitrate = request.form.get('bitrate', '192')
         
         # Secure filename
         filename = secure_filename(file.filename)
@@ -382,8 +394,12 @@ def pdf_extract_text():
             log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 400, error_message='No file selected')
             return jsonify({'error': 'No file selected'}), 400
         
-        # Get parameters
-        output_format = request.form.get('output_format', 'txt')
+        # Get parameters - can come from form or JSON
+        if request.is_json:
+            data = request.get_json()
+            output_format = data.get('output_format', 'txt')
+        else:
+            output_format = request.form.get('output_format', 'txt')
         
         # Secure filename
         filename = secure_filename(file.filename)
@@ -438,6 +454,469 @@ def pdf_extract_text():
     except Exception as e:
         processing_time = time.time() - start_time
         log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@api_v1.route('/convert/qr-generate', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def qr_generate():
+    """Generate QR code from text or URL"""
+    start_time = time.time()
+    
+    try:
+        # Get parameters - can come from form or JSON
+        if request.is_json:
+            data = request.get_json()
+            text = data.get('text', '')
+            size = data.get('size', 'medium')
+            format_type = data.get('format', 'png')
+        else:
+            text = request.form.get('text', '')
+            size = request.form.get('size', 'medium')
+            format_type = request.form.get('format', 'png')
+        
+        if not text:
+            log_api_usage('/api/v1/convert/qr-generate', 'POST', 400, error_message='No text provided')
+            return jsonify({'error': 'Text parameter is required'}), 400
+        
+        # Create job record
+        job = create_job('/api/v1/convert/qr-generate')
+        
+        try:
+            import qrcode
+            from io import BytesIO
+            import base64
+            
+            # Size mapping
+            size_map = {'small': 4, 'medium': 10, 'large': 20}
+            box_size = size_map.get(size, 10)
+            
+            # Create QR code
+            qr = qrcode.QRCode(version=1, box_size=box_size, border=4)
+            qr.add_data(text)
+            qr.make(fit=True)
+            
+            # Create image
+            img = qr.make_image(fill_color="black", back_color="white")
+            
+            # Save to file
+            output_filename = f"{uuid.uuid4().hex[:8]}_qr.{format_type}"
+            output_path = os.path.join(IMAGE_FOLDER, output_filename)
+            img.save(output_path, format=format_type.upper() if format_type.upper() != 'JPG' else 'PNG')
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/qr-generate', 'POST', 200, processing_time=processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'processing_time': processing_time
+            }), 200
+            
+        except ImportError:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message='qrcode library not installed')
+            log_api_usage('/api/v1/convert/qr-generate', 'POST', 500, processing_time=processing_time, error_message='qrcode library not installed')
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': 'QR code generation requires qrcode library'
+            }), 500
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/qr-generate', 'POST', 500, processing_time=processing_time, error_message=str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/qr-generate', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@api_v1.route('/convert/image', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def convert_image():
+    """Convert image file to different format"""
+    start_time = time.time()
+    
+    try:
+        if 'file' not in request.files:
+            log_api_usage('/api/v1/convert/image', 'POST', 400, error_message='No file provided')
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            log_api_usage('/api/v1/convert/image', 'POST', 400, error_message='No file selected')
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get parameters - can come from form or JSON
+        if request.is_json:
+            data = request.get_json()
+            output_format = data.get('output_format', 'png')
+            quality = int(data.get('quality', 90))
+        else:
+            output_format = request.form.get('output_format', 'png')
+            quality = int(request.form.get('quality', 90))
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save uploaded file
+        file.save(input_path)
+        file_size = os.path.getsize(input_path)
+        
+        # Create job record
+        job = create_job('/api/v1/convert/image', input_path)
+        
+        try:
+            from PIL import Image
+            
+            # Open image
+            img = Image.open(input_path)
+            
+            # Convert format
+            output_filename = f"{uuid.uuid4().hex[:8]}_converted.{output_format}"
+            output_path = os.path.join(IMAGE_FOLDER, output_filename)
+            
+            # Save with quality settings for JPEG
+            if output_format.lower() in ['jpg', 'jpeg']:
+                img = img.convert('RGB')
+                img.save(output_path, format='JPEG', quality=quality)
+            else:
+                img.save(output_path, format=output_format.upper())
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/image', 'POST', 200, file_size, processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'processing_time': processing_time
+            }), 200
+            
+        except ImportError:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message='PIL/Pillow library not installed')
+            log_api_usage('/api/v1/convert/image', 'POST', 500, file_size, processing_time, 'PIL/Pillow library not installed')
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': 'Image conversion requires PIL/Pillow library'
+            }), 500
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/image', 'POST', 500, file_size, processing_time, str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/image', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@api_v1.route('/convert/pdf-merge', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def pdf_merge():
+    """Merge multiple PDF files into one"""
+    start_time = time.time()
+    
+    try:
+        # Check for files
+        if 'files' not in request.files:
+            log_api_usage('/api/v1/convert/pdf-merge', 'POST', 400, error_message='No files provided')
+            return jsonify({'error': 'No files provided'}), 400
+        
+        files = request.files.getlist('files')
+        if not files or all(f.filename == '' for f in files):
+            log_api_usage('/api/v1/convert/pdf-merge', 'POST', 400, error_message='No files selected')
+            return jsonify({'error': 'No files selected'}), 400
+        
+        # Get output filename
+        output_filename = request.form.get('output_filename', 'merged.pdf')
+        
+        # Save all uploaded files
+        input_paths = []
+        for file in files:
+            if file.filename:
+                filename = secure_filename(file.filename)
+                unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+                input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+                file.save(input_path)
+                input_paths.append(input_path)
+        
+        if not input_paths:
+            return jsonify({'error': 'No valid files to merge'}), 400
+        
+        # Create job record
+        job = create_job('/api/v1/convert/pdf-merge', ','.join(input_paths))
+        
+        try:
+            import fitz  # PyMuPDF
+            
+            # Create new PDF
+            merged_doc = fitz.open()
+            
+            # Merge all PDFs
+            for input_path in input_paths:
+                doc = fitz.open(input_path)
+                merged_doc.insert_pdf(doc)
+                doc.close()
+            
+            # Save merged PDF
+            output_path = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex[:8]}_{output_filename}")
+            merged_doc.save(output_path)
+            merged_doc.close()
+            
+            # Clean up input files
+            for input_path in input_paths:
+                if os.path.exists(input_path):
+                    os.remove(input_path)
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-merge', 'POST', 200, processing_time=processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'processing_time': processing_time
+            }), 200
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-merge', 'POST', 500, processing_time=processing_time, error_message=str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/pdf-merge', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@api_v1.route('/convert/pdf-split', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def pdf_split():
+    """Split PDF into multiple pages"""
+    start_time = time.time()
+    
+    try:
+        if 'file' not in request.files:
+            log_api_usage('/api/v1/convert/pdf-split', 'POST', 400, error_message='No file provided')
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            log_api_usage('/api/v1/convert/pdf-split', 'POST', 400, error_message='No file selected')
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get parameters
+        split_type = request.form.get('split_type', 'every_page')
+        page_range = request.form.get('page_range', '')
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save uploaded file
+        file.save(input_path)
+        file_size = os.path.getsize(input_path)
+        
+        # Create job record
+        job = create_job('/api/v1/convert/pdf-split', input_path)
+        
+        try:
+            import fitz  # PyMuPDF
+            
+            doc = fitz.open(input_path)
+            total_pages = len(doc)
+            
+            # Determine which pages to extract
+            pages_to_extract = []
+            if split_type == 'every_page':
+                pages_to_extract = [i for i in range(total_pages)]
+            elif split_type == 'by_range' and page_range:
+                # Parse ranges like "1-5,10-15"
+                for part in page_range.split(','):
+                    if '-' in part:
+                        start, end = map(int, part.split('-'))
+                        pages_to_extract.extend(range(start - 1, end))  # Convert to 0-indexed
+                    else:
+                        pages_to_extract.append(int(part) - 1)
+            else:
+                pages_to_extract = [0]  # Default to first page
+            
+            # Create output PDF with selected pages
+            output_doc = fitz.open()
+            for page_num in pages_to_extract:
+                if 0 <= page_num < total_pages:
+                    output_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
+            
+            # Save output
+            output_filename = f"{uuid.uuid4().hex[:8]}_split.pdf"
+            output_path = os.path.join(UPLOAD_FOLDER, output_filename)
+            output_doc.save(output_path)
+            
+            doc.close()
+            output_doc.close()
+            
+            # Clean up input file
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-split', 'POST', 200, file_size, processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'processing_time': processing_time
+            }), 200
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-split', 'POST', 500, file_size, processing_time, str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/pdf-split', 'POST', 500, error_message=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@api_v1.route('/convert/pdf-watermark', methods=['POST'])
+@require_api_key
+@require_rate_limit
+def pdf_watermark():
+    """Add watermark to PDF"""
+    start_time = time.time()
+    
+    try:
+        if 'file' not in request.files:
+            log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 400, error_message='No file provided')
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 400, error_message='No file selected')
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Get parameters
+        watermark_text = request.form.get('watermark_text', '')
+        position = request.form.get('position', 'center')
+        
+        if not watermark_text:
+            log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 400, error_message='No watermark text provided')
+            return jsonify({'error': 'Watermark text is required'}), 400
+        
+        # Secure filename
+        filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        input_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+        
+        # Save uploaded file
+        file.save(input_path)
+        file_size = os.path.getsize(input_path)
+        
+        # Create job record
+        job = create_job('/api/v1/convert/pdf-watermark', input_path)
+        
+        try:
+            import fitz  # PyMuPDF
+            
+            doc = fitz.open(input_path)
+            
+            # Position mapping
+            pos_map = {
+                'center': (0.5, 0.5),
+                'top-left': (0.1, 0.1),
+                'top-right': (0.9, 0.1),
+                'bottom-left': (0.1, 0.9),
+                'bottom-right': (0.9, 0.9)
+            }
+            x_pos, y_pos = pos_map.get(position, (0.5, 0.5))
+            
+            # Add watermark to each page
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                rect = page.rect
+                
+                # Calculate position
+                x = rect.width * x_pos
+                y = rect.height * y_pos
+                
+                # Insert text watermark
+                text_rect = fitz.Rect(x - 50, y - 10, x + 50, y + 10)
+                page.insert_textbox(
+                    text_rect,
+                    watermark_text,
+                    fontsize=20,
+                    color=(0.5, 0.5, 0.5),  # Gray color
+                    align=1  # Center alignment
+                )
+            
+            # Save watermarked PDF
+            output_filename = f"{uuid.uuid4().hex[:8]}_watermarked.pdf"
+            output_path = os.path.join(UPLOAD_FOLDER, output_filename)
+            doc.save(output_path)
+            doc.close()
+            
+            # Clean up input file
+            if os.path.exists(input_path):
+                os.remove(input_path)
+            
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 200, file_size, processing_time)
+            
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'completed',
+                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'processing_time': processing_time
+            }), 200
+            
+        except Exception as e:
+            processing_time = time.time() - start_time
+            update_job_status(job.job_id, 'failed', error_message=str(e), processing_time=processing_time)
+            log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 500, file_size, processing_time, str(e))
+            return jsonify({
+                'job_id': job.job_id,
+                'status': 'failed',
+                'error': str(e)
+            }), 500
+    
+    except Exception as e:
+        processing_time = time.time() - start_time
+        log_api_usage('/api/v1/convert/pdf-watermark', 'POST', 500, error_message=str(e))
         return jsonify({'error': str(e)}), 500
 
 @api_v1.route('/jobs/<job_id>/status', methods=['GET'])
