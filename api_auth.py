@@ -35,6 +35,13 @@ def require_api_key(f):
     """Decorator to require valid API key"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Skip authentication for OPTIONS requests (CORS preflight)
+        # Flask-CORS will handle the OPTIONS response automatically
+        if request.method == 'OPTIONS':
+            response = jsonify({})
+            response.status_code = 200
+            return response
+        
         # Get API key from header
         api_key = request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
         

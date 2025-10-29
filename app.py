@@ -71,9 +71,10 @@ CORS(app, origins=[
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:8080"
-], supports_credentials=True, methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])  # Enable CORS for specific origins
-
-# Flask-CORS handles all CORS headers automatically
+], supports_credentials=True, 
+    allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+    expose_headers=["Content-Type", "Content-Length"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])  # Enable CORS for specific origins with custom headers
 
 # Health check endpoint
 @app.route("/health", methods=["GET"])
