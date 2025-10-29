@@ -250,3 +250,59 @@ def admin_update_password():
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@auth_bp.route('/get-token-from-session', methods=['POST'])
+def get_token_from_session():
+    """Get backend JWT token from NextAuth session - auto-creates/updates user if needed"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        role = data.get('role', 'user')
+        
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
+        
+        from models import User
+        from database import db
+        from flask_jwt_extended import create_access_token
+        from datetime import timedelta
+        
+        # Find or create user
+        user = User.query.filter_by(email=email).first()
+        
+        if not user:
+            # Create user
+            user = User(email=email, role=role)
+            user.set_password(password)
+            db.session.add(user)
+            db.session.commit()
+        else:
+            # User exists - update password to match NextAuth
+            user.set_password(password)
+            user.is_active = True
+            if role and user.role != role:
+                user.role = role
+            db.session.commit()
+        
+        # Generate JWT token
+        expires = timedelta(hours=24)
+        access_token = create_access_token(
+            identity=str(user.id),
+            expires_delta=expires
+        )
+        
+        return jsonify({
+            'access_token': access_token,
+            'user': user.to_dict(),
+            'expires_in': int(expires.total_seconds())
+        }), 200
+            
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
