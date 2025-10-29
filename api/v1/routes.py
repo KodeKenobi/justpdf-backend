@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 import subprocess
 import threading
+import base64
 
 from api_auth import require_api_key, require_rate_limit, log_api_usage
 
@@ -254,13 +255,30 @@ def convert_video():
                 processing_time = time.time() - start_time
                 
                 if result.returncode == 0:
-                    update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+                    # Read file and encode as base64
+                    with open(output_path, 'rb') as f:
+                        file_content = f.read()
+                        file_base64 = base64.b64encode(file_content).decode('utf-8')
+                    
+                    # Clean up
+                    try:
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                    except:
+                        pass
+                    
+                    processing_time = time.time() - start_time
+                    update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
                     log_api_usage('/api/v1/convert/video', 'POST', 200, file_size, processing_time)
                     
                     return jsonify({
                         'job_id': job.job_id,
                         'status': 'completed',
-                        'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                        'message': 'Video converted successfully',
+                        'file_base64': file_base64,
+                        'format': output_format,
+                        'file_size': len(file_content),
+                        'mime_type': f'video/{output_format}',
                         'processing_time': processing_time
                     }), 200
                 else:
@@ -342,13 +360,30 @@ def convert_audio():
             processing_time = time.time() - start_time
             
             if result.returncode == 0:
-                update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+                # Read file and encode as base64
+                with open(output_path, 'rb') as f:
+                    file_content = f.read()
+                    file_base64 = base64.b64encode(file_content).decode('utf-8')
+                
+                # Clean up
+                try:
+                    if os.path.exists(output_path):
+                        os.remove(output_path)
+                except:
+                    pass
+                
+                processing_time = time.time() - start_time
+                update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
                 log_api_usage('/api/v1/convert/audio', 'POST', 200, file_size, processing_time)
                 
                 return jsonify({
                     'job_id': job.job_id,
                     'status': 'completed',
-                    'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                    'message': 'Audio converted successfully',
+                    'file_base64': file_base64,
+                    'format': output_format,
+                    'file_size': len(file_content),
+                    'mime_type': f'audio/{output_format}',
                     'processing_time': processing_time
                 }), 200
             else:
@@ -422,22 +457,24 @@ def pdf_extract_text():
             
             doc.close()
             
-            # Save extracted text to file
-            output_filename = f"{uuid.uuid4().hex[:8]}_extracted_text.{output_format}"
-            output_path = os.path.join(UPLOAD_FOLDER, output_filename)
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(text_content)
+            # Clean up input file
+            try:
+                if os.path.exists(input_path):
+                    os.remove(input_path)
+            except:
+                pass  # Don't fail if cleanup fails
             
             processing_time = time.time() - start_time
-            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
             log_api_usage('/api/v1/convert/pdf-extract-text', 'POST', 200, processing_time=processing_time)
             
+            # Return text content directly in response
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
                 'message': 'Text extracted successfully',
-                'output_file': output_filename,
+                'text': text_content,
+                'text_length': len(text_content),
                 'processing_time': processing_time
             }), 200
             
@@ -499,19 +536,23 @@ def qr_generate():
             # Create image
             img = qr.make_image(fill_color="black", back_color="white")
             
-            # Save to file
-            output_filename = f"{uuid.uuid4().hex[:8]}_qr.{format_type}"
-            output_path = os.path.join(IMAGE_FOLDER, output_filename)
-            img.save(output_path, format=format_type.upper() if format_type.upper() != 'JPG' else 'PNG')
+            # Convert to base64 instead of saving file
+            buffer = BytesIO()
+            img.save(buffer, format=format_type.upper() if format_type.upper() != 'JPG' else 'PNG')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
             
             processing_time = time.time() - start_time
-            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
             log_api_usage('/api/v1/convert/qr-generate', 'POST', 200, processing_time=processing_time)
             
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
-                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'message': 'QR code generated successfully',
+                'image_base64': image_base64,
+                'format': format_type,
+                'mime_type': f'image/{format_type.lower() if format_type.lower() != "jpg" else "png"}',
                 'processing_time': processing_time
             }), 200
             
@@ -583,25 +624,29 @@ def convert_image():
             # Open image
             img = Image.open(input_path)
             
-            # Convert format
-            output_filename = f"{uuid.uuid4().hex[:8]}_converted.{output_format}"
-            output_path = os.path.join(IMAGE_FOLDER, output_filename)
-            
-            # Save with quality settings for JPEG
+            # Convert to base64 instead of saving file
+            from io import BytesIO
+            buffer = BytesIO()
             if output_format.lower() in ['jpg', 'jpeg']:
                 img = img.convert('RGB')
-                img.save(output_path, format='JPEG', quality=quality)
+                img.save(buffer, format='JPEG', quality=quality)
             else:
-                img.save(output_path, format=output_format.upper())
+                img.save(buffer, format=output_format.upper())
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode('utf-8')
             
             processing_time = time.time() - start_time
-            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
             log_api_usage('/api/v1/convert/image', 'POST', 200, file_size, processing_time)
             
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
-                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'message': 'Image converted successfully',
+                'image_base64': image_base64,
+                'format': output_format,
+                'file_size': len(image_base64) * 3 // 4,  # Approximate from base64
+                'mime_type': f'image/{output_format.lower() if output_format.lower() != "jpg" else "jpeg"}',
                 'processing_time': processing_time
             }), 200
             
@@ -678,9 +723,12 @@ def pdf_merge():
                 merged_doc.insert_pdf(doc)
                 doc.close()
             
-            # Save merged PDF
-            output_path = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex[:8]}_{output_filename}")
-            merged_doc.save(output_path)
+            # Save to buffer and encode as base64
+            from io import BytesIO
+            buffer = BytesIO()
+            merged_doc.save(buffer)
+            buffer.seek(0)
+            pdf_base64 = base64.b64encode(buffer.read()).decode('utf-8')
             merged_doc.close()
             
             # Clean up input files
@@ -689,13 +737,16 @@ def pdf_merge():
                     os.remove(input_path)
             
             processing_time = time.time() - start_time
-            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
             log_api_usage('/api/v1/convert/pdf-merge', 'POST', 200, processing_time=processing_time)
             
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
-                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'message': 'PDFs merged successfully',
+                'pdf_base64': pdf_base64,
+                'file_size': len(pdf_base64) * 3 // 4,  # Approximate from base64
+                'mime_type': 'application/pdf',
                 'processing_time': processing_time
             }), 200
             
@@ -774,10 +825,12 @@ def pdf_split():
                 if 0 <= page_num < total_pages:
                     output_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
             
-            # Save output
-            output_filename = f"{uuid.uuid4().hex[:8]}_split.pdf"
-            output_path = os.path.join(UPLOAD_FOLDER, output_filename)
-            output_doc.save(output_path)
+            # Save to buffer and encode as base64
+            from io import BytesIO
+            buffer = BytesIO()
+            output_doc.save(buffer)
+            buffer.seek(0)
+            pdf_base64 = base64.b64encode(buffer.read()).decode('utf-8')
             
             doc.close()
             output_doc.close()
@@ -787,13 +840,16 @@ def pdf_split():
                 os.remove(input_path)
             
             processing_time = time.time() - start_time
-            update_job_status(job.job_id, 'completed', output_path, processing_time=processing_time)
+            update_job_status(job.job_id, 'completed', None, processing_time=processing_time)
             log_api_usage('/api/v1/convert/pdf-split', 'POST', 200, file_size, processing_time)
             
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
-                'download_url': f'/api/v1/jobs/{job.job_id}/download',
+                'message': 'PDF split successfully',
+                'pdf_base64': pdf_base64,
+                'file_size': len(pdf_base64) * 3 // 4,  # Approximate from base64
+                'mime_type': 'application/pdf',
                 'processing_time': processing_time
             }), 200
             
@@ -900,6 +956,7 @@ def pdf_watermark():
             return jsonify({
                 'job_id': job.job_id,
                 'status': 'completed',
+                'message': 'Watermark added successfully',
                 'download_url': f'/api/v1/jobs/{job.job_id}/download',
                 'processing_time': processing_time
             }), 200
