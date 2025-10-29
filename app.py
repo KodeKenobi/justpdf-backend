@@ -71,7 +71,7 @@ CORS(app, origins=[
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:8080"
-], supports_credentials=True)  # Enable CORS for specific origins
+], supports_credentials=True, methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "Authorization"])  # Enable CORS for specific origins
 
 # Flask-CORS handles all CORS headers automatically
 
