@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invoice - Education Invoice</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            padding: 40px 20px;
+            color: #333;
+        }
+        
+        .invoice-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        
+        .invoice-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .invoice-header h1 {
+            font-size: 36px;
+            font-weight: 300;
+            margin-bottom: 10px;
+        }
+        
+        .invoice-number {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-top: 10px;
+        }
+        
+        .invoice-body {
+            padding: 40px;
+        }
+        
+        .company-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .company-info h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .company-info p {
+            margin: 5px 0;
+            color: #666;
+            line-height: 1.6;
+        }
+        
+        .bill-to {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .bill-to h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 30px 0;
+            background: white;
+        }
+        
+        .items-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .items-table th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .items-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .items-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .items-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .text-right {
+            text-align: right;
+        }
+        
+        .invoice-summary {
+            margin-top: 30px;
+            display: flex;
+            justify-content: flex-end;
+        }
+        
+        .summary-box {
+            background: #f8f9fa;
+            padding: 25px 35px;
+            border-radius: 8px;
+            min-width: 300px;
+        }
+        
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .summary-row:last-child {
+            border-bottom: none;
+        }
+        
+        .summary-row.total {
+            font-size: 22px;
+            font-weight: bold;
+            color: #667eea;
+            margin-top: 10px;
+            padding-top: 15px;
+        }
+        
+        .footer {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 2px solid #e9ecef;
+            text-align: center;
+            color: #666;
+        }
+        
+        .footer p {
+            margin: 8px 0;
+        }
+        
+        .thank-you {
+            background: #e3f2fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: center;
+            color: #1565c0;
+            font-weight: 500;
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            
+            .invoice-container {
+                box-shadow: none;
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <div class="invoice-header">
+            <h1>INVOICE</h1>
+            <div class="invoice-number">
+                Invoice #20251026 | Date: October 26, 2025
+            </div>
+        </div>
+        
+        <div class="invoice-body">
+            <div class="company-section">
+                <div class="company-info">
+                    <h3>From</h3>
+                    <p><strong>Learning Academy</strong></p>
+                    <p>222 Education Way, Campus District, City, State 12345</p>
+                    <p>Phone: +1 (555) 789-0123</p>
+                    <p>Email: admissions@learningacademy.edu</p>
+                </div>
+                
+                <div class="bill-to">
+                    <h3>Bill To</h3>
+                    <p><strong>Client Name</strong></p>
+                    <p>123 Client Street</p>
+                    <p>City, State 12345</p>
+                    <p>client@email.com</p>
+                </div>
+            </div>
+            
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th>Description</th>
+                        <th>Quantity</th>
+                        <th class="text-right">Unit Price</th>
+                        <th class="text-right">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+
+                    <tr>
+                        <td>Tuition - Fall Semester</td>
+                        <td>1</td>
+                        <td class="text-right">$3500.00</td>
+                        <td class="text-right">$3500.00</td>
+                    </tr>
+
+                    <tr>
+                        <td>Laboratory Fees</td>
+                        <td>1</td>
+                        <td class="text-right">$250.00</td>
+                        <td class="text-right">$250.00</td>
+                    </tr>
+
+                </tbody>
+            </table>
+            
+            <div class="thank-you">
+                Thank you for your business! We appreciate your support.
+            </div>
+            
+            <div class="invoice-summary">
+                <div class="summary-box">
+                    <div class="summary-row">
+                        <span>Subtotal:</span>
+                        <span>$3750.00</span>
+                    </div>
+                    <div class="summary-row">
+                        <span>Tax (8%):</span>
+                        <span>$300.00</span>
+                    </div>
+                    <div class="summary-row total">
+                        <span>Total:</span>
+                        <span>$4050.00</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p><strong>TERMS & CONDITIONS</strong></p>
+                <p>Payment is due within 30 days of invoice date.</p>
+                <p>Please include invoice number with payment.</p>
+                <p>Questions? Contact us at admissions@learningacademy.edu</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
