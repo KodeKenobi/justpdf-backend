@@ -3037,14 +3037,85 @@
 
       // Function to add text element
       function addTextElement(e, overlay) {
-        console.log("📝 Adding text element...");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("📝 ADD TEXT ELEMENT - EXTENSIVE LOGGING");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("🔍 Step 1: Event and overlay information...");
         console.log("📝 Click event:", e);
+        console.log(`   Event clientX: ${e.clientX.toFixed(1)}px`);
+        console.log(`   Event clientY: ${e.clientY.toFixed(1)}px`);
+        console.log(
+          `   Event target: ${e.target.tagName}#${e.target.id || "no-id"}`
+        );
         console.log("📝 Overlay element:", overlay);
-        const rect = overlay.getBoundingClientRect();
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(`   Overlay classes: ${overlay.className}`);
+
+        let rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 2: Overlay bounding rect (initial):");
+        console.log(`   Left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Right: ${rect.right.toFixed(1)}px`);
+        console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions in addTextElement, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            console.log(
+              `   Found page element: ${page.tagName}#${page.id || "no-id"}`
+            );
+            const pageComputed = window.getComputedStyle(page);
+            console.log(`   Page computed display: ${pageComputed.display}`);
+            console.log(
+              `   Page computed visibility: ${pageComputed.visibility}`
+            );
+            console.log(`   Page computed width: ${pageComputed.width}`);
+            console.log(`   Page computed height: ${pageComputed.height}`);
+            console.log(
+              `   Page computed transform: ${pageComputed.transform}`
+            );
+            console.log(
+              `   Page computed transform-origin: ${pageComputed.transformOrigin}`
+            );
+
+            rect = page.getBoundingClientRect();
+            console.log("📝 Using page element bounding rect:");
+            console.log(`   Left: ${rect.left.toFixed(1)}px`);
+            console.log(`   Top: ${rect.top.toFixed(1)}px`);
+            console.log(`   Width: ${rect.width.toFixed(1)}px`);
+            console.log(`   Height: ${rect.height.toFixed(1)}px`);
+            console.log(`   Right: ${rect.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+          } else {
+            console.error("❌ Could not find page element!");
+          }
+        } else {
+          console.log("✅ Overlay has valid dimensions");
+        }
+
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        console.log("📝 Click position - x:", x, "y:", y);
-        console.log("📝 Overlay rect:", rect);
+        console.log("🔍 Step 3: Calculating relative position...");
+        console.log(`   Event clientX: ${e.clientX.toFixed(1)}px`);
+        console.log(`   Event clientY: ${e.clientY.toFixed(1)}px`);
+        console.log(`   Rect left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Rect top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Calculated X (relative): ${x.toFixed(1)}px`);
+        console.log(`   Calculated Y (relative): ${y.toFixed(1)}px`);
+        console.log("📝 Click position - x:", x.toFixed(1), "y:", y.toFixed(1));
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
 
         // Create text element container
         const textContainer = document.createElement("div");
@@ -3053,7 +3124,40 @@
         textContainer.style.left = x + "px";
         textContainer.style.top = y + "px";
         textContainer.style.zIndex = "20";
-        console.log("📝 Created text container at position:", x, y);
+        console.log("🔍 Step 4: Created text container:");
+        console.log(
+          `   Position: left=${x.toFixed(1)}px, top=${y.toFixed(1)}px`
+        );
+        console.log(`   Z-index: 20`);
+
+        // Log container's computed style immediately
+        requestAnimationFrame(() => {
+          const containerRect = textContainer.getBoundingClientRect();
+          const containerComputed = window.getComputedStyle(textContainer);
+          console.log("🔍 Step 5: Text container after creation (RAF):");
+          console.log(`   Computed left: ${containerComputed.left}`);
+          console.log(`   Computed top: ${containerComputed.top}`);
+          console.log(`   Computed position: ${containerComputed.position}`);
+          console.log(`   Computed display: ${containerComputed.display}`);
+          console.log(
+            `   Computed visibility: ${containerComputed.visibility}`
+          );
+          console.log(
+            `   Bounding rect: ${containerRect.left.toFixed(
+              1
+            )}, ${containerRect.top.toFixed(1)}, ${containerRect.width.toFixed(
+              1
+            )}x${containerRect.height.toFixed(1)}`
+          );
+          console.log(
+            `   Visible in viewport: ${
+              containerRect.width > 0 &&
+              containerRect.height > 0 &&
+              containerRect.top < window.innerHeight &&
+              containerRect.bottom > 0
+            }`
+          );
+        });
 
         // Create formatting toolbar
         const toolbar = document.createElement("div");
@@ -3545,12 +3649,66 @@
         textContainer.appendChild(toolbar);
         textContainer.appendChild(textElement);
         overlay.appendChild(textContainer);
-        console.log("📝 Added text element to DOM");
-        console.log("📝 Text container children:", textContainer.children);
+
+        // Make overlay visible so elements are visible
+        overlay.style.display = "block";
+        overlay.style.visibility = "visible";
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+        overlay.style.zIndex = "10";
+        console.log("🔍 Step 6: Added text element to DOM:");
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(
+          `   Text container children count: ${textContainer.children.length}`
+        );
+        console.log(`   Overlay children count: ${overlay.children.length}`);
+        console.log(
+          `   Overlay visibility updated: display=block, visibility=visible`
+        );
+
+        // Log final state after DOM insertion
+        requestAnimationFrame(() => {
+          const containerRect = textContainer.getBoundingClientRect();
+          const overlayRect = overlay.getBoundingClientRect();
+          const containerComputed = window.getComputedStyle(textContainer);
+          console.log(
+            "🔍 Step 7: Final text container state (after DOM insertion):"
+          );
+          console.log(
+            `   Container bounding rect: ${containerRect.left.toFixed(
+              1
+            )}, ${containerRect.top.toFixed(1)}, ${containerRect.width.toFixed(
+              1
+            )}x${containerRect.height.toFixed(1)}`
+          );
+          console.log(`   Container computed left: ${containerComputed.left}`);
+          console.log(`   Container computed top: ${containerComputed.top}`);
+          console.log(`   Container style left: ${textContainer.style.left}`);
+          console.log(`   Container style top: ${textContainer.style.top}`);
+          console.log(
+            `   Overlay bounding rect: ${overlayRect.left.toFixed(
+              1
+            )}, ${overlayRect.top.toFixed(1)}, ${overlayRect.width.toFixed(
+              1
+            )}x${overlayRect.height.toFixed(1)}`
+          );
+          console.log(
+            `   Container visible: ${
+              containerRect.width > 0 && containerRect.height > 0
+            }`
+          );
+          console.log(
+            `   Container in viewport: ${
+              containerRect.top < window.innerHeight &&
+              containerRect.bottom > 0 &&
+              containerRect.left < window.innerWidth &&
+              containerRect.right > 0
+            }`
+          );
+        });
 
         // Save state for undo/redo
         saveStateToUndoStack();
-        console.log("📝 Overlay children count:", overlay.children.length);
 
         // Ensure signature modal is closed when creating text
         closeSignatureModal();
@@ -3873,8 +4031,16 @@
 
       // Functions to create elements immediately when tool is selected
       function createTextElementImmediately() {
-        console.log("📝 Creating text element immediately");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("📝 CREATE TEXT ELEMENT IMMEDIATELY - EXTENSIVE LOGGING");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("🔍 Step 1: Finding overlays...");
         const overlays = document.querySelectorAll(".interactive-overlay");
+        console.log(`   Found ${overlays.length} overlay(s)`);
         if (overlays.length === 0) {
           console.log("❌ No overlays found for text element");
           return;
@@ -3882,27 +4048,121 @@
 
         // Use the first overlay (current page)
         const overlay = overlays[0];
-        const rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 2: Examining overlay element...");
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(`   Overlay classes: ${overlay.className}`);
+        const overlayComputed = window.getComputedStyle(overlay);
+        console.log(`   Overlay display: ${overlayComputed.display}`);
+        console.log(`   Overlay visibility: ${overlayComputed.visibility}`);
+        console.log(`   Overlay opacity: ${overlayComputed.opacity}`);
+        console.log(`   Overlay width: ${overlayComputed.width}`);
+        console.log(`   Overlay height: ${overlayComputed.height}`);
+        console.log(`   Overlay position: ${overlayComputed.position}`);
+
+        let rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 3: Overlay bounding rect (initial):");
+        console.log(`   Left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Right: ${rect.right.toFixed(1)}px`);
+        console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            console.log("🔍 Step 4: Finding page element...");
+            console.log(`   Page ID: ${page.id || "no-id"}`);
+            console.log(`   Page classes: ${page.className}`);
+            const pageComputed = window.getComputedStyle(page);
+            console.log(`   Page display: ${pageComputed.display}`);
+            console.log(`   Page visibility: ${pageComputed.visibility}`);
+            console.log(`   Page width: ${pageComputed.width}`);
+            console.log(`   Page height: ${pageComputed.height}`);
+            console.log(`   Page transform: ${pageComputed.transform}`);
+            console.log(
+              `   Page transform-origin: ${pageComputed.transformOrigin}`
+            );
+
+            rect = page.getBoundingClientRect();
+            console.log("📝 Using page element bounding rect:");
+            console.log(`   Left: ${rect.left.toFixed(1)}px`);
+            console.log(`   Top: ${rect.top.toFixed(1)}px`);
+            console.log(`   Width: ${rect.width.toFixed(1)}px`);
+            console.log(`   Height: ${rect.height.toFixed(1)}px`);
+            console.log(`   Right: ${rect.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+          } else {
+            console.error("❌ Could not find page element for overlay");
+            console.log("   Overlay parent:", overlay.parentElement);
+            console.log(
+              "   Overlay parent classes:",
+              overlay.parentElement?.className
+            );
+            return;
+          }
+        } else {
+          console.log("✅ Overlay has valid dimensions, using overlay rect");
+        }
 
         // Position element in the upper-center area for better UX
         // Use 1/3 from top instead of center to avoid bottom placement
         const x = rect.width / 2 - 100; // Center horizontally, offset for element width
         const y = rect.height / 3; // 1/3 from top instead of center
 
+        console.log("🔍 Step 5: Calculating position...");
+        console.log(`   Rect width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Rect height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Calculated X (relative): ${x.toFixed(1)}px`);
+        console.log(`   Calculated Y (relative): ${y.toFixed(1)}px`);
+        console.log(`   Rect left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Rect top: ${rect.top.toFixed(1)}px`);
+
         // Create a mock click event at the better position
+        const mockClientX = rect.left + x + 100; // Adjust for the offset
+        const mockClientY = rect.top + y;
         const mockEvent = {
-          clientX: rect.left + x + 100, // Adjust for the offset
-          clientY: rect.top + y,
+          clientX: mockClientX,
+          clientY: mockClientY,
           target: overlay,
         };
 
-        console.log("📝 Positioning text element at:", x, y);
+        console.log("🔍 Step 6: Mock click event created:");
+        console.log(`   clientX: ${mockClientX.toFixed(1)}px`);
+        console.log(`   clientY: ${mockClientY.toFixed(1)}px`);
+        console.log(
+          `   Target: ${mockEvent.target.tagName}#${
+            mockEvent.target.id || "no-id"
+          }`
+        );
+        console.log(
+          "📝 Positioning text element at:",
+          x.toFixed(1),
+          y.toFixed(1)
+        );
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
         addTextElement(mockEvent, overlay);
       }
 
       function createSignatureElementImmediately() {
-        console.log("✍️ Creating signature element immediately");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log(
+          "✍️ CREATE SIGNATURE ELEMENT IMMEDIATELY - EXTENSIVE LOGGING"
+        );
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("🔍 Step 1: Finding overlays...");
         const overlays = document.querySelectorAll(".interactive-overlay");
+        console.log(`   Found ${overlays.length} overlay(s)`);
         if (overlays.length === 0) {
           console.log("❌ No overlays found for signature element");
           return;
@@ -3910,21 +4170,105 @@
 
         // Use the first overlay (current page)
         const overlay = overlays[0];
-        const rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 2: Examining overlay element...");
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(`   Overlay classes: ${overlay.className}`);
+        const overlayComputed = window.getComputedStyle(overlay);
+        console.log(`   Overlay display: ${overlayComputed.display}`);
+        console.log(`   Overlay visibility: ${overlayComputed.visibility}`);
+        console.log(`   Overlay opacity: ${overlayComputed.opacity}`);
+        console.log(`   Overlay width: ${overlayComputed.width}`);
+        console.log(`   Overlay height: ${overlayComputed.height}`);
+        console.log(`   Overlay position: ${overlayComputed.position}`);
+
+        let rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 3: Overlay bounding rect (initial):");
+        console.log(`   Left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Right: ${rect.right.toFixed(1)}px`);
+        console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            console.log("🔍 Step 4: Finding page element...");
+            console.log(`   Page ID: ${page.id || "no-id"}`);
+            console.log(`   Page classes: ${page.className}`);
+            const pageComputed = window.getComputedStyle(page);
+            console.log(`   Page display: ${pageComputed.display}`);
+            console.log(`   Page visibility: ${pageComputed.visibility}`);
+            console.log(`   Page width: ${pageComputed.width}`);
+            console.log(`   Page height: ${pageComputed.height}`);
+            console.log(`   Page transform: ${pageComputed.transform}`);
+            console.log(
+              `   Page transform-origin: ${pageComputed.transformOrigin}`
+            );
+
+            rect = page.getBoundingClientRect();
+            console.log("✍️ Using page element bounding rect:");
+            console.log(`   Left: ${rect.left.toFixed(1)}px`);
+            console.log(`   Top: ${rect.top.toFixed(1)}px`);
+            console.log(`   Width: ${rect.width.toFixed(1)}px`);
+            console.log(`   Height: ${rect.height.toFixed(1)}px`);
+            console.log(`   Right: ${rect.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+          } else {
+            console.error("❌ Could not find page element for overlay");
+            console.log("   Overlay parent:", overlay.parentElement);
+            console.log(
+              "   Overlay parent classes:",
+              overlay.parentElement?.className
+            );
+            return;
+          }
+        } else {
+          console.log("✅ Overlay has valid dimensions, using overlay rect");
+        }
 
         // Position element in the upper-center area for better UX
         // Use 1/3 from top instead of center to avoid bottom placement
         const x = rect.width / 2 - 75; // Center horizontally, offset for signature width
         const y = rect.height / 3; // 1/3 from top instead of center
 
+        console.log("🔍 Step 5: Calculating position...");
+        console.log(`   Rect width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Rect height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Calculated X (relative): ${x.toFixed(1)}px`);
+        console.log(`   Calculated Y (relative): ${y.toFixed(1)}px`);
+        console.log(`   Rect left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Rect top: ${rect.top.toFixed(1)}px`);
+
         // Create a mock click event at the better position
+        const mockClientX = rect.left + x + 75; // Adjust for the offset
+        const mockClientY = rect.top + y;
         const mockEvent = {
-          clientX: rect.left + x + 75, // Adjust for the offset
-          clientY: rect.top + y,
+          clientX: mockClientX,
+          clientY: mockClientY,
           target: overlay,
         };
 
-        console.log("✍️ Positioning signature element at:", x, y);
+        console.log("🔍 Step 6: Mock click event created:");
+        console.log(`   clientX: ${mockClientX.toFixed(1)}px`);
+        console.log(`   clientY: ${mockClientY.toFixed(1)}px`);
+        console.log(
+          `   Target: ${mockEvent.target.tagName}#${
+            mockEvent.target.id || "no-id"
+          }`
+        );
+        console.log(
+          "✍️ Positioning signature element at:",
+          x.toFixed(1),
+          y.toFixed(1)
+        );
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
         addSignatureElement(mockEvent, overlay);
       }
 
@@ -4007,6 +4351,13 @@
         imageContainer.appendChild(img);
         overlay.appendChild(imageContainer);
 
+        // Make overlay visible so elements are visible
+        overlay.style.display = "block";
+        overlay.style.visibility = "visible";
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+        overlay.style.zIndex = "10";
+
         // Add resize handles
         addResizeHandles(imageContainer);
 
@@ -4032,7 +4383,27 @@
 
         // Use the first overlay (current page)
         const overlay = overlays[0];
-        const rect = overlay.getBoundingClientRect();
+        let rect = overlay.getBoundingClientRect();
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            rect = page.getBoundingClientRect();
+            console.log(
+              "🖼️ Using page element dimensions:",
+              rect.width,
+              "x",
+              rect.height
+            );
+          } else {
+            console.error("❌ Could not find page element for overlay");
+            return;
+          }
+        }
 
         // Position element in the upper-center area for better UX
         // Use 1/3 from top instead of center to avoid bottom placement
@@ -4321,14 +4692,86 @@
 
       // Function to add signature element
       function addSignatureElement(e, overlay) {
-        console.log("✍️ Adding signature element...");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("✍️ ADD SIGNATURE ELEMENT - EXTENSIVE LOGGING");
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
+        console.log("🔍 Step 1: Event and overlay information...");
         console.log("✍️ Event:", e);
+        console.log(`   Event clientX: ${e.clientX.toFixed(1)}px`);
+        console.log(`   Event clientY: ${e.clientY.toFixed(1)}px`);
+        console.log(
+          `   Event target: ${e.target.tagName}#${e.target.id || "no-id"}`
+        );
         console.log("✍️ Overlay:", overlay);
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(`   Overlay classes: ${overlay.className}`);
         console.log("✍️ Current edit type:", currentEditType);
-        const rect = overlay.getBoundingClientRect();
+
+        let rect = overlay.getBoundingClientRect();
+        console.log("🔍 Step 2: Overlay bounding rect (initial):");
+        console.log(`   Left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Width: ${rect.width.toFixed(1)}px`);
+        console.log(`   Height: ${rect.height.toFixed(1)}px`);
+        console.log(`   Right: ${rect.right.toFixed(1)}px`);
+        console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions in addSignatureElement, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            console.log(
+              `   Found page element: ${page.tagName}#${page.id || "no-id"}`
+            );
+            const pageComputed = window.getComputedStyle(page);
+            console.log(`   Page computed display: ${pageComputed.display}`);
+            console.log(
+              `   Page computed visibility: ${pageComputed.visibility}`
+            );
+            console.log(`   Page computed width: ${pageComputed.width}`);
+            console.log(`   Page computed height: ${pageComputed.height}`);
+            console.log(
+              `   Page computed transform: ${pageComputed.transform}`
+            );
+            console.log(
+              `   Page computed transform-origin: ${pageComputed.transformOrigin}`
+            );
+
+            rect = page.getBoundingClientRect();
+            console.log("✍️ Using page element bounding rect:");
+            console.log(`   Left: ${rect.left.toFixed(1)}px`);
+            console.log(`   Top: ${rect.top.toFixed(1)}px`);
+            console.log(`   Width: ${rect.width.toFixed(1)}px`);
+            console.log(`   Height: ${rect.height.toFixed(1)}px`);
+            console.log(`   Right: ${rect.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${rect.bottom.toFixed(1)}px`);
+          } else {
+            console.error("❌ Could not find page element!");
+          }
+        } else {
+          console.log("✅ Overlay has valid dimensions");
+        }
+
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        console.log("✍️ Click position - x:", x, "y:", y);
+        console.log("🔍 Step 3: Calculating relative position...");
+        console.log(`   Event clientX: ${e.clientX.toFixed(1)}px`);
+        console.log(`   Event clientY: ${e.clientY.toFixed(1)}px`);
+        console.log(`   Rect left: ${rect.left.toFixed(1)}px`);
+        console.log(`   Rect top: ${rect.top.toFixed(1)}px`);
+        console.log(`   Calculated X (relative): ${x.toFixed(1)}px`);
+        console.log(`   Calculated Y (relative): ${y.toFixed(1)}px`);
+        console.log("✍️ Click position - x:", x.toFixed(1), "y:", y.toFixed(1));
+        console.log(
+          "═══════════════════════════════════════════════════════════"
+        );
         console.log("✍️ Overlay rect:", rect);
 
         // Create signature container
@@ -4344,6 +4787,40 @@
         signatureContainer.style.padding = "8px 8px 8px 0";
         signatureContainer.style.margin = "0";
         signatureContainer.style.zIndex = "20";
+        console.log("🔍 Step 4: Created signature container:");
+        console.log(
+          `   Position: left=${x.toFixed(1)}px, top=${y.toFixed(1)}px`
+        );
+        console.log(`   Z-index: 20`);
+
+        // Log container's computed style immediately
+        requestAnimationFrame(() => {
+          const containerRect = signatureContainer.getBoundingClientRect();
+          const containerComputed = window.getComputedStyle(signatureContainer);
+          console.log("🔍 Step 5: Signature container after creation (RAF):");
+          console.log(`   Computed left: ${containerComputed.left}`);
+          console.log(`   Computed top: ${containerComputed.top}`);
+          console.log(`   Computed position: ${containerComputed.position}`);
+          console.log(`   Computed display: ${containerComputed.display}`);
+          console.log(
+            `   Computed visibility: ${containerComputed.visibility}`
+          );
+          console.log(
+            `   Bounding rect: ${containerRect.left.toFixed(
+              1
+            )}, ${containerRect.top.toFixed(1)}, ${containerRect.width.toFixed(
+              1
+            )}x${containerRect.height.toFixed(1)}`
+          );
+          console.log(
+            `   Visible in viewport: ${
+              containerRect.width > 0 &&
+              containerRect.height > 0 &&
+              containerRect.top < window.innerHeight &&
+              containerRect.bottom > 0
+            }`
+          );
+        });
         signatureContainer.style.setProperty(
           "background-color",
           "transparent",
@@ -4484,6 +4961,67 @@
         signatureContainer.appendChild(signatureElement);
         overlay.appendChild(signatureContainer);
 
+        // Make overlay visible so elements are visible
+        overlay.style.display = "block";
+        overlay.style.visibility = "visible";
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+        overlay.style.zIndex = "10";
+        console.log("🔍 Step 6: Added signature element to DOM:");
+        console.log(`   Overlay ID: ${overlay.id || "no-id"}`);
+        console.log(
+          `   Signature container children count: ${signatureContainer.children.length}`
+        );
+        console.log(`   Overlay children count: ${overlay.children.length}`);
+        console.log(
+          `   Overlay visibility updated: display=block, visibility=visible`
+        );
+
+        // Log final state after DOM insertion
+        requestAnimationFrame(() => {
+          const containerRect = signatureContainer.getBoundingClientRect();
+          const overlayRect = overlay.getBoundingClientRect();
+          const containerComputed = window.getComputedStyle(signatureContainer);
+          console.log(
+            "🔍 Step 7: Final signature container state (after DOM insertion):"
+          );
+          console.log(
+            `   Container bounding rect: ${containerRect.left.toFixed(
+              1
+            )}, ${containerRect.top.toFixed(1)}, ${containerRect.width.toFixed(
+              1
+            )}x${containerRect.height.toFixed(1)}`
+          );
+          console.log(`   Container computed left: ${containerComputed.left}`);
+          console.log(`   Container computed top: ${containerComputed.top}`);
+          console.log(
+            `   Container style left: ${signatureContainer.style.left}`
+          );
+          console.log(
+            `   Container style top: ${signatureContainer.style.top}`
+          );
+          console.log(
+            `   Overlay bounding rect: ${overlayRect.left.toFixed(
+              1
+            )}, ${overlayRect.top.toFixed(1)}, ${overlayRect.width.toFixed(
+              1
+            )}x${overlayRect.height.toFixed(1)}`
+          );
+          console.log(
+            `   Container visible: ${
+              containerRect.width > 0 && containerRect.height > 0
+            }`
+          );
+          console.log(
+            `   Container in viewport: ${
+              containerRect.top < window.innerHeight &&
+              containerRect.bottom > 0 &&
+              containerRect.left < window.innerWidth &&
+              containerRect.right > 0
+            }`
+          );
+        });
+
         // Save state for undo/redo
         saveStateToUndoStack();
       }
@@ -4491,7 +5029,28 @@
       // Function to add image element
       function addImageElement(e, overlay) {
         console.log("🖼️ Adding image element...");
-        const rect = overlay.getBoundingClientRect();
+        let rect = overlay.getBoundingClientRect();
+
+        // If overlay has zero dimensions (because it's hidden), use the page element instead
+        if (rect.width === 0 || rect.height === 0) {
+          console.log(
+            "⚠️ Overlay has zero dimensions in addImageElement, using page element instead"
+          );
+          const page = overlay.closest(".pdf-page");
+          if (page) {
+            rect = page.getBoundingClientRect();
+            console.log(
+              "🖼️ Using page element rect:",
+              rect.width,
+              "x",
+              rect.height,
+              "at",
+              rect.left,
+              rect.top
+            );
+          }
+        }
+
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
@@ -4533,6 +5092,13 @@
 
         imageContainer.appendChild(img);
         overlay.appendChild(imageContainer);
+
+        // Make overlay visible so elements are visible
+        overlay.style.display = "block";
+        overlay.style.visibility = "visible";
+        overlay.style.opacity = "1";
+        overlay.style.pointerEvents = "auto";
+        overlay.style.zIndex = "10";
 
         // Add resize handles
         addResizeHandles(imageContainer);
