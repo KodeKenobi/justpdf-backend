@@ -56,7 +56,8 @@
         position: relative;
         margin: 0; /* Changed from auto to 0 to allow edge positioning */
         background: white;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); /* Reduced shadow - was too thick */
+        border: none; /* Ensure no borders */
         transform-origin: top left; /* Changed from center top to prevent side cropping */
         width: auto;
         height: auto;
@@ -111,7 +112,8 @@
 
         .pdf-page {
           margin: 15px 0 !important; /* No auto margins - we'll center via positioning */
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important; /* Reduced shadow - was too thick */
+          border: none !important; /* Ensure no borders */
           width: 595px !important; /* Keep original width for scaling reference */
           max-width: none !important; /* Allow full width scaling */
           min-width: 595px !important;
@@ -1388,9 +1390,9 @@
               // Calculate the actual position after transform
               const finalPageLeft = pageInitialLeft + finalTranslateX;
               const finalPageRight = finalPageLeft + scaledWidth;
-              
+
               let minContainerWidth;
-              
+
               // Check if user has zoomed out (totalScale < 1.0 means zoomed out from base)
               if (totalScale < 1.0) {
                 // Zoomed out: container should match viewport width to prevent empty space on sides
@@ -1410,7 +1412,7 @@
                 `${minContainerWidth}px`,
                 "important"
               );
-              
+
               // Also set max-width to prevent container from being wider than needed when zoomed out
               if (totalScale < 1.0) {
                 container.style.maxWidth = `${viewportWidth}px`;
@@ -1725,18 +1727,46 @@
       function saveHTMLAndShowButtons() {
         console.log("💾 Preparing to save HTML...");
 
-        // First, ensure all pages with content are visible (remove hidden class)
+        // First, ensure all pages with valid IDs are visible (remove hidden class)
+        // Only show pages that have IDs (real pages, not nested duplicates)
         const allPages = document.querySelectorAll(".pdf-page");
         console.log(`💾 Found ${allPages.length} PDF page(s)`);
 
         allPages.forEach((page, index) => {
-          const pageId =
-            page.id || page.getAttribute("data-page") || `page-${index}`;
-          page.classList.remove("hidden");
-          page.style.display = "block";
-          page.style.visibility = "visible";
-          page.style.opacity = "1";
-          console.log(`💾 Page ${pageId} made visible before save`);
+          const pageId = page.id || page.getAttribute("data-page");
+          
+          // Only process pages with valid IDs (skip nested/duplicate pages without IDs)
+          if (pageId && (pageId.startsWith("page-") || page.hasAttribute("data-page"))) {
+            // Remove hidden class and ensure visibility
+            page.classList.remove("hidden");
+            page.style.display = "block";
+            page.style.visibility = "visible";
+            page.style.opacity = "1";
+            page.style.width = "595px";
+            page.style.height = "auto";
+            page.style.minWidth = "595px";
+            page.style.minHeight = "842px";
+            
+            // Also ensure nested pages inside are visible
+            const nestedPages = page.querySelectorAll(".pdf-page");
+            nestedPages.forEach((nestedPage) => {
+              if (nestedPage !== page) {
+                nestedPage.classList.remove("hidden");
+                nestedPage.style.display = "block";
+                nestedPage.style.visibility = "visible";
+                nestedPage.style.opacity = "1";
+              }
+            });
+            
+            console.log(`💾 Page ${pageId} made visible before save`);
+          } else if (!pageId) {
+            // Pages without IDs should be hidden (they're duplicates/nested)
+            page.classList.add("hidden");
+            page.style.display = "none";
+            page.style.visibility = "hidden";
+            page.style.opacity = "0";
+            console.log(`💾 Hiding duplicate page ${index} (no ID)`);
+          }
         });
 
         // Ensure all overlays with elements are visible before saving
