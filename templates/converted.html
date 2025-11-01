@@ -1691,39 +1691,41 @@
 
       function saveHTMLAndShowButtons() {
         console.log("💾 Preparing to save HTML...");
-        
+
         // First, ensure all pages with content are visible (remove hidden class)
         const allPages = document.querySelectorAll(".pdf-page");
         console.log(`💾 Found ${allPages.length} PDF page(s)`);
-        
+
         allPages.forEach((page, index) => {
-          const pageId = page.id || page.getAttribute("data-page") || `page-${index}`;
+          const pageId =
+            page.id || page.getAttribute("data-page") || `page-${index}`;
           page.classList.remove("hidden");
           page.style.display = "block";
           page.style.visibility = "visible";
           page.style.opacity = "1";
           console.log(`💾 Page ${pageId} made visible before save`);
         });
-        
+
         // Ensure all overlays with elements are visible before saving
         const overlays = document.querySelectorAll(".interactive-overlay");
         console.log(`💾 Found ${overlays.length} overlay(s)`);
-        
+
         const overlaysToRestore = [];
-        
+
         overlays.forEach((overlay, index) => {
-          const hasElements = overlay.querySelectorAll(".element-container").length > 0;
+          const hasElements =
+            overlay.querySelectorAll(".element-container").length > 0;
           console.log(`💾 Overlay ${index}: hasElements=${hasElements}`);
-          
+
           if (hasElements) {
             // Store original state to restore later if needed
             overlaysToRestore.push({
               overlay: overlay,
               originalDisplay: overlay.style.display,
               originalVisibility: overlay.style.visibility,
-              originalOpacity: overlay.style.opacity
+              originalOpacity: overlay.style.opacity,
             });
-            
+
             // Make sure overlay is visible with proper styles
             overlay.style.display = "block";
             overlay.style.visibility = "visible";
@@ -1736,29 +1738,40 @@
             overlay.style.width = "100%";
             overlay.style.height = "100%";
             console.log(`💾 Overlay ${index} made visible before save`);
-            
+
             // Also ensure all element containers are visible
             const containers = overlay.querySelectorAll(".element-container");
             containers.forEach((container, cIdx) => {
               container.style.display = "block";
               container.style.visibility = "visible";
               container.style.opacity = "1";
-              console.log(`💾 Element container ${cIdx} in overlay ${index} made visible`);
+              console.log(
+                `💾 Element container ${cIdx} in overlay ${index} made visible`
+              );
             });
           }
         });
-        
+
         // Small delay to ensure DOM updates are applied
         setTimeout(() => {
           // Get the current HTML content
           const htmlContent = document.documentElement.outerHTML;
-          console.log(`💾 HTML content length: ${htmlContent.length} characters`);
-          
+          console.log(
+            `💾 HTML content length: ${htmlContent.length} characters`
+          );
+
           // Log a sample to verify elements are included
-          const hasElementContainers = htmlContent.includes("element-container");
-          const hasInteractiveOverlay = htmlContent.includes("interactive-overlay");
-          console.log(`💾 HTML contains element-container: ${hasElementContainers}`);
-          console.log(`💾 HTML contains interactive-overlay: ${hasInteractiveOverlay}`);
+          const hasElementContainers =
+            htmlContent.includes("element-container");
+          const hasInteractiveOverlay = htmlContent.includes(
+            "interactive-overlay"
+          );
+          console.log(
+            `💾 HTML contains element-container: ${hasElementContainers}`
+          );
+          console.log(
+            `💾 HTML contains interactive-overlay: ${hasInteractiveOverlay}`
+          );
 
           fetch(`/save_html/{{ filename }}`, {
             method: "POST",
@@ -1770,21 +1783,24 @@
               session_id: sessionId,
             }),
           })
-          .then((response) => response.json())
-          .then((data) => {
-            if (data.status === "success") {
-              savedHtmlFilename = data.html_filename;
-              document.getElementById("viewPdfBtn").style.display =
-                "inline-block";
-              console.log("💾 HTML saved successfully:", savedHtmlFilename);
-              // Don't show download button yet - only after user clicks View
-            } else {
-              showNotification("Error saving document: " + data.message, true);
-            }
-          })
-          .catch((error) => {
-            showNotification("Error saving document: " + error, true);
-          });
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.status === "success") {
+                savedHtmlFilename = data.html_filename;
+                document.getElementById("viewPdfBtn").style.display =
+                  "inline-block";
+                console.log("💾 HTML saved successfully:", savedHtmlFilename);
+                // Don't show download button yet - only after user clicks View
+              } else {
+                showNotification(
+                  "Error saving document: " + data.message,
+                  true
+                );
+              }
+            })
+            .catch((error) => {
+              showNotification("Error saving document: " + error, true);
+            });
         }, 100); // 100ms delay to ensure DOM updates
       }
 
@@ -2440,20 +2456,40 @@
             console.log("Generating PDF for preview:", filename);
 
             const pdfBlob = pdf.output("blob");
-            const url = URL.createObjectURL(pdfBlob);
+            
+            // Convert blob to data URL so it works across origins
+            const reader = new FileReader();
+            reader.onload = function() {
+              const dataUrl = reader.result;
+              console.log("✅ Converted blob to data URL for preview");
+              
+              // Send the PDF data URL to the parent component
+              window.parent.postMessage(
+                {
+                  type: "PDF_GENERATED_FOR_PREVIEW",
+                  pdfUrl: dataUrl,
+                  filename: filename,
+                },
+                "*"
+              );
 
-            // Send the PDF URL to the parent component
-            window.parent.postMessage(
-              {
-                type: "PDF_GENERATED_FOR_PREVIEW",
-                pdfUrl: url,
-                filename: filename,
-              },
-              "*"
-            );
-
-            console.log("PDF generated for preview successfully");
-            showNotification("PDF generated for preview!", false);
+              console.log("PDF generated for preview successfully");
+              showNotification("PDF generated for preview!", false);
+            };
+            reader.onerror = function(error) {
+              console.error("❌ Error reading blob:", error);
+              // Fallback: try using blob URL directly (might not work cross-origin)
+              const url = URL.createObjectURL(pdfBlob);
+              window.parent.postMessage(
+                {
+                  type: "PDF_GENERATED_FOR_PREVIEW",
+                  pdfUrl: url,
+                  filename: filename,
+                },
+                "*"
+              );
+            };
+            reader.readAsDataURL(pdfBlob);
           } else {
             // Download the PDF
             console.log("About to save PDF:", filename);
