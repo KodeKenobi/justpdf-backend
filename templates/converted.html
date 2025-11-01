@@ -2456,13 +2456,13 @@
             console.log("Generating PDF for preview:", filename);
 
             const pdfBlob = pdf.output("blob");
-            
+
             // Convert blob to data URL so it works across origins
             const reader = new FileReader();
-            reader.onload = function() {
+            reader.onload = function () {
               const dataUrl = reader.result;
               console.log("✅ Converted blob to data URL for preview");
-              
+
               // Send the PDF data URL to the parent component
               window.parent.postMessage(
                 {
@@ -2476,7 +2476,7 @@
               console.log("PDF generated for preview successfully");
               showNotification("PDF generated for preview!", false);
             };
-            reader.onerror = function(error) {
+            reader.onerror = function (error) {
               console.error("❌ Error reading blob:", error);
               // Fallback: try using blob URL directly (might not work cross-origin)
               const url = URL.createObjectURL(pdfBlob);
