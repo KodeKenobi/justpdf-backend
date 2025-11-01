@@ -1066,16 +1066,19 @@
             hasContent: page.innerHTML.trim().length > 0,
           });
 
+          // Check if we're in view mode (saved HTML being viewed in iframe)
+          const isViewMode = window.self !== window.top || window.location.pathname.includes('/view_html/');
+          
           // FORCE remove hidden class first - this is critical!
           const hasHiddenClass = page.classList.contains("hidden");
           if (hasHiddenClass && page.id && page.id.startsWith("page-")) {
-            // Check if this is the current visible page
+            // Check if this is the current visible page OR if we're in view mode
             const pageNum = parseInt(page.id.replace("page-", ""));
-            if (pageNum === currentPage) {
+            if (isViewMode || pageNum === currentPage) {
               console.log(
                 `🔍 FORCE REMOVING hidden class from page ${
                   index + 1
-                } (current page)`
+                } (${isViewMode ? 'view mode - all pages visible' : 'current page'})`
               );
               page.classList.remove("hidden");
               // Use setProperty with !important to override CSS rules
@@ -1086,7 +1089,7 @@
               page.style.removeProperty("height");
               page.style.removeProperty("overflow");
             } else {
-              // Skip hidden pages that are NOT the current page
+              // Skip hidden pages that are NOT the current page (only in edit mode)
               console.log(
                 `🔍 Skipping hidden page ${index + 1} (not current page)`
               );
@@ -1096,15 +1099,25 @@
             }
           } else if (hasHiddenClass && !page.id) {
             // Pages without IDs should be hidden (likely nested/duplicate pages)
-            console.log(`🔍 Skipping hidden page ${index + 1} (no ID)`);
-            page.style.setProperty("display", "none", "important");
-            page.style.setProperty("visibility", "hidden", "important");
-            return;
+            // UNLESS we're in view mode and it has content
+            if (isViewMode && page.innerHTML.trim().length > 100) {
+              // In view mode, show pages with content even if no ID
+              page.classList.remove("hidden");
+              page.style.setProperty("display", "block", "important");
+              page.style.setProperty("visibility", "visible", "important");
+              page.style.setProperty("opacity", "1", "important");
+            } else {
+              console.log(`🔍 Skipping hidden page ${index + 1} (no ID)`);
+              page.style.setProperty("display", "none", "important");
+              page.style.setProperty("visibility", "hidden", "important");
+              return;
+            }
           }
 
           // Ensure hidden class is removed for visible pages
           if (
             !hasHiddenClass ||
+            isViewMode ||
             (page.id &&
               page.id.startsWith("page-") &&
               parseInt(page.id.replace("page-", "")) === currentPage)
