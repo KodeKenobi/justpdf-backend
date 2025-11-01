@@ -1227,7 +1227,8 @@
           const isInIframe = windowSelf !== windowTop;
           const pathname = window.location.pathname;
           const pathIncludesViewHtml = pathname.includes("/view_html/");
-          const isViewMode = isInIframe || pathIncludesViewHtml;
+          // ONLY use pathname check - don't use isInIframe (editor also uses iframe)
+          const isViewMode = pathIncludesViewHtml;
 
           // Log view mode detection for this zoom call (only first page to avoid spam)
           if (index === 0) {
