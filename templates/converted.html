@@ -857,19 +857,39 @@
 
         // Check if we're in view mode (saved HTML being viewed in iframe)
         // In view mode, all pages should be visible
-        const isViewMode = window.self !== window.top || window.location.pathname.includes('/view_html/');
-        console.log("📄 Is view mode (all pages visible):", isViewMode);
+        const windowSelf = window.self;
+        const windowTop = window.top;
+        const isInIframe = windowSelf !== windowTop;
+        const pathname = window.location.pathname;
+        const pathIncludesViewHtml = pathname.includes("/view_html/");
+        const isViewMode = isInIframe || pathIncludesViewHtml;
         
+        console.log("📄 ========== VIEW MODE DETECTION ==========");
+        console.log("📄 window.self:", windowSelf);
+        console.log("📄 window.top:", windowTop);
+        console.log("📄 window.self !== window.top:", isInIframe);
+        console.log("📄 window.location.pathname:", pathname);
+        console.log("📄 pathname.includes('/view_html/'):", pathIncludesViewHtml);
+        console.log("📄 Is view mode (all pages visible):", isViewMode);
+        console.log("📄 window.location.href:", window.location.href);
+        console.log("📄 window.location.origin:", window.location.origin);
+        console.log("📄 window.parent === window:", window.parent === window);
+        console.log("📄 =========================================");
+
         // Ensure only the first page is visible on load - MUST run before changeZoom
         // BUT: In view mode, show ALL pages
         console.log("📄 ========== INITIALIZING PAGE VISIBILITY ==========");
         const allPages = document.querySelectorAll(".pdf-page");
         console.log("📄 Total pages found:", allPages.length);
+        console.log("📄 All page IDs:", Array.from(allPages).map(p => p.id || p.getAttribute("data-page") || "NO ID"));
+        console.log("📄 All page classes:", Array.from(allPages).map(p => p.className));
 
         allPages.forEach((page, index) => {
           const pageId = page.id || page.getAttribute("data-page");
-          const hasValidId = pageId && (pageId.startsWith("page-") || page.hasAttribute("data-page"));
-          
+          const hasValidId =
+            pageId &&
+            (pageId.startsWith("page-") || page.hasAttribute("data-page"));
+
           console.log(`📄 Processing page ${index + 1}:`, {
             id: page.id,
             hasContent: page.innerHTML.length,
@@ -881,12 +901,45 @@
           });
 
           // In view mode OR if page has valid ID, show it
-          if (isViewMode || hasValidId || index === 0) {
+          const shouldShowPage = isViewMode || hasValidId || index === 0;
+          console.log(`📄 Page ${index + 1} visibility decision:`, {
+            shouldShowPage,
+            isViewMode,
+            hasValidId,
+            isFirstPage: index === 0,
+            pageId,
+            reason: shouldShowPage 
+              ? (isViewMode ? "view mode" : hasValidId ? "valid ID" : "first page")
+              : "should hide"
+          });
+          
+          if (shouldShowPage) {
             // Show page - make absolutely sure it's visible with !important
+            console.log(`📄 Making page ${index + 1} (${pageId || 'no ID'}) visible`);
+            const beforeState = {
+              hasHiddenClass: page.classList.contains("hidden"),
+              display: window.getComputedStyle(page).display,
+              visibility: window.getComputedStyle(page).visibility,
+              opacity: window.getComputedStyle(page).opacity,
+              innerHTML: page.innerHTML.length
+            };
+            
             page.classList.remove("hidden");
             page.style.setProperty("display", "block", "important");
             page.style.setProperty("visibility", "visible", "important");
             page.style.setProperty("opacity", "1", "important");
+            
+            const afterState = {
+              hasHiddenClass: page.classList.contains("hidden"),
+              display: window.getComputedStyle(page).display,
+              visibility: window.getComputedStyle(page).visibility,
+              opacity: window.getComputedStyle(page).opacity,
+            };
+            
+            console.log(`📄 Page ${index + 1} state change:`, {
+              before: beforeState,
+              after: afterState
+            });
 
             // On mobile, ensure pages are properly initialized
             const isMobile = window.innerWidth <= 768;
@@ -903,7 +956,9 @@
             // CRITICAL: Remove hidden class from nested pdf-page divs inside the page
             const nestedPages = page.querySelectorAll(".pdf-page");
             console.log(
-              `📄 Found ${nestedPages.length} nested pdf-page divs inside page ${index + 1}`
+              `📄 Found ${
+                nestedPages.length
+              } nested pdf-page divs inside page ${index + 1}`
             );
             nestedPages.forEach((nestedPage, nestedIdx) => {
               if (nestedPage !== page) {
@@ -942,13 +997,30 @@
               }
             });
 
-            console.log(`📄 Page ${index + 1} - Final state:`, {
+            const finalState = {
               display: window.getComputedStyle(page).display,
               visibility: window.getComputedStyle(page).visibility,
               opacity: window.getComputedStyle(page).opacity,
               width: window.getComputedStyle(page).width,
               height: window.getComputedStyle(page).height,
               backgroundColor: window.getComputedStyle(page).backgroundColor,
+              boundingRect: page.getBoundingClientRect(),
+              scrollWidth: page.scrollWidth,
+              scrollHeight: page.scrollHeight,
+              clientWidth: page.clientWidth,
+              clientHeight: page.clientHeight,
+              offsetWidth: page.offsetWidth,
+              offsetHeight: page.offsetHeight,
+            };
+            
+            console.log(`📄 Page ${index + 1} - Final state:`, finalState);
+            console.log(`📄 Page ${index + 1} - Content summary:`, {
+              totalElements: page.querySelectorAll("*").length,
+              textElements: page.querySelectorAll(".text-span, .editable-text, .text-line").length,
+              images: page.querySelectorAll("img").length,
+              innerHTMLLength: page.innerHTML.length,
+              textContentLength: page.textContent?.length || 0,
+              hasSignificantContent: page.innerHTML.trim().length > 1000
             });
           } else if (!hasValidId && !isViewMode) {
             // Hide duplicate/nested pages without IDs (only in edit mode, not view mode)
@@ -1067,19 +1139,58 @@
           });
 
           // Check if we're in view mode (saved HTML being viewed in iframe)
-          const isViewMode = window.self !== window.top || window.location.pathname.includes('/view_html/');
+          const windowSelf = window.self;
+          const windowTop = window.top;
+          const isInIframe = windowSelf !== windowTop;
+          const pathname = window.location.pathname;
+          const pathIncludesViewHtml = pathname.includes("/view_html/");
+          const isViewMode = isInIframe || pathIncludesViewHtml;
           
+          // Log view mode detection for this zoom call (only first page to avoid spam)
+          if (index === 0) {
+            console.log("🔍 [ZOOM] VIEW MODE DETECTION:", {
+              isInIframe,
+              pathname,
+              pathIncludesViewHtml,
+              isViewMode,
+              href: window.location.href
+            });
+          }
+
           // FORCE remove hidden class first - this is critical!
           const hasHiddenClass = page.classList.contains("hidden");
           if (hasHiddenClass && page.id && page.id.startsWith("page-")) {
             // Check if this is the current visible page OR if we're in view mode
             const pageNum = parseInt(page.id.replace("page-", ""));
-            if (isViewMode || pageNum === currentPage) {
+            const shouldShowThisPage = isViewMode || pageNum === currentPage;
+            
+            console.log(`🔍 [ZOOM] Page ${index + 1} (page-${pageNum}) visibility check:`, {
+              pageNum,
+              currentPage,
+              isViewMode,
+              shouldShowThisPage,
+              reason: shouldShowThisPage 
+                ? (isViewMode ? "view mode" : "current page")
+                : "not current page"
+            });
+            
+            if (shouldShowThisPage) {
+              const beforeState = {
+                hasHiddenClass: page.classList.contains("hidden"),
+                display: window.getComputedStyle(page).display,
+                visibility: window.getComputedStyle(page).visibility,
+                opacity: window.getComputedStyle(page).opacity,
+                innerHTML: page.innerHTML.length
+              };
+              
               console.log(
-                `🔍 FORCE REMOVING hidden class from page ${
-                  index + 1
-                } (${isViewMode ? 'view mode - all pages visible' : 'current page'})`
+                `🔍 FORCE REMOVING hidden class from page ${index + 1} (${
+                  isViewMode ? "view mode - all pages visible" : "current page"
+                })`,
+                "Before state:",
+                beforeState
               );
+              
               page.classList.remove("hidden");
               // Use setProperty with !important to override CSS rules
               page.style.setProperty("display", "block", "important");
@@ -1088,10 +1199,28 @@
               page.style.removeProperty("width");
               page.style.removeProperty("height");
               page.style.removeProperty("overflow");
+              
+              const afterState = {
+                hasHiddenClass: page.classList.contains("hidden"),
+                display: window.getComputedStyle(page).display,
+                visibility: window.getComputedStyle(page).visibility,
+                opacity: window.getComputedStyle(page).opacity,
+              };
+              
+              console.log(`🔍 [ZOOM] Page ${index + 1} state after visibility fix:`, {
+                before: beforeState,
+                after: afterState,
+                boundingRect: page.getBoundingClientRect()
+              });
             } else {
               // Skip hidden pages that are NOT the current page (only in edit mode)
               console.log(
-                `🔍 Skipping hidden page ${index + 1} (not current page)`
+                `🔍 Skipping hidden page ${index + 1} (not current page, edit mode)`,
+                {
+                  pageNum,
+                  currentPage,
+                  isViewMode
+                }
               );
               page.style.setProperty("display", "none", "important");
               page.style.setProperty("visibility", "hidden", "important");
