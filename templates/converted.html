@@ -914,21 +914,46 @@
             hasValidId: hasValidId,
           });
 
-          // In view mode OR if page has valid ID, show it
-          const shouldShowPage = isViewMode || hasValidId || index === 0;
+          // In view mode: show all pages
+          // In edit mode: only show current page (page-1 is currentPage 1)
+          let shouldShowPage = false;
+          let reason = "should hide";
+          
+          if (isViewMode) {
+            // View mode: show all pages with valid IDs
+            shouldShowPage = hasValidId || index === 0;
+            reason = shouldShowPage ? "view mode" : "should hide";
+          } else {
+            // Edit mode: ONLY show current page
+            if (hasValidId) {
+              // Extract page number from ID (e.g., "page-1" -> 1, "1" -> 1)
+              let pageNum = null;
+              if (pageId && pageId.startsWith("page-")) {
+                pageNum = parseInt(pageId.replace("page-", ""));
+              } else if (pageId && !isNaN(parseInt(pageId))) {
+                pageNum = parseInt(pageId);
+              }
+              
+              // Show only if it's the current page OR it's the first page (index 0)
+              shouldShowPage = (pageNum !== null && pageNum === currentPage) || index === 0;
+              reason = shouldShowPage 
+                ? (index === 0 ? "first page (edit mode)" : `current page ${currentPage} (edit mode)`)
+                : `not current page (edit mode, current=${currentPage}, this=${pageNum})`;
+            } else if (index === 0) {
+              // First page even without ID
+              shouldShowPage = true;
+              reason = "first page (no ID)";
+            }
+          }
+          
           console.log(`📄 Page ${index + 1} visibility decision:`, {
             shouldShowPage,
             isViewMode,
             hasValidId,
             isFirstPage: index === 0,
             pageId,
-            reason: shouldShowPage
-              ? isViewMode
-                ? "view mode"
-                : hasValidId
-                ? "valid ID"
-                : "first page"
-              : "should hide",
+            currentPage,
+            reason,
           });
 
           if (shouldShowPage) {
