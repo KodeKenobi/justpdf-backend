@@ -918,34 +918,42 @@
           // In edit mode: only show current page (page-1 is currentPage 1)
           let shouldShowPage = false;
           let reason = "should hide";
-          
+
           if (isViewMode) {
             // View mode: show all pages with valid IDs
             shouldShowPage = hasValidId || index === 0;
             reason = shouldShowPage ? "view mode" : "should hide";
           } else {
             // Edit mode: ONLY show current page
-            if (hasValidId) {
-              // Extract page number from ID (e.g., "page-1" -> 1, "1" -> 1)
-              let pageNum = null;
-              if (pageId && pageId.startsWith("page-")) {
-                pageNum = parseInt(pageId.replace("page-", ""));
-              } else if (pageId && !isNaN(parseInt(pageId))) {
-                pageNum = parseInt(pageId);
-              }
-              
+            // Only check pages with IDs starting with "page-" (main pages)
+            // Pages with just numeric IDs ("1", "2", etc.) are duplicates/nested and should be hidden
+            if (hasValidId && pageId && pageId.startsWith("page-")) {
+              // Extract page number from ID (e.g., "page-1" -> 1)
+              const pageNum = parseInt(pageId.replace("page-", ""));
+
               // Show only if it's the current page OR it's the first page (index 0)
-              shouldShowPage = (pageNum !== null && pageNum === currentPage) || index === 0;
-              reason = shouldShowPage 
-                ? (index === 0 ? "first page (edit mode)" : `current page ${currentPage} (edit mode)`)
+              shouldShowPage =
+                (pageNum !== null && pageNum === currentPage) || index === 0;
+              reason = shouldShowPage
+                ? index === 0
+                  ? "first page (edit mode)"
+                  : `current page ${currentPage} (edit mode)`
                 : `not current page (edit mode, current=${currentPage}, this=${pageNum})`;
+            } else if (hasValidId && !pageId.startsWith("page-")) {
+              // Pages with numeric-only IDs ("1", "2", etc.) are duplicates - hide them in edit mode
+              shouldShowPage = false;
+              reason = `duplicate/nested page (edit mode, ID=${pageId})`;
             } else if (index === 0) {
               // First page even without ID
               shouldShowPage = true;
               reason = "first page (no ID)";
+            } else {
+              // No valid ID and not first page - hide
+              shouldShowPage = false;
+              reason = "no valid ID and not first page (edit mode)";
             }
           }
-          
+
           console.log(`📄 Page ${index + 1} visibility decision:`, {
             shouldShowPage,
             isViewMode,
