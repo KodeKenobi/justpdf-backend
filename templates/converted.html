@@ -1294,13 +1294,14 @@
                 }
               );
               // Keep in DOM but hide visually - position off-screen
+              // Still process zoom for this page (keep it rendered) but make invisible
               page.style.setProperty("visibility", "hidden", "important");
               page.style.setProperty("opacity", "0", "important");
               page.style.setProperty("position", "absolute", "important");
               page.style.setProperty("left", "-9999px", "important");
               page.style.setProperty("top", "0", "important");
               // DON'T use display: none - keep it rendered for instant switching
-              return;
+              // Continue processing zoom for this page (don't return) so it stays ready
             }
           } else if (hasHiddenClass && !page.id) {
             // Pages without IDs should be hidden (likely nested/duplicate pages)
