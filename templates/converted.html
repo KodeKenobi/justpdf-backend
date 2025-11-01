@@ -9,6 +9,16 @@
     />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="format-detection" content="telephone=no" />
     <style>
       html,
       body {
@@ -35,18 +45,19 @@
         margin: 0;
         padding: 60px 20px 20px;
         display: flex;
-        justify-content: center;
+        justify-content: flex-start; /* Changed from center to allow edge scrolling */
         align-items: flex-start;
         box-sizing: border-box;
         position: relative;
+        scroll-behavior: smooth;
       }
 
       .pdf-page {
         position: relative;
-        margin: 0 auto;
+        margin: 0; /* Changed from auto to 0 to allow edge positioning */
         background: white;
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
-        transform-origin: center top;
+        transform-origin: top left; /* Changed from center top to prevent side cropping */
         width: auto;
         height: auto;
         min-height: 842px; /* Default A4 height to ensure content area exists */
@@ -62,24 +73,138 @@
         overflow: hidden !important;
       }
 
-      /* Mobile-specific styles */
+      /* Mobile-specific styles - Enhanced for better mobile experience */
       @media (max-width: 768px) {
         html,
         body {
           display: block;
           justify-content: unset;
           align-items: unset;
+          -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+          overflow-x: hidden;
+          width: 100%;
+          height: 100%;
+          position: fixed; /* Prevent bounce scrolling on iOS */
+          touch-action: pan-x pan-y pinch-zoom; /* Better touch handling */
         }
 
         .pdf-container {
           margin: 0;
+          padding: 0 !important; /* No padding to allow edge-to-edge scrolling */
+          width: 100vw !important;
+          min-width: 100vw !important;
+          height: 100vh !important;
+          min-height: 100vh !important;
+          max-height: 100vh !important; /* Prevent overflow */
           border-radius: 0;
           box-shadow: none;
+          overflow-x: auto;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          position: relative;
+          box-sizing: border-box;
+          /* Ensure content can scroll fully when zoomed */
+          scroll-behavior: smooth;
+          /* Use block layout instead of flex - we'll handle centering manually */
+          display: block !important;
         }
 
         .pdf-page {
-          margin: 0;
-          box-shadow: none;
+          margin: 15px 0 !important; /* No auto margins - we'll center via positioning */
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+          width: 595px !important; /* Keep original width for scaling reference */
+          max-width: none !important; /* Allow full width scaling */
+          min-width: 595px !important;
+          height: auto !important;
+          min-height: auto !important;
+          transform-origin: 0 0 !important; /* Scale from top-left - we'll translate to center */
+          /* Don't set transform here - let JavaScript handle it for better mobile support */
+          margin-bottom: 15px; /* Better spacing between pages */
+          box-sizing: border-box;
+          will-change: transform; /* Optimize for animations */
+          /* Ensure page is visible on mobile */
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          position: relative; /* Allow positioning adjustments */
+        }
+
+        /* Ensure first page is visible on mobile */
+        .pdf-page:first-of-type:not(.hidden),
+        .pdf-page[id^="page-"]:not(.hidden) {
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+
+        /* Ensure text is readable on mobile */
+        .text-span,
+        .editable-text {
+          -webkit-text-size-adjust: 100%;
+          text-size-adjust: 100%;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* Make interactive elements touch-friendly */
+        .element-delete-btn {
+          width: 32px !important;
+          height: 32px !important;
+          top: -12px !important;
+          right: -12px !important;
+          font-size: 18px !important;
+          /* Larger touch target */
+        }
+
+        .text-element {
+          min-width: 60px !important;
+          min-height: 32px !important;
+          padding: 4px !important;
+          font-size: 16px !important; /* Prevent zoom on iOS input focus */
+        }
+
+        /* Better button sizing for mobile */
+        button {
+          min-height: 44px !important; /* iOS recommended touch target */
+          min-width: 44px !important;
+          font-size: 16px !important;
+          touch-action: manipulation; /* Remove click delay */
+        }
+      }
+
+      /* Extra small mobile devices */
+      @media (max-width: 480px) {
+        .pdf-container {
+          padding: 10px 8px !important; /* Better padding for small screens */
+        }
+
+        .pdf-page {
+          /* Let JavaScript handle transform for better control */
+          margin-bottom: 12px; /* Better spacing */
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+        }
+
+        .text-element {
+          min-width: 50px !important;
+          min-height: 28px !important;
+          font-size: 14px !important;
+        }
+      }
+
+      /* Landscape mobile */
+      @media (max-width: 768px) and (orientation: landscape) {
+        .pdf-container {
+          padding: 5px 10px !important;
+        }
+
+        .pdf-page {
+          /* Let JavaScript handle transform for better control */
+          max-width: calc(100vw - 20px) !important;
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
         }
       }
 
@@ -750,6 +875,18 @@
             page.style.setProperty("visibility", "visible", "important");
             page.style.setProperty("opacity", "1", "important");
 
+            // On mobile, ensure pages are properly initialized
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+              console.log("📱 Mobile detected during initialization");
+              // Force visibility - critical for mobile
+              page.style.setProperty("display", "block", "important");
+              page.style.setProperty("visibility", "visible", "important");
+              page.style.setProperty("opacity", "1", "important");
+              // Remove any conflicting transforms - changeZoom will set it correctly
+              page.style.removeProperty("transform");
+            }
+
             // CRITICAL: Remove hidden class from nested pdf-page divs inside the first page
             const nestedPages = page.querySelectorAll(".pdf-page");
             console.log(
@@ -859,13 +996,50 @@
         return 1.0;
       }
 
+      // Helper function to detect mobile device
+      function isMobileDevice() {
+        return (
+          window.innerWidth <= 768 ||
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+          )
+        );
+      }
+
+      // Helper function to calculate mobile scale
+      function getMobileScale(pageWidth) {
+        const viewportWidth = window.innerWidth;
+        const baseWidth = pageWidth || 595; // Default A4 width
+        return viewportWidth / baseWidth;
+      }
+
       function changeZoom(zoom) {
         currentZoom = zoom;
-        // Use zoom directly without fit-to-viewport scaling
-        const totalScale = zoom; // zoom is already a decimal (1.0 = 100%)
+
+        // Detect if we're on mobile
+        const isMobile = isMobileDevice();
+
+        // Use zoom directly without fit-to-viewport scaling on desktop
+        // On mobile, apply base mobile scaling first, then zoom on top
+        let totalScale = zoom; // zoom is already a decimal (1.0 = 100%)
+
+        if (isMobile) {
+          // On mobile, CSS handles the base scaling, but we still apply zoom multiplier
+          // The CSS transform: scale() will be combined with our zoom
+          console.log(
+            "📱 Mobile device detected, applying mobile-optimized scaling"
+          );
+        }
 
         console.log("🔍 ========== APPLYING ZOOM ==========");
-        console.log("🔍 Zoom value:", zoom, "Total scale:", totalScale);
+        console.log(
+          "🔍 Zoom value:",
+          zoom,
+          "Total scale:",
+          totalScale,
+          "isMobile:",
+          isMobile
+        );
 
         // Only apply zoom to visible (non-hidden) pages
         const pages = document.querySelectorAll(".pdf-page");
@@ -965,11 +1139,22 @@
           );
 
           // Set explicit dimensions to ensure container exists for absolutely positioned content
+          // On mobile, keep original dimensions for proper scaling calculation
           page.style.width = pageWidth + "px";
           page.style.height = pageHeight + "px";
           page.style.minWidth = pageWidth + "px";
           page.style.minHeight = pageHeight + "px";
           page.style.position = "relative"; // Critical for absolutely positioned children
+
+          // Mobile-specific dimension handling
+          if (isMobile) {
+            // Ensure dimensions are set correctly for mobile scaling
+            page.style.setProperty("width", pageWidth + "px", "important");
+            page.style.setProperty("height", pageHeight + "px", "important");
+            console.log(
+              `📱 Mobile: Set page dimensions to ${pageWidth}x${pageHeight}`
+            );
+          }
 
           // Check for content BEFORE making it visible
           const allContent = page.querySelectorAll("*");
@@ -1046,9 +1231,369 @@
             );
           }
 
-          // Apply zoom scale - center horizontally, top vertically
-          page.style.transform = `scale(${totalScale})`;
-          page.style.transformOrigin = "center top";
+          // Apply zoom scale - handle mobile differently
+          if (isMobile) {
+            // On mobile, ALWAYS calculate and apply transform via JavaScript
+            // This ensures consistent behavior across all mobile browsers
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const isLandscape = window.innerWidth > window.innerHeight;
+
+            // No padding on mobile to allow edge-to-edge scrolling
+            // The page margin handles spacing
+            let padding = 0;
+
+            // Calculate base scale - fit to width but make it larger and more readable
+            // Use full viewport width for better fit and scrolling
+            const availableWidth = viewportWidth;
+
+            // Calculate scale to fit width, but ensure it's readable (larger than before)
+            let baseMobileScale = availableWidth / pageWidth;
+
+            // Calculate scale to fit height as well (for better use of vertical space)
+            const availableHeight = viewportHeight;
+            const heightScale = availableHeight / pageHeight;
+
+            // Use the smaller of width/height scale to fit the page, but ensure readability
+            // Then add a multiplier to make it larger and more readable
+            let fitScale = Math.min(baseMobileScale, heightScale);
+
+            // Make documents larger on mobile - multiply by 1.2 to 1.5x for better readability
+            // Small screens get more boost
+            const readabilityMultiplier = viewportWidth <= 480 ? 1.4 : 1.2;
+            baseMobileScale = fitScale * readabilityMultiplier;
+
+            // Ensure minimum readable scale - increased from 0.3 to 0.8 for better readability
+            // This prevents documents from being too tiny
+            const minReadableScale = 0.8; // Minimum 80% of original size (much more readable)
+            baseMobileScale = Math.max(minReadableScale, baseMobileScale);
+
+            // Cap maximum scale to prevent overflow
+            baseMobileScale = Math.min(2.5, baseMobileScale); // Slightly reduced max to prevent issues
+
+            // Apply user zoom on top of base scale
+            const combinedScale = baseMobileScale * totalScale;
+
+            // Calculate the scaled width and height
+            const scaledWidth = pageWidth * combinedScale;
+            const scaledHeight = pageHeight * combinedScale;
+
+            // Calculate the position to center the scaled page
+            // After scaling from (0,0), the page's visual center is at (pageWidth/2 * scale) from the left
+            // We want this visual center to align with the viewport center
+            const pageCenter = pageWidth / 2;
+            const visualCenterAfterScale = pageCenter * combinedScale;
+            const viewportCenter = viewportWidth / 2;
+
+            // Get page position BEFORE transform to understand initial layout
+            const pageRectBefore = page.getBoundingClientRect();
+            const pageComputedBefore = window.getComputedStyle(page);
+            const pageInitialLeft = pageRectBefore.left;
+            const pageInitialWidth = pageRectBefore.width;
+
+            // Calculate translateX: We need to center the SCALED page in the viewport
+            //
+            // Transform process:
+            // 1. Page starts at position pageInitialLeft (e.g., 8px due to container padding)
+            // 2. We apply scale(combinedScale) from origin (0,0) - page scales but stays at same position
+            // 3. After scaling, visual width = scaledWidth, but element position unchanged
+            // 4. The center of the SCALED page is at: pageInitialLeft + (scaledWidth / 2)
+            // 5. We want this center to be at: viewportCenter
+            // 6. So translateX = viewportCenter - [pageInitialLeft + (scaledWidth / 2)]
+            //    Simplifying: translateX = viewportCenter - pageInitialLeft - (scaledWidth / 2)
+            //
+            // Note: translate() moves the element in its own coordinate space
+            // But we're calculating in viewport coordinates, so we need to account for initial position
+            const translateX =
+              viewportCenter - pageInitialLeft - scaledWidth / 2;
+
+            // Apply transform: scale first (from top-left), then translate to center
+            // CSS transforms apply right-to-left: translate() scale() means scale first, then translate
+            page.style.setProperty(
+              "transform",
+              `translate(${translateX}px, 0) scale(${combinedScale})`,
+              "important"
+            );
+            page.style.transformOrigin = "0 0"; // Scale from top-left, we handle centering via translate
+
+            // Get bounding box info AFTER applying transform
+            const pageRectAfter = page.getBoundingClientRect();
+            const pageComputedAfter = window.getComputedStyle(page);
+
+            // Ensure the container can scroll to show the full scaled content
+            // The container needs to be wide enough to contain the scaled page
+            const container = document.querySelector(".pdf-container");
+            let containerRect = null;
+            let containerComputed = null;
+            if (container) {
+              // FORCE remove all padding - remove from style AND computed styles
+              container.style.padding = "0";
+              container.style.paddingTop = "0";
+              container.style.paddingRight = "0";
+              container.style.paddingBottom = "0";
+              container.style.paddingLeft = "0";
+              container.style.setProperty("padding", "0", "important");
+              container.style.setProperty("padding-top", "0", "important");
+              container.style.setProperty("padding-right", "0", "important");
+              container.style.setProperty("padding-bottom", "0", "important");
+              container.style.setProperty("padding-left", "0", "important");
+
+              // Force margin to 0 as well
+              container.style.margin = "0";
+              container.style.setProperty("margin", "0", "important");
+
+              // Use block layout
+              container.style.display = "block";
+              container.style.setProperty("display", "block", "important");
+
+              // Allow scrolling edge to edge
+              container.style.overflowX = "auto";
+              container.style.overflowY = "auto";
+              container.style.setProperty("overflow-x", "auto", "important");
+              container.style.setProperty("overflow-y", "auto", "important");
+
+              // Re-measure after removing padding
+              const containerRectAfter = container.getBoundingClientRect();
+              const pageRectAfterPaddingRemoved = page.getBoundingClientRect();
+
+              // Recalculate translateX with actual position after padding removal
+              const actualPageLeft = pageRectAfterPaddingRemoved.left;
+              const correctedTranslateX =
+                viewportCenter - actualPageLeft - scaledWidth / 2;
+
+              // Update transform if needed
+              if (Math.abs(correctedTranslateX - translateX) > 0.5) {
+                console.log(
+                  `⚠️ Recalculating translateX: ${translateX.toFixed(
+                    1
+                  )} -> ${correctedTranslateX.toFixed(1)}`
+                );
+                page.style.setProperty(
+                  "transform",
+                  `translate(${correctedTranslateX}px, 0) scale(${combinedScale})`,
+                  "important"
+                );
+              }
+
+              // Calculate container width needed to show full scaled page
+              const finalTranslateX =
+                Math.abs(correctedTranslateX - translateX) > 0.5
+                  ? correctedTranslateX
+                  : translateX;
+              const pageLeftAfterTransform = finalTranslateX;
+              const pageRightAfterTransform = finalTranslateX + scaledWidth;
+
+              // Container needs to be wide enough to contain the full scaled page
+              const minContainerWidth = Math.max(
+                viewportWidth,
+                Math.max(0, pageRightAfterTransform), // Right edge (if positive)
+                Math.abs(Math.min(0, pageLeftAfterTransform)) + scaledWidth // If page extends left, account for full width
+              );
+
+              container.style.minWidth = `${minContainerWidth}px`;
+              container.style.setProperty(
+                "min-width",
+                `${minContainerWidth}px`,
+                "important"
+              );
+
+              // Force container to scroll to show left edge if it's off-screen
+              // Use setTimeout to ensure all style changes are applied
+              setTimeout(() => {
+                const finalRect = page.getBoundingClientRect();
+                const containerScrollRect = container.getBoundingClientRect();
+                if (finalRect.left < containerScrollRect.left) {
+                  // Page extends left of container, scroll to show it
+                  const scrollAmount = Math.abs(
+                    finalRect.left - containerScrollRect.left
+                  );
+                  container.scrollLeft = Math.max(0, scrollAmount);
+                  console.log(
+                    `📜 Auto-scrolled container by ${scrollAmount.toFixed(
+                      1
+                    )}px to show left edge`
+                  );
+                }
+              }, 0);
+
+              containerRect = container.getBoundingClientRect();
+              containerComputed = window.getComputedStyle(container);
+            }
+
+            // EXTENSIVE LOGGING
+            console.log(
+              "═══════════════════════════════════════════════════════════"
+            );
+            console.log(`🔍 PAGE ${index + 1} - MOBILE ZOOM CALCULATION`);
+            console.log(
+              "═══════════════════════════════════════════════════════════"
+            );
+            console.log("📐 VIEWPORT:");
+            console.log(`   Width: ${viewportWidth}px`);
+            console.log(`   Height: ${viewportHeight}px`);
+            console.log(`   Center X: ${viewportCenter.toFixed(1)}px`);
+            console.log(`   Landscape: ${isLandscape}`);
+            console.log("");
+            console.log("📄 ORIGINAL PAGE DIMENSIONS:");
+            console.log(`   Width: ${pageWidth}px`);
+            console.log(`   Height: ${pageHeight}px`);
+            console.log(`   Center X: ${pageCenter.toFixed(1)}px`);
+            console.log("");
+            console.log("🔢 SCALE CALCULATIONS:");
+            console.log(`   Available Width: ${availableWidth}px`);
+            console.log(`   Available Height: ${availableHeight}px`);
+            console.log(`   Base Mobile Scale: ${baseMobileScale.toFixed(4)}`);
+            console.log(`   Height Scale: ${heightScale.toFixed(4)}`);
+            console.log(`   Fit Scale: ${fitScale.toFixed(4)}`);
+            console.log(`   Readability Multiplier: ${readabilityMultiplier}`);
+            console.log(`   Min Readable Scale: ${minReadableScale}`);
+            console.log(
+              `   User Zoom (totalScale): ${totalScale.toFixed(4)} (${(
+                totalScale * 100
+              ).toFixed(1)}%)`
+            );
+            console.log(`   Combined Scale: ${combinedScale.toFixed(4)}`);
+            console.log("");
+            console.log("📏 SCALED PAGE DIMENSIONS:");
+            console.log(`   Scaled Width: ${scaledWidth.toFixed(1)}px`);
+            console.log(`   Scaled Height: ${scaledHeight.toFixed(1)}px`);
+            console.log(
+              `   Visual Center After Scale: ${visualCenterAfterScale.toFixed(
+                1
+              )}px`
+            );
+            console.log("");
+            console.log("📍 POSITIONING:");
+            console.log(
+              `   Page Initial Left: ${pageInitialLeft.toFixed(1)}px`
+            );
+            console.log(
+              `   Page Initial Width: ${pageInitialWidth.toFixed(1)}px`
+            );
+            console.log(`   Scaled Width: ${scaledWidth.toFixed(1)}px`);
+            console.log(`   Scaled Center: ${(scaledWidth / 2).toFixed(1)}px`);
+            console.log(`   Viewport Center: ${viewportCenter.toFixed(1)}px`);
+            console.log(
+              `   Calculation: translateX = ${viewportCenter.toFixed(
+                1
+              )} - ${pageInitialLeft.toFixed(1)} - ${(scaledWidth / 2).toFixed(
+                1
+              )}`
+            );
+            console.log(`   Translate X: ${translateX.toFixed(1)}px`);
+            console.log(
+              `   Transform: translate(${translateX.toFixed(
+                1
+              )}px, 0) scale(${combinedScale.toFixed(4)})`
+            );
+            console.log(`   Transform Origin: 0 0 (top-left)`);
+            console.log(
+              `   Expected Scaled Center Position: ${(
+                pageInitialLeft +
+                scaledWidth / 2 +
+                translateX
+              ).toFixed(1)}px`
+            );
+            console.log(
+              `   Expected Left After Transform: ${(
+                pageInitialLeft + translateX
+              ).toFixed(1)}px`
+            );
+            console.log(
+              `   Expected Right After Transform: ${(
+                pageInitialLeft +
+                translateX +
+                scaledWidth
+              ).toFixed(1)}px`
+            );
+            console.log("");
+            console.log("👁️ VISIBILITY & POSITION (BEFORE):");
+            console.log(`   Display: ${pageComputedBefore.display}`);
+            console.log(`   Visibility: ${pageComputedBefore.visibility}`);
+            console.log(`   Opacity: ${pageComputedBefore.opacity}`);
+            console.log(`   Left: ${pageRectBefore.left.toFixed(1)}px`);
+            console.log(`   Top: ${pageRectBefore.top.toFixed(1)}px`);
+            console.log(`   Width: ${pageRectBefore.width.toFixed(1)}px`);
+            console.log(`   Height: ${pageRectBefore.height.toFixed(1)}px`);
+            console.log(`   Right: ${pageRectBefore.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${pageRectBefore.bottom.toFixed(1)}px`);
+            console.log("");
+            console.log("👁️ VISIBILITY & POSITION (AFTER):");
+            console.log(`   Display: ${pageComputedAfter.display}`);
+            console.log(`   Visibility: ${pageComputedAfter.visibility}`);
+            console.log(`   Opacity: ${pageComputedAfter.opacity}`);
+            console.log(`   Transform: ${pageComputedAfter.transform}`);
+            console.log(`   Left: ${pageRectAfter.left.toFixed(1)}px`);
+            console.log(`   Top: ${pageRectAfter.top.toFixed(1)}px`);
+            console.log(`   Width: ${pageRectAfter.width.toFixed(1)}px`);
+            console.log(`   Height: ${pageRectAfter.height.toFixed(1)}px`);
+            console.log(`   Right: ${pageRectAfter.right.toFixed(1)}px`);
+            console.log(`   Bottom: ${pageRectAfter.bottom.toFixed(1)}px`);
+            console.log("");
+            console.log("🔍 CROP DETECTION:");
+            const leftVisible = pageRectAfter.left >= 0;
+            const rightVisible = pageRectAfter.right <= viewportWidth;
+            const fullyVisible = leftVisible && rightVisible;
+            const leftCropAmount =
+              pageRectAfter.left < 0 ? Math.abs(pageRectAfter.left) : 0;
+            const rightCropAmount =
+              pageRectAfter.right > viewportWidth
+                ? pageRectAfter.right - viewportWidth
+                : 0;
+            console.log(
+              `   Left Edge Visible: ${leftVisible} (${pageRectAfter.left.toFixed(
+                1
+              )}px from left)`
+            );
+            console.log(
+              `   Right Edge Visible: ${rightVisible} (${pageRectAfter.right.toFixed(
+                1
+              )}px from left)`
+            );
+            console.log(`   Fully Visible: ${fullyVisible}`);
+            console.log(`   Left Crop: ${leftCropAmount.toFixed(1)}px`);
+            console.log(`   Right Crop: ${rightCropAmount.toFixed(1)}px`);
+            console.log(
+              `   Centered: ${
+                Math.abs(
+                  pageRectAfter.left + pageRectAfter.width / 2 - viewportCenter
+                ) < 1
+                  ? "YES ✅"
+                  : "NO ❌"
+              }`
+            );
+            console.log("");
+            if (container) {
+              console.log("📦 CONTAINER:");
+              console.log(`   Display: ${containerComputed.display}`);
+              console.log(`   Padding: ${containerComputed.padding}`);
+              console.log(`   Min-Width: ${containerComputed.minWidth}`);
+              console.log(`   Width: ${containerRect.width.toFixed(1)}px`);
+              console.log(`   Height: ${containerRect.height.toFixed(1)}px`);
+              console.log(`   Scroll Width: ${container.scrollWidth}px`);
+              console.log(`   Scroll Height: ${container.scrollHeight}px`);
+              console.log(`   Scroll Left: ${container.scrollLeft}px`);
+              console.log(`   Scroll Top: ${container.scrollTop}px`);
+              console.log(`   Overflow X: ${containerComputed.overflowX}`);
+              console.log(`   Overflow Y: ${containerComputed.overflowY}`);
+            }
+            console.log(
+              "═══════════════════════════════════════════════════════════"
+            );
+            console.log("");
+          } else {
+            // Desktop: normal scaling with center origin
+            page.style.transform = `scale(${totalScale})`;
+            page.style.transformOrigin = "center top";
+
+            // Adjust container padding when zoomed on desktop too
+            const container = document.querySelector(".pdf-container");
+            if (container && totalScale > 1.0) {
+              const currentPadding =
+                parseFloat(window.getComputedStyle(container).padding) || 20;
+              container.style.padding = `${Math.max(10, currentPadding / 2)}px`;
+            }
+          }
 
           // Ensure page is visible and properly displayed - use !important
           page.style.setProperty("display", "block", "important");
@@ -1599,10 +2144,13 @@
 
         isGeneratingPDF = true;
 
-        // Declare variables outside try block so they're accessible in catch
+        // Declare variables outside try block so they're accessible in catch/finally
         let pagesToProcess = [];
         let originalDisplays = [];
         let originalZoom = currentZoom;
+        let elementContainers = [];
+        let originalBorders = [];
+        let originalHandles = [];
 
         try {
           // Only update download button if not in preview mode
@@ -1626,17 +2174,70 @@
           await new Promise((resolve) => setTimeout(resolve, 500));
 
           // Use only the actual PDF pages (not nested elements)
-          const totalPages = parseInt("4");
+          // Use the global totalPages variable, not a hardcoded value
           pagesToProcess = [];
           originalDisplays = [];
 
-          // Get only the main page containers
+          // Get only the main page containers with valid IDs
+          // CRITICAL: Hide all pages without IDs first (these are duplicate/nested pages)
+          const allPagesWithoutIds = document.querySelectorAll(
+            ".pdf-page:not([id]), .pdf-page[id='']"
+          );
+          allPagesWithoutIds.forEach((page) => {
+            page.style.display = "none";
+            page.style.visibility = "hidden";
+            page.style.opacity = "0";
+            console.log("🚫 Hiding page without ID for PDF generation:", page);
+          });
+
+          // Wait a moment for hidden pages to be processed
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
+          // Now get only pages with valid IDs
           for (let i = 1; i <= totalPages; i++) {
             const page = document.getElementById(`page-${i}`);
-            if (page) {
+            if (page && page.id && page.id.startsWith("page-")) {
               originalDisplays[i - 1] = page.style.display;
               page.style.display = "block";
+              page.style.visibility = "visible";
+              page.style.opacity = "1";
+
+              // CRITICAL: Hide nested pdf-page divs inside this page
+              const nestedPages = page.querySelectorAll(".pdf-page");
+              nestedPages.forEach((nestedPage) => {
+                if (nestedPage !== page) {
+                  nestedPage.style.display = "none";
+                  nestedPage.style.visibility = "hidden";
+                  nestedPage.style.opacity = "0";
+                }
+              });
+
+              // Ensure page has proper dimensions
+              const pageWidth =
+                parseFloat(page.getAttribute("data-width")) || 595;
+              const pageHeight =
+                parseFloat(page.getAttribute("data-height")) || 842;
+
+              // Set explicit dimensions to ensure html2canvas can capture it
+              page.style.width = pageWidth + "px";
+              page.style.height = pageHeight + "px";
+              page.style.minWidth = pageWidth + "px";
+              page.style.minHeight = pageHeight + "px";
+
+              // Reset transform for PDF generation (use scale 1.0)
+              page.style.transform = "scale(1)";
+              page.style.transformOrigin = "top left";
+
               pagesToProcess.push(page);
+              console.log(`📄 Added page ${i} to PDF generation:`, {
+                id: page.id,
+                width: pageWidth,
+                height: pageHeight,
+                offsetWidth: page.offsetWidth,
+                offsetHeight: page.offsetHeight,
+              });
+            } else {
+              console.warn(`⚠️ Page ${i} not found or has invalid ID:`, page);
             }
           }
 
@@ -1644,10 +2245,11 @@
           await new Promise((resolve) => setTimeout(resolve, 200));
 
           // Hide borders and UI elements for clean PDF generation
-          const elementContainers =
-            document.querySelectorAll(".element-container");
-          const originalBorders = [];
-          const originalHandles = [];
+          elementContainers = Array.from(
+            document.querySelectorAll(".element-container")
+          );
+          originalBorders = [];
+          originalHandles = [];
 
           elementContainers.forEach((container, index) => {
             // Store original border
@@ -1673,30 +2275,79 @@
           for (let i = 0; i < pagesToProcess.length; i++) {
             const page = pagesToProcess[i];
 
+            // Get page dimensions from data attributes (more reliable than offsetWidth/offsetHeight)
+            const pdfPageWidth =
+              parseFloat(page.getAttribute("data-width")) || 595;
+            const pdfPageHeight =
+              parseFloat(page.getAttribute("data-height")) || 842;
+
+            // Ensure page is visible and has dimensions before capture
+            page.style.display = "block";
+            page.style.visibility = "visible";
+            page.style.opacity = "1";
+            page.style.width = pdfPageWidth + "px";
+            page.style.height = pdfPageHeight + "px";
+
+            // Use actual page dimensions, not offsetWidth which might be 0 due to transforms
+            const captureWidth = pdfPageWidth;
+            const captureHeight = pdfPageHeight;
+
+            console.log(`📸 Capturing page ${i + 1}:`, {
+              id: page.id,
+              pageWidth: pdfPageWidth,
+              pageHeight: pdfPageHeight,
+              captureWidth,
+              captureHeight,
+              offsetWidth: page.offsetWidth,
+              offsetHeight: page.offsetHeight,
+            });
+
             // Capture the page as canvas
+            // CRITICAL: Only capture if page has valid dimensions
+            if (captureWidth <= 0 || captureHeight <= 0) {
+              console.error(`❌ Skipping page ${i + 1} - invalid dimensions:`, {
+                id: page.id,
+                captureWidth,
+                captureHeight,
+              });
+              continue; // Skip this page
+            }
+
             const canvas = await html2canvas(page, {
               scale: 2, // Higher quality
               useCORS: true,
               allowTaint: true,
               backgroundColor: "#ffffff",
-              width: page.offsetWidth,
-              height: page.offsetHeight,
+              width: captureWidth,
+              height: captureHeight,
             });
 
             // Convert canvas to image
             const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+            // Validate canvas dimensions
+            if (!canvas || canvas.width === 0 || canvas.height === 0) {
+              console.error(`Invalid canvas for page ${i + 1}:`, canvas);
+              throw new Error(`Failed to capture page ${i + 1}`);
+            }
 
             // Calculate dimensions to fit A4 page
             const imgWidth = 210; // A4 width in mm
             const pageHeight = 297; // A4 height in mm
             const imgHeight = (canvas.height * imgWidth) / canvas.width;
 
+            // Validate calculated dimensions
+            if (!isFinite(imgHeight) || imgHeight <= 0 || imgHeight > 1000) {
+              console.error(`Invalid imgHeight for page ${i + 1}:`, imgHeight);
+              throw new Error(`Invalid image dimensions for page ${i + 1}`);
+            }
+
             // Add new page if not the first page
             if (i > 0) {
               pdf.addPage();
             }
 
-            // Add image to PDF
+            // Add image to PDF with validated dimensions
             pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, imgHeight);
           }
 
@@ -1778,15 +2429,23 @@
           }
 
           // Restore borders and handles after PDF generation
-          elementContainers.forEach((container, index) => {
-            // Restore original border
-            container.style.border = originalBorders[index];
-          });
+          if (elementContainers && elementContainers.length > 0) {
+            elementContainers.forEach((container, index) => {
+              // Restore original border
+              if (originalBorders && originalBorders[index] !== undefined) {
+                container.style.border = originalBorders[index];
+              }
+            });
+          }
 
           // Restore handles
-          originalHandles.forEach((handle) => {
-            handle.element.style.display = handle.display;
-          });
+          if (originalHandles && originalHandles.length > 0) {
+            originalHandles.forEach((handle) => {
+              if (handle && handle.element) {
+                handle.element.style.display = handle.display;
+              }
+            });
+          }
 
           isGeneratingPDF = false;
         }
