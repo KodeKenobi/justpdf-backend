@@ -1276,6 +1276,24 @@
 
           // FORCE remove hidden class first - this is critical!
           const hasHiddenClass = page.classList.contains("hidden");
+          // Skip pages without IDs or with numeric-only IDs (duplicates) in edit mode
+          if (!page.id || (!page.id.startsWith("page-") && !isViewMode)) {
+            // Duplicate/nested pages (numeric-only IDs like "1", "2") should be hidden in edit mode
+            if (!isViewMode) {
+              console.log(
+                `🔍 Hiding duplicate page ${index + 1} in zoom (ID=${page.id || "none"})`
+              );
+              page.style.setProperty("visibility", "hidden", "important");
+              page.style.setProperty("opacity", "0", "important");
+              page.style.setProperty("position", "absolute", "important");
+              page.style.setProperty("left", "-9999px", "important");
+              page.style.setProperty("top", "0", "important");
+              page.style.setProperty("display", "block", "important");
+            }
+            // Skip processing this page
+            return;
+          }
+          
           if (hasHiddenClass && page.id && page.id.startsWith("page-")) {
             // Check if this is the current visible page OR if we're in view mode
             const pageNum = parseInt(page.id.replace("page-", ""));
