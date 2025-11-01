@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, Response
+from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, Response, make_response
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
@@ -48,6 +48,8 @@ from test_routes import test_bp
 from debug_routes import debug_bp
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
 
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
@@ -627,9 +629,31 @@ def convert_pdf(filename):
         print(f"DEBUG: Total pages processed: {len(pages_data)}")
         print(f"DEBUG: Rendering template with {len(pages_data)} pages")
         
-        return render_template("converted.html", 
-                             filename=filename, 
-                             pages=pages_data)
+        # Force template reload - clear all caches
+        import flask.templating
+        import jinja2
+        # Clear Jinja2 template cache
+        if hasattr(app, 'jinja_env'):
+            app.jinja_env.cache.clear()
+        # Clear Flask template cache if it exists
+        try:
+            if hasattr(flask.templating, '_template_cache'):
+                flask.templating._template_cache.clear()
+        except:
+            pass
+        # Force reload by touching the template file
+        template_path = os.path.join(app.template_folder, "converted.html")
+        if os.path.exists(template_path):
+            os.utime(template_path, None)  # Touch the file
+        
+        response = make_response(render_template("converted.html", 
+                                                  filename=filename, 
+                                                  pages=pages_data))
+        # Add cache-busting headers
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     
     except Exception as e:
         return f"Error converting PDF: {str(e)}", 500

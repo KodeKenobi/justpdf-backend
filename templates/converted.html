@@ -1,7 +1,14 @@
 <!DOCTYPE html>
+<!-- Template Version: 2025-01-30-zoom-fix-v3-FINAL -->
 <html>
   <head>
     <title>PDF to HTML - {{ filename }}</title>
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <style>
       html,
       body {
@@ -19,27 +26,40 @@
 
       .pdf-container {
         background: transparent;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        overflow: visible;
+        overflow-x: auto;
+        overflow-y: auto;
+        width: 100%;
         min-width: 100%;
-        min-height: 100%;
-        margin: 0 auto;
-        max-width: 100%;
+        height: 100vh;
+        min-height: 100vh;
+        margin: 0;
+        padding: 60px 20px 20px;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        box-sizing: border-box;
+        position: relative;
       }
 
       .pdf-page {
         position: relative;
-        margin: 20px auto;
+        margin: 0 auto;
         background: white;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        transform-origin: top left;
-        width: 100%;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+        transform-origin: center top;
+        width: auto;
         height: auto;
+        min-height: 842px; /* Default A4 height to ensure content area exists */
+        min-width: 595px; /* Default A4 width */
       }
 
       .pdf-page.hidden {
-        display: none;
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
       }
 
       /* Mobile-specific styles */
@@ -71,6 +91,8 @@
       .text-span {
         position: absolute;
         white-space: nowrap;
+        color: #000000;
+        visibility: visible;
       }
 
       .editable-text {
@@ -80,7 +102,9 @@
         outline: none;
         background: transparent;
         position: relative;
-        z-index: 15; /* Higher than overlay to ensure clickability */
+        z-index: 100; /* Much higher than overlay to ensure clickability */
+        color: #000000 !important;
+        visibility: visible !important;
       }
 
       .editable-text:hover {
@@ -120,7 +144,11 @@
         width: 100%;
         height: 100%;
         pointer-events: none; /* Allow clicks to pass through to underlying elements */
-        z-index: 5;
+        z-index: -10; /* Way below content - only show when editing */
+        background: transparent !important;
+        background-color: transparent !important;
+        opacity: 0;
+        display: none; /* Hidden by default, only shown when editing */
       }
 
       .text-element {
@@ -644,6 +672,16 @@
     <script>
       let currentPage = 1;
       const totalPages = parseInt("{{ pages|length }}");
+      // ========================================
+      // TEMPLATE VERSION: ZOOM-FIX-V3-FINAL
+      // ========================================
+      console.log("🔧🔧🔧 TEMPLATE VERSION: ZOOM-FIX-V3-FINAL LOADED 🔧🔧🔧");
+      console.log("🔧 This template HAS the CHANGE_ZOOM handler at line ~1088");
+      console.log(
+        "🔧 If you see 'Unknown message type' at line 1155, you have OLD CACHED VERSION"
+      );
+      // ========================================
+
       let currentZoom = 1;
       let currentEditElement = null;
       let signatureCanvas = null;
@@ -678,9 +716,108 @@
 
       // Initialize session and zoom on page load
       document.addEventListener("DOMContentLoaded", function () {
+        // VERSION CHECK - If you see this, new template is loaded
+        console.log(
+          "✅✅✅ NEW TEMPLATE VERSION ZOOM-FIX-V3-FINAL IS LOADED ✅✅✅"
+        );
+        console.log("✅ CHANGE_ZOOM handler exists at line ~1096");
+        console.log(
+          "✅ If you see 'Unknown message type' at 1155, CLEAR YOUR BROWSER CACHE NOW!"
+        );
+
         sessionId = generateSessionId();
         console.log("Generated session ID:", sessionId);
-        changeZoom(currentZoom);
+
+        // Ensure only the first page is visible on load - MUST run before changeZoom
+        console.log("📄 ========== INITIALIZING PAGE VISIBILITY ==========");
+        const allPages = document.querySelectorAll(".pdf-page");
+        console.log("📄 Total pages found:", allPages.length);
+
+        allPages.forEach((page, index) => {
+          console.log(`📄 Processing page ${index + 1}:`, {
+            id: page.id,
+            hasContent: page.innerHTML.length,
+            contentPreview: page.innerHTML.substring(0, 200),
+            classes: page.className,
+            dataWidth: page.getAttribute("data-width"),
+            dataHeight: page.getAttribute("data-height"),
+          });
+
+          if (index === 0) {
+            // Show first page - make absolutely sure it's visible with !important
+            page.classList.remove("hidden");
+            page.style.setProperty("display", "block", "important");
+            page.style.setProperty("visibility", "visible", "important");
+            page.style.setProperty("opacity", "1", "important");
+
+            // CRITICAL: Remove hidden class from nested pdf-page divs inside the first page
+            const nestedPages = page.querySelectorAll(".pdf-page");
+            console.log(
+              `📄 Found ${nestedPages.length} nested pdf-page divs inside first page`
+            );
+            nestedPages.forEach((nestedPage, nestedIdx) => {
+              if (nestedPage !== page) {
+                nestedPage.classList.remove("hidden");
+                nestedPage.style.setProperty("display", "block", "important");
+                nestedPage.style.setProperty(
+                  "visibility",
+                  "visible",
+                  "important"
+                );
+                nestedPage.style.setProperty("opacity", "1", "important");
+                console.log(
+                  `📄 Removed hidden from nested page ${
+                    nestedIdx + 1
+                  } inside first page`
+                );
+              }
+            });
+
+            // Check for text content
+            const textSpans = page.querySelectorAll(
+              ".text-span, .editable-text, .text-line"
+            );
+            console.log(
+              `📄 Page ${index + 1} - Text elements found:`,
+              textSpans.length
+            );
+            textSpans.forEach((span, i) => {
+              if (i < 5) {
+                // Log first 5 only
+                console.log(`📄 Text span ${i}:`, {
+                  text: span.textContent?.substring(0, 50),
+                  style: span.getAttribute("style"),
+                  computedStyle: window.getComputedStyle(span).visibility,
+                });
+              }
+            });
+
+            console.log(`📄 Page ${index + 1} - Final state:`, {
+              display: window.getComputedStyle(page).display,
+              visibility: window.getComputedStyle(page).visibility,
+              opacity: window.getComputedStyle(page).opacity,
+              width: window.getComputedStyle(page).width,
+              height: window.getComputedStyle(page).height,
+              backgroundColor: window.getComputedStyle(page).backgroundColor,
+            });
+          } else {
+            // Hide all other pages - use !important equivalent via inline style
+            page.classList.add("hidden");
+            page.style.display = "none";
+            page.style.visibility = "hidden";
+            page.style.opacity = "0";
+            page.style.width = "0";
+            page.style.height = "0";
+            page.style.overflow = "hidden";
+            console.log(`📄 Hiding page ${index + 1}`);
+          }
+        });
+
+        // Small delay to ensure hidden pages are processed before zoom
+        setTimeout(() => {
+          console.log("📄 ========== APPLYING INITIAL ZOOM ==========");
+          changeZoom(currentZoom);
+        }, 50);
 
         // Cleanup on page unload
         window.addEventListener("beforeunload", cleanupSession);
@@ -689,13 +826,25 @@
       function changePage(direction) {
         const newPage = currentPage + direction;
         if (newPage >= 1 && newPage <= totalPages) {
-          document.getElementById(`page-${currentPage}`).style.display = "none";
+          // Hide current page
+          const currentPageEl = document.getElementById(`page-${currentPage}`);
+          if (currentPageEl) {
+            currentPageEl.style.display = "none";
+            currentPageEl.classList.add("hidden");
+          }
+
+          // Show new page
           currentPage = newPage;
-          document.getElementById(`page-${currentPage}`).style.display =
-            "block";
-          document.getElementById(
-            "pageInfo"
-          ).textContent = `${currentPage}/${totalPages}`;
+          const newPageEl = document.getElementById(`page-${currentPage}`);
+          if (newPageEl) {
+            newPageEl.style.display = "block";
+            newPageEl.classList.remove("hidden");
+          }
+
+          const pageInfo = document.getElementById("pageInfo");
+          if (pageInfo) {
+            pageInfo.textContent = `${currentPage}/${totalPages}`;
+          }
 
           const prevPageBtn = document.getElementById("prevPage");
           const nextPageBtn = document.getElementById("nextPage");
@@ -704,13 +853,239 @@
         }
       }
 
+      function calculateFitScale() {
+        // User wants original size, not fit-to-viewport
+        // Return 1.0 to maintain original size, user can zoom in/out as needed
+        return 1.0;
+      }
+
       function changeZoom(zoom) {
         currentZoom = zoom;
+        // Use zoom directly without fit-to-viewport scaling
+        const totalScale = zoom; // zoom is already a decimal (1.0 = 100%)
+
+        console.log("🔍 ========== APPLYING ZOOM ==========");
+        console.log("🔍 Zoom value:", zoom, "Total scale:", totalScale);
+
+        // Only apply zoom to visible (non-hidden) pages
         const pages = document.querySelectorAll(".pdf-page");
-        pages.forEach((page) => {
-          page.style.transform = `scale(${zoom})`;
-          page.style.transformOrigin = "top left";
+        console.log("🔍 Total pages in DOM:", pages.length);
+
+        pages.forEach((page, index) => {
+          console.log(`🔍 Processing page ${index + 1}:`, {
+            id: page.id,
+            isHidden: page.classList.contains("hidden"),
+            innerHTML: page.innerHTML.length,
+            hasContent: page.innerHTML.trim().length > 0,
+          });
+
+          // FORCE remove hidden class first - this is critical!
+          const hasHiddenClass = page.classList.contains("hidden");
+          if (hasHiddenClass && page.id && page.id.startsWith("page-")) {
+            // Check if this is the current visible page
+            const pageNum = parseInt(page.id.replace("page-", ""));
+            if (pageNum === currentPage) {
+              console.log(
+                `🔍 FORCE REMOVING hidden class from page ${
+                  index + 1
+                } (current page)`
+              );
+              page.classList.remove("hidden");
+              // Use setProperty with !important to override CSS rules
+              page.style.setProperty("display", "block", "important");
+              page.style.setProperty("visibility", "visible", "important");
+              page.style.setProperty("opacity", "1", "important");
+              page.style.removeProperty("width");
+              page.style.removeProperty("height");
+              page.style.removeProperty("overflow");
+            } else {
+              // Skip hidden pages that are NOT the current page
+              console.log(
+                `🔍 Skipping hidden page ${index + 1} (not current page)`
+              );
+              page.style.setProperty("display", "none", "important");
+              page.style.setProperty("visibility", "hidden", "important");
+              return;
+            }
+          } else if (hasHiddenClass && !page.id) {
+            // Pages without IDs should be hidden (likely nested/duplicate pages)
+            console.log(`🔍 Skipping hidden page ${index + 1} (no ID)`);
+            page.style.setProperty("display", "none", "important");
+            page.style.setProperty("visibility", "hidden", "important");
+            return;
+          }
+
+          // Ensure hidden class is removed for visible pages
+          if (
+            !hasHiddenClass ||
+            (page.id &&
+              page.id.startsWith("page-") &&
+              parseInt(page.id.replace("page-", "")) === currentPage)
+          ) {
+            page.classList.remove("hidden");
+
+            // CRITICAL: Remove hidden class from ALL nested pdf-page divs inside this page!
+            // The page.html content includes another <div class="pdf-page"> which can have hidden class
+            const nestedPages = page.querySelectorAll(".pdf-page");
+            console.log(
+              `🔍 Found ${
+                nestedPages.length
+              } nested pdf-page divs inside page ${index + 1}`
+            );
+            nestedPages.forEach((nestedPage, nestedIdx) => {
+              if (nestedPage !== page) {
+                // Don't remove class from self
+                nestedPage.classList.remove("hidden");
+                nestedPage.style.setProperty("display", "block", "important");
+                nestedPage.style.setProperty(
+                  "visibility",
+                  "visible",
+                  "important"
+                );
+                nestedPage.style.setProperty("opacity", "1", "important");
+                console.log(
+                  `🔍 Removed hidden from nested page ${
+                    nestedIdx + 1
+                  } inside page ${index + 1}`
+                );
+              }
+            });
+          }
+
+          // Set the actual page dimensions first (original size)
+          const pageWidth = parseFloat(page.getAttribute("data-width")) || 595;
+          const pageHeight =
+            parseFloat(page.getAttribute("data-height")) || 842;
+
+          console.log(
+            `🔍 Page ${index + 1} dimensions:`,
+            pageWidth,
+            "x",
+            pageHeight
+          );
+
+          // Set explicit dimensions to ensure container exists for absolutely positioned content
+          page.style.width = pageWidth + "px";
+          page.style.height = pageHeight + "px";
+          page.style.minWidth = pageWidth + "px";
+          page.style.minHeight = pageHeight + "px";
+          page.style.position = "relative"; // Critical for absolutely positioned children
+
+          // Check for content BEFORE making it visible
+          const allContent = page.querySelectorAll("*");
+          const textSpans = page.querySelectorAll(
+            ".text-span, .editable-text, .text-line"
+          );
+          const textLines = page.querySelectorAll(".text-line");
+
+          console.log(`🔍 Page ${index + 1} content check:`, {
+            totalElements: allContent.length,
+            textSpans: textSpans.length,
+            textLines: textLines.length,
+            innerHTMLLength: page.innerHTML.length,
+            first500Chars: page.innerHTML.substring(0, 500),
+          });
+
+          // Log sample of text spans
+          if (textSpans.length > 0) {
+            console.log(`🔍 Sample text spans (first 3):`);
+            Array.from(textSpans)
+              .slice(0, 3)
+              .forEach((span, i) => {
+                console.log(`  Span ${i}:`, {
+                  text: span.textContent,
+                  tagName: span.tagName,
+                  className: span.className,
+                  computedStyle: {
+                    display: window.getComputedStyle(span).display,
+                    visibility: window.getComputedStyle(span).visibility,
+                    position: window.getComputedStyle(span).position,
+                    left: window.getComputedStyle(span).left,
+                    top: window.getComputedStyle(span).top,
+                    color: window.getComputedStyle(span).color,
+                  },
+                });
+              });
+          } else {
+            console.warn(`⚠️ NO TEXT SPANS FOUND IN PAGE ${index + 1}!`);
+            console.warn(`⚠️ Page HTML:`, page.innerHTML.substring(0, 1000));
+          }
+
+          // Ensure content inside is visible
+          textSpans.forEach((span, i) => {
+            const beforeStyle = window.getComputedStyle(span);
+            span.style.visibility = "visible";
+            span.style.opacity = "1";
+            span.style.color = span.style.color || "#000000";
+            span.style.zIndex = "10"; // Ensure text is above overlay
+            const afterStyle = window.getComputedStyle(span);
+            if (i < 3) {
+              console.log(`🔍 Span ${i} visibility fix:`, {
+                before: beforeStyle.visibility,
+                after: afterStyle.visibility,
+                color: afterStyle.color,
+              });
+            }
+          });
+
+          // Ensure overlay is completely hidden or below all content
+          const overlay = page.querySelector(".interactive-overlay");
+          if (overlay) {
+            // Hide overlay completely - it's only needed when actively editing
+            overlay.style.display = "none";
+            overlay.style.background = "transparent";
+            overlay.style.backgroundColor = "transparent";
+            overlay.style.pointerEvents = "none";
+            overlay.style.zIndex = "-10"; // Way below content
+            overlay.style.opacity = "0";
+            overlay.style.visibility = "hidden";
+            console.log(
+              `🔍 Overlay on page ${
+                index + 1
+              } - HIDDEN completely (display: none, z-index: -10)`
+            );
+          }
+
+          // Apply zoom scale - center horizontally, top vertically
+          page.style.transform = `scale(${totalScale})`;
+          page.style.transformOrigin = "center top";
+
+          // Ensure page is visible and properly displayed - use !important
+          page.style.setProperty("display", "block", "important");
+          page.style.setProperty("visibility", "visible", "important");
+          page.style.setProperty("opacity", "1", "important");
+          page.style.margin = "0 auto";
+          page.style.backgroundColor = "white"; // Ensure white background
+
+          // CRITICAL: Make absolutely sure hidden class is removed
+          page.classList.remove("hidden");
+
+          const finalComputed = window.getComputedStyle(page);
+          console.log(`🔍 Page ${index + 1} FINAL STATE:`, {
+            id: page.id,
+            display: finalComputed.display,
+            visibility: finalComputed.visibility,
+            opacity: finalComputed.opacity,
+            width: finalComputed.width,
+            height: finalComputed.height,
+            transform: finalComputed.transform,
+            backgroundColor: finalComputed.backgroundColor,
+            position: finalComputed.position,
+            textSpansCount: textSpans.length,
+            getBoundingClientRect: page.getBoundingClientRect(),
+          });
         });
+
+        // Ensure container allows scrolling for both axes
+        const container = document.querySelector(".pdf-container");
+        if (container) {
+          container.style.overflowX = "auto";
+          container.style.overflowY = "auto";
+          container.style.width = "100%";
+          container.style.minWidth = "100%";
+          container.style.height = "100vh";
+          container.style.minHeight = "100vh";
+        }
       }
 
       function showNotification(message, isError = false) {
@@ -994,8 +1369,82 @@
       });
 
       // Listen for messages from parent (React component)
+      // TEMPLATE VERSION: ZOOM-FIX-V3 - CHANGE_ZOOM handler at top
+      console.log("🔧 [TEMPLATE LOADED] Template version: ZOOM-FIX-V3");
+
       window.addEventListener("message", function (event) {
         console.log("📨 Iframe received message:", event.data);
+        console.log(
+          "📨 Message type:",
+          event.data?.type,
+          "Type of type:",
+          typeof event.data?.type
+        );
+
+        // Guard: ensure event.data exists and has type
+        if (!event.data || typeof event.data !== "object") {
+          console.log(
+            "⚠️ Invalid message format (no data or not object), ignoring"
+          );
+          return;
+        }
+
+        if (!event.data.type || typeof event.data.type !== "string") {
+          console.log(
+            "⚠️ Invalid message format (no type or not string), ignoring. Type is:",
+            event.data.type,
+            "typeof:",
+            typeof event.data.type
+          );
+          return;
+        }
+
+        console.log("🔍 [ZOOM-FIX-V3] Checking message type:", event.data.type);
+        console.log(
+          "🔍 [ZOOM-FIX-V3] Direct comparison:",
+          event.data.type === "CHANGE_ZOOM"
+        );
+
+        // Handle CHANGE_ZOOM FIRST - BEFORE ALL OTHER HANDLERS
+        // Use both strict equality and string comparison for robustness
+        if (
+          event.data.type === "CHANGE_ZOOM" ||
+          String(event.data.type) === "CHANGE_ZOOM"
+        ) {
+          console.log(
+            "🚀 [ZOOM-FIX-V3] CHANGE_ZOOM DETECTED! Zoom value:",
+            event.data.zoom,
+            "Type:",
+            typeof event.data.zoom
+          );
+          if (typeof event.data.zoom === "number") {
+            console.log(
+              "🚀 [ZOOM-FIX-V3] Calling changeZoom with:",
+              event.data.zoom
+            );
+            try {
+              changeZoom(event.data.zoom);
+              console.log("✅ [ZOOM-FIX-V3] Zoom changed successfully!");
+            } catch (error) {
+              console.error(
+                "❌ [ZOOM-FIX-V3] Error calling changeZoom:",
+                error
+              );
+            }
+          } else {
+            console.error(
+              "❌ [ZOOM-FIX-V3] Invalid zoom value:",
+              event.data.zoom,
+              typeof event.data.zoom
+            );
+          }
+          return; // CRITICAL: return early to prevent other handlers
+        }
+
+        console.log(
+          "🔍 [ZOOM-FIX-V3] Message type not CHANGE_ZOOM, continuing. Type was:",
+          event.data.type
+        );
 
         if (event.data.type === "SET_EDIT_MODE") {
           console.log("🎯 Setting edit mode to:", event.data.mode);
@@ -1076,12 +1525,21 @@
         } else if (event.data.type === "CHANGE_PAGE") {
           console.log("📄 Changing to page:", event.data.pageNumber);
           // Hide current page
-          document.getElementById(`page-${currentPage}`).style.display = "none";
+          const currentPageEl = document.getElementById(`page-${currentPage}`);
+          if (currentPageEl) {
+            currentPageEl.style.display = "none";
+            currentPageEl.classList.add("hidden");
+          }
           // Show new page
           currentPage = event.data.pageNumber;
-          document.getElementById(`page-${currentPage}`).style.display =
-            "block";
+          const newPageEl = document.getElementById(`page-${currentPage}`);
+          if (newPageEl) {
+            newPageEl.style.display = "block";
+            newPageEl.classList.remove("hidden");
+          }
           console.log("📄 Now showing page:", currentPage);
+          // Recalculate zoom for new page
+          changeZoom(currentZoom);
         } else if (
           event.data.type === "GENERATE_PDF" ||
           event.data.type === "GENERATE_AND_DOWNLOAD_PDF" ||
@@ -4150,24 +4608,26 @@
         }
       });
 
+      // This DOMContentLoaded handler runs after the other one
+      // Only set dimensions for visible pages, don't override visibility
       document.addEventListener("DOMContentLoaded", function () {
         console.log("📄 Template loaded with total pages:", totalPages);
         console.log("📄 Current page:", currentPage);
 
-        // Set page dimensions
-        document.querySelectorAll(".pdf-page").forEach((page) => {
-          const width = page.dataset.width;
-          const height = page.dataset.height;
+        // Set page dimensions only for visible pages
+        document.querySelectorAll(".pdf-page:not(.hidden)").forEach((page) => {
+          const width = parseFloat(page.dataset.width) || 595;
+          const height = parseFloat(page.dataset.height) || 842;
           page.style.width = width + "px";
           page.style.height = height + "px";
-          console.log(
-            "📄 Page",
-            page.dataset.page,
-            "dimensions:",
-            width,
-            "x",
-            height
-          );
+          console.log("📄 Page", page.id, "dimensions:", width, "x", height);
+        });
+
+        // Don't call changeZoom here - it's already called in the first DOMContentLoaded
+        // Recalculate on window resize (only zoom, not visibility)
+        window.addEventListener("resize", function () {
+          // Only recalculate zoom for visible pages
+          changeZoom(currentZoom);
         });
 
         // Make text elements directly editable
