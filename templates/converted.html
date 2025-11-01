@@ -855,12 +855,21 @@
         sessionId = generateSessionId();
         console.log("Generated session ID:", sessionId);
 
+        // Check if we're in view mode (saved HTML being viewed in iframe)
+        // In view mode, all pages should be visible
+        const isViewMode = window.self !== window.top || window.location.pathname.includes('/view_html/');
+        console.log("📄 Is view mode (all pages visible):", isViewMode);
+        
         // Ensure only the first page is visible on load - MUST run before changeZoom
+        // BUT: In view mode, show ALL pages
         console.log("📄 ========== INITIALIZING PAGE VISIBILITY ==========");
         const allPages = document.querySelectorAll(".pdf-page");
         console.log("📄 Total pages found:", allPages.length);
 
         allPages.forEach((page, index) => {
+          const pageId = page.id || page.getAttribute("data-page");
+          const hasValidId = pageId && (pageId.startsWith("page-") || page.hasAttribute("data-page"));
+          
           console.log(`📄 Processing page ${index + 1}:`, {
             id: page.id,
             hasContent: page.innerHTML.length,
@@ -868,10 +877,12 @@
             classes: page.className,
             dataWidth: page.getAttribute("data-width"),
             dataHeight: page.getAttribute("data-height"),
+            hasValidId: hasValidId,
           });
 
-          if (index === 0) {
-            // Show first page - make absolutely sure it's visible with !important
+          // In view mode OR if page has valid ID, show it
+          if (isViewMode || hasValidId || index === 0) {
+            // Show page - make absolutely sure it's visible with !important
             page.classList.remove("hidden");
             page.style.setProperty("display", "block", "important");
             page.style.setProperty("visibility", "visible", "important");
@@ -889,10 +900,10 @@
               page.style.removeProperty("transform");
             }
 
-            // CRITICAL: Remove hidden class from nested pdf-page divs inside the first page
+            // CRITICAL: Remove hidden class from nested pdf-page divs inside the page
             const nestedPages = page.querySelectorAll(".pdf-page");
             console.log(
-              `📄 Found ${nestedPages.length} nested pdf-page divs inside first page`
+              `📄 Found ${nestedPages.length} nested pdf-page divs inside page ${index + 1}`
             );
             nestedPages.forEach((nestedPage, nestedIdx) => {
               if (nestedPage !== page) {
@@ -907,7 +918,7 @@
                 console.log(
                   `📄 Removed hidden from nested page ${
                     nestedIdx + 1
-                  } inside first page`
+                  } inside page ${index + 1}`
                 );
               }
             });
@@ -939,8 +950,8 @@
               height: window.getComputedStyle(page).height,
               backgroundColor: window.getComputedStyle(page).backgroundColor,
             });
-          } else {
-            // Hide all other pages - use !important equivalent via inline style
+          } else if (!hasValidId && !isViewMode) {
+            // Hide duplicate/nested pages without IDs (only in edit mode, not view mode)
             page.classList.add("hidden");
             page.style.display = "none";
             page.style.visibility = "hidden";
@@ -948,7 +959,7 @@
             page.style.width = "0";
             page.style.height = "0";
             page.style.overflow = "hidden";
-            console.log(`📄 Hiding page ${index + 1}`);
+            console.log(`📄 Hiding duplicate page ${index + 1} (no valid ID)`);
           }
         });
 
@@ -1734,9 +1745,12 @@
 
         allPages.forEach((page, index) => {
           const pageId = page.id || page.getAttribute("data-page");
-          
+
           // Only process pages with valid IDs (skip nested/duplicate pages without IDs)
-          if (pageId && (pageId.startsWith("page-") || page.hasAttribute("data-page"))) {
+          if (
+            pageId &&
+            (pageId.startsWith("page-") || page.hasAttribute("data-page"))
+          ) {
             // Remove hidden class and ensure visibility
             page.classList.remove("hidden");
             page.style.display = "block";
@@ -1746,7 +1760,7 @@
             page.style.height = "auto";
             page.style.minWidth = "595px";
             page.style.minHeight = "842px";
-            
+
             // Also ensure nested pages inside are visible
             const nestedPages = page.querySelectorAll(".pdf-page");
             nestedPages.forEach((nestedPage) => {
@@ -1757,7 +1771,7 @@
                 nestedPage.style.opacity = "1";
               }
             });
-            
+
             console.log(`💾 Page ${pageId} made visible before save`);
           } else if (!pageId) {
             // Pages without IDs should be hidden (they're duplicates/nested)
