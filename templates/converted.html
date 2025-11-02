@@ -2193,14 +2193,38 @@
           // Wait a moment for hidden pages to be processed
           await new Promise((resolve) => setTimeout(resolve, 100));
 
-          // Now get only pages with valid IDs
+          // Now get only pages with valid IDs and ensure they're all visible
           for (let i = 1; i <= totalPages; i++) {
             const page = document.getElementById(`page-${i}`);
             if (page && page.id && page.id.startsWith("page-")) {
               originalDisplays[i - 1] = page.style.display;
+              
+              // Ensure page has proper dimensions first
+              const pageWidth =
+                parseFloat(page.getAttribute("data-width")) || 595;
+              const pageHeight =
+                parseFloat(page.getAttribute("data-height")) || 842;
+
+              // CRITICAL: Make page visible BEFORE setting dimensions
+              // This ensures the browser calculates layout properly
               page.style.display = "block";
               page.style.visibility = "visible";
               page.style.opacity = "1";
+              page.style.position = "relative"; // Ensure it's in normal flow
+              
+              // Set explicit dimensions
+              page.style.width = pageWidth + "px";
+              page.style.height = pageHeight + "px";
+              page.style.minWidth = pageWidth + "px";
+              page.style.minHeight = pageHeight + "px";
+              page.style.maxWidth = pageWidth + "px";
+              page.style.maxHeight = pageHeight + "px";
+
+              // Reset transform for PDF generation (use scale 1.0)
+              page.style.transform = "scale(1)";
+              page.style.transformOrigin = "top left";
+              page.style.margin = "0 auto";
+              page.style.overflow = "visible";
 
               // CRITICAL: Hide nested pdf-page divs inside this page
               const nestedPages = page.querySelectorAll(".pdf-page");
@@ -2212,21 +2236,8 @@
                 }
               });
 
-              // Ensure page has proper dimensions
-              const pageWidth =
-                parseFloat(page.getAttribute("data-width")) || 595;
-              const pageHeight =
-                parseFloat(page.getAttribute("data-height")) || 842;
-
-              // Set explicit dimensions to ensure html2canvas can capture it
-              page.style.width = pageWidth + "px";
-              page.style.height = pageHeight + "px";
-              page.style.minWidth = pageWidth + "px";
-              page.style.minHeight = pageHeight + "px";
-
-              // Reset transform for PDF generation (use scale 1.0)
-              page.style.transform = "scale(1)";
-              page.style.transformOrigin = "top left";
+              // Force layout recalculation by accessing offsetWidth
+              void page.offsetWidth;
 
               pagesToProcess.push(page);
               console.log(`📄 Added page ${i} to PDF generation:`, {
@@ -2235,14 +2246,22 @@
                 height: pageHeight,
                 offsetWidth: page.offsetWidth,
                 offsetHeight: page.offsetHeight,
+                computedDisplay: window.getComputedStyle(page).display,
               });
             } else {
               console.warn(`⚠️ Page ${i} not found or has invalid ID:`, page);
             }
           }
 
-          // Wait for all pages to be visible
-          await new Promise((resolve) => setTimeout(resolve, 200));
+          // Wait longer for all pages to be fully visible and rendered
+          // Force a reflow to ensure browser has rendered all changes
+          await new Promise((resolve) => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                setTimeout(resolve, 300);
+              });
+            });
+          });
 
           // Hide borders and UI elements for clean PDF generation
           elementContainers = Array.from(
@@ -2281,16 +2300,40 @@
             const pdfPageHeight =
               parseFloat(page.getAttribute("data-height")) || 842;
 
-            // Ensure page is visible and has dimensions before capture
-            page.style.display = "block";
-            page.style.visibility = "visible";
-            page.style.opacity = "1";
-            page.style.width = pdfPageWidth + "px";
-            page.style.height = pdfPageHeight + "px";
+            // CRITICAL: Show only this page, hide others to ensure proper rendering
+            pagesToProcess.forEach((p, idx) => {
+              if (idx === i) {
+                // Show current page
+                p.style.display = "block";
+                p.style.visibility = "visible";
+                p.style.opacity = "1";
+                p.style.width = pdfPageWidth + "px";
+                p.style.height = pdfPageHeight + "px";
+                p.style.minWidth = pdfPageWidth + "px";
+                p.style.minHeight = pdfPageHeight + "px";
+                p.style.transform = "scale(1)";
+                p.style.position = "relative";
+                p.style.overflow = "visible";
+              } else {
+                // Hide other pages
+                p.style.display = "none";
+              }
+            });
 
-            // Use actual page dimensions, not offsetWidth which might be 0 due to transforms
-            const captureWidth = pdfPageWidth;
-            const captureHeight = pdfPageHeight;
+            // Force layout recalculation
+            void page.offsetWidth;
+            
+            // Wait for page to render
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            await new Promise((resolve) => setTimeout(resolve, 100));
+
+            // Verify page is actually visible and has dimensions
+            const actualWidth = page.offsetWidth || pdfPageWidth;
+            const actualHeight = page.offsetHeight || pdfPageHeight;
+
+            // Use actual page dimensions, prefer offsetWidth/offsetHeight if valid, otherwise use data attributes
+            const captureWidth = actualWidth > 0 ? actualWidth : pdfPageWidth;
+            const captureHeight = actualHeight > 0 ? actualHeight : pdfPageHeight;
 
             console.log(`📸 Capturing page ${i + 1}:`, {
               id: page.id,
@@ -2300,6 +2343,7 @@
               captureHeight,
               offsetWidth: page.offsetWidth,
               offsetHeight: page.offsetHeight,
+              computedDisplay: window.getComputedStyle(page).display,
             });
 
             // Capture the page as canvas
@@ -2309,6 +2353,8 @@
                 id: page.id,
                 captureWidth,
                 captureHeight,
+                offsetWidth: page.offsetWidth,
+                offsetHeight: page.offsetHeight,
               });
               continue; // Skip this page
             }
@@ -2371,13 +2417,15 @@
             console.log("Generating PDF for preview:", filename);
 
             const pdfBlob = pdf.output("blob");
-            
+
             // Convert blob to data URL to avoid cross-origin issues when using in parent iframe
             const reader = new FileReader();
             reader.onload = () => {
               const dataUrl = reader.result;
-              console.log("Converted blob to data URL for cross-origin compatibility");
-              
+              console.log(
+                "Converted blob to data URL for cross-origin compatibility"
+              );
+
               // Send the PDF data URL to the parent component
               window.parent.postMessage(
                 {
@@ -2390,7 +2438,7 @@
 
               console.log("PDF generated for preview successfully");
               showNotification("PDF generated for preview!", false);
-              
+
               // Clean up blob URL if it was created
               // Note: data URLs don't need cleanup
             };
