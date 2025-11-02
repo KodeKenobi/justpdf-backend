@@ -2371,20 +2371,43 @@
             console.log("Generating PDF for preview:", filename);
 
             const pdfBlob = pdf.output("blob");
-            const url = URL.createObjectURL(pdfBlob);
+            
+            // Convert blob to data URL to avoid cross-origin issues when using in parent iframe
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = reader.result;
+              console.log("Converted blob to data URL for cross-origin compatibility");
+              
+              // Send the PDF data URL to the parent component
+              window.parent.postMessage(
+                {
+                  type: "PDF_GENERATED_FOR_PREVIEW",
+                  pdfUrl: dataUrl,
+                  filename: filename,
+                },
+                "*"
+              );
 
-            // Send the PDF URL to the parent component
-            window.parent.postMessage(
-              {
-                type: "PDF_GENERATED_FOR_PREVIEW",
-                pdfUrl: url,
-                filename: filename,
-              },
-              "*"
-            );
-
-            console.log("PDF generated for preview successfully");
-            showNotification("PDF generated for preview!", false);
+              console.log("PDF generated for preview successfully");
+              showNotification("PDF generated for preview!", false);
+              
+              // Clean up blob URL if it was created
+              // Note: data URLs don't need cleanup
+            };
+            reader.onerror = (error) => {
+              console.error("Error converting blob to data URL:", error);
+              // Fallback: try using blob URL directly (may fail with cross-origin)
+              const url = URL.createObjectURL(pdfBlob);
+              window.parent.postMessage(
+                {
+                  type: "PDF_GENERATED_FOR_PREVIEW",
+                  pdfUrl: url,
+                  filename: filename,
+                },
+                "*"
+              );
+            };
+            reader.readAsDataURL(pdfBlob);
           } else {
             // Download the PDF
             console.log("About to save PDF:", filename);
