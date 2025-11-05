@@ -40,6 +40,7 @@
         overflow-y: auto;
         width: 100%;
         min-width: 100%;
+        max-width: none; /* Allow expansion beyond viewport when zoomed */
         height: 100vh;
         min-height: 100vh;
         margin: 0;
@@ -1586,12 +1587,85 @@
             page.style.transform = `scale(${totalScale})`;
             page.style.transformOrigin = "center top";
 
-            // Adjust container padding when zoomed on desktop too
+            // Ensure container allows scrolling for zoomed content (both zoom in and zoom out)
             const container = document.querySelector(".pdf-container");
-            if (container && totalScale > 1.0) {
-              const currentPadding =
-                parseFloat(window.getComputedStyle(container).padding) || 20;
-              container.style.padding = `${Math.max(10, currentPadding / 2)}px`;
+            if (container) {
+              // Calculate scaled dimensions
+              const scaledWidth = pageWidth * totalScale;
+              const scaledHeight = pageHeight * totalScale;
+
+              // Get viewport dimensions
+              const viewportWidth = window.innerWidth;
+              const viewportHeight = window.innerHeight;
+
+              // Adjust container padding based on zoom level
+              if (totalScale > 1.0) {
+                // Zoom in: reduce padding to allow more space
+                const currentPadding =
+                  parseFloat(window.getComputedStyle(container).padding) || 20;
+                container.style.padding = `${Math.max(
+                  10,
+                  currentPadding / 2
+                )}px`;
+              } else {
+                // Zoom out: ensure default padding is maintained
+                const defaultPadding = 60; // Top padding from CSS
+                const sidePadding = 20; // Side padding from CSS
+                container.style.padding = `${defaultPadding}px ${sidePadding}px ${sidePadding}px ${sidePadding}px`;
+              }
+
+              // Ensure overflow is enabled for scrolling
+              container.style.overflowX = "auto";
+              container.style.overflowY = "auto";
+              container.style.setProperty("overflow-x", "auto", "important");
+              container.style.setProperty("overflow-y", "auto", "important");
+
+              // Calculate minimum container width needed to show all pages
+              // When zoomed out, we need enough width to show the full scaled page
+              // When zoomed in, we need enough width for the scaled content
+              const allPages = document.querySelectorAll(
+                ".pdf-page:not(.hidden)"
+              );
+              let maxScaledWidth = 0;
+
+              allPages.forEach((pageEl) => {
+                const pageW =
+                  parseFloat(pageEl.getAttribute("data-width")) || 595;
+                const pageScaledW = pageW * totalScale;
+                maxScaledWidth = Math.max(maxScaledWidth, pageScaledW);
+              });
+
+              // Container needs to be at least as wide as the viewport or the scaled content
+              // Add padding on both sides (side padding * 2) to ensure full content is scrollable
+              const currentSidePadding =
+                parseFloat(window.getComputedStyle(container).paddingLeft) ||
+                20;
+              const minContainerWidth = Math.max(
+                viewportWidth,
+                maxScaledWidth + currentSidePadding * 2 + 40 // Extra 40px for safety margin
+              );
+
+              // Set min-width to pixel value to allow expansion beyond viewport
+              container.style.minWidth = `${minContainerWidth}px`;
+              container.style.setProperty(
+                "min-width",
+                `${minContainerWidth}px`,
+                "important"
+              );
+
+              // Ensure container width allows scrolling - use max-width to prevent overflow issues
+              container.style.width = "100%";
+              container.style.maxWidth = "none"; // Remove any max-width constraint
+              container.style.setProperty("width", "100%", "important");
+              container.style.setProperty("max-width", "none", "important");
+
+              console.log(
+                `🖥️ Desktop zoom: scale=${totalScale.toFixed(
+                  2
+                )}, scaledWidth=${scaledWidth.toFixed(
+                  1
+                )}px, minContainerWidth=${minContainerWidth.toFixed(1)}px`
+              );
             }
           }
 
