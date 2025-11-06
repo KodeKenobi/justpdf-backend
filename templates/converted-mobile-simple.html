@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PDF - {{ filename }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100vh;
+        overflow-x: auto;
+        overflow-y: auto;
+        background: #1a1a1a;
+        -webkit-overflow-scrolling: touch;
+        margin: 0;
+        padding: 0;
+      }
+
+      .pdf-container {
+        width: 100%;
+        height: 100vh;
+        min-height: 100vh;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: center;
+      }
+
+      .pdf-page {
+        width: 100%;
+        max-width: 100%;
+        background: white;
+        margin: 0;
+        display: block;
+        position: relative;
+        page-break-after: always;
+        flex-shrink: 0;
+      }
+
+      .pdf-page:not(.hidden) {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .pdf-page.hidden {
+        display: none !important;
+      }
+
+      .text-line {
+        position: relative;
+      }
+
+      .text-span {
+        position: absolute;
+      }
+
+      .editable-image {
+        position: absolute;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pdf-container">
+      {% for page in pages %} {{ page.html | safe }} {% endfor %}
+    </div>
+    <script>
+      // Scale pages and content for mobile, show one page at a time
+      let currentPage = 1;
+      const totalPages = {{ pages|length }};
+
+      function showPage(pageNumber) {
+        const pages = document.querySelectorAll(".pdf-page");
+        const totalPagesCount = pages.length;
+        let visibleCount = 0;
+        const viewportHeight = window.innerHeight;
+
+        pages.forEach((page, index) => {
+          if (index + 1 === pageNumber) {
+            page.classList.remove("hidden");
+            page.style.display = "block";
+            page.style.visibility = "visible";
+            page.style.opacity = "1";
+            // Make visible page fill full viewport height
+            page.style.minHeight = viewportHeight + "px";
+            page.style.height = "auto";
+            visibleCount++;
+          } else {
+            page.classList.add("hidden");
+            page.style.display = "none";
+            page.style.visibility = "hidden";
+            page.style.opacity = "0";
+          }
+        });
+
+        currentPage = pageNumber;
+        console.log(`📄 [Mobile PDF] Pages: ${totalPagesCount} total, ${visibleCount} visible (showing page ${pageNumber})`);
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        const pages = document.querySelectorAll(".pdf-page");
+        const totalPagesCount = pages.length;
+
+        console.log(`📑 [Mobile PDF] Total pages found: ${totalPagesCount}`);
+
+        // Initially show only first page
+        showPage(1);
+
+        pages.forEach((page, index) => {
+          // Set explicit height from data-height attribute
+          const dataWidth = parseFloat(page.getAttribute("data-width")) || 595;
+          const dataHeight =
+            parseFloat(page.getAttribute("data-height")) || 842;
+
+          // Calculate scale to fit width (100% of viewport)
+          const viewportWidth = window.innerWidth;
+          const scale = viewportWidth / dataWidth;
+          const scaledHeight = dataHeight * scale;
+
+          // Set explicit width, height will be set by showPage() to fill viewport
+          page.style.width = viewportWidth + "px";
+          // Don't set height here - let showPage() handle it to fill viewport
+
+          // Scale all absolutely positioned content inside the page
+          const textSpans = page.querySelectorAll(".text-span, .editable-text");
+          const images = page.querySelectorAll(".editable-image");
+
+          textSpans.forEach((span) => {
+            const left = parseFloat(span.style.left) || 0;
+            const top = parseFloat(span.style.top) || 0;
+            const fontSize = parseFloat(span.style.fontSize) || 12;
+
+            span.style.left = left * scale + "px";
+            span.style.top = top * scale + "px";
+            span.style.fontSize = fontSize * scale + "px";
+          });
+
+          images.forEach((img) => {
+            const left = parseFloat(img.style.left) || 0;
+            const top = parseFloat(img.style.top) || 0;
+            const width = parseFloat(img.style.width) || 0;
+            const height = parseFloat(img.style.height) || 0;
+
+            img.style.left = left * scale + "px";
+            img.style.top = top * scale + "px";
+            img.style.width = width * scale + "px";
+            img.style.height = height * scale + "px";
+          });
+        });
+
+        // Listen for page change messages from parent
+        window.addEventListener("message", function (event) {
+          if (event.data && event.data.type === "CHANGE_PAGE") {
+            const pageNumber = event.data.pageNumber;
+            if (pageNumber >= 1 && pageNumber <= totalPages) {
+              showPage(pageNumber);
+            }
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

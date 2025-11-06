@@ -584,7 +584,7 @@ def convert_pdf(filename):
             page_dict = page.get_text("dict")
             print(f"DEBUG: Page {page_idx + 1} has {len(page_dict['blocks'])} blocks")
             
-            page_html = f'<div class="pdf-page" data-page="{page_idx + 1}">'
+            page_html = f'<div class="pdf-page" data-page="{page_idx + 1}" data-width="{page.rect.width}" data-height="{page.rect.height}">'
             
             for block in page_dict["blocks"]:
                 if "lines" in block:
@@ -641,14 +641,44 @@ def convert_pdf(filename):
                 flask.templating._template_cache.clear()
         except:
             pass
-        # Force reload by touching the template file
-        template_path = os.path.join(app.template_folder, "converted.html")
-        if os.path.exists(template_path):
-            os.utime(template_path, None)  # Touch the file
+        # Check if mobile request
+        is_mobile = request.args.get('mobile', 'false').lower() == 'true'
         
-        response = make_response(render_template("converted.html", 
-                                                  filename=filename, 
-                                                  pages=pages_data))
+        # Force reload by touching the template file
+        template_name = "converted-mobile-simple.html" if is_mobile else "converted.html"
+        template_path = os.path.join(app.template_folder, template_name)
+        print(f"DEBUG: Mobile request: {is_mobile}")
+        print(f"DEBUG: Using template: {template_name}")
+        print(f"DEBUG: Template folder: {app.template_folder}")
+        print(f"DEBUG: Template path: {template_path}")
+        print(f"DEBUG: Template exists: {os.path.exists(template_path)}")
+        
+        # Fallback to desktop template if mobile template doesn't exist
+        if is_mobile and not os.path.exists(template_path):
+            print(f"WARNING: Mobile template not found, falling back to desktop template")
+            template_name = "converted.html"
+            template_path = os.path.join(app.template_folder, template_name)
+        
+        if not os.path.exists(template_path):
+            print(f"ERROR: Template not found: {template_path}")
+            return jsonify({"error": f"Template not found: {template_name}"}), 500
+        
+        # Force clear template cache
+        if hasattr(app, 'jinja_env'):
+            app.jinja_env.cache.clear()
+        os.utime(template_path, None)  # Touch the file
+        
+        print(f"DEBUG: Rendering template: {template_name} with {len(pages_data)} pages")
+        try:
+            response = make_response(render_template(template_name, 
+                                                      filename=filename, 
+                                                      pages=pages_data))
+            print(f"DEBUG: Template rendered successfully")
+        except Exception as render_error:
+            print(f"ERROR: Template rendering failed: {str(render_error)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return jsonify({"error": f"Template rendering failed: {str(render_error)}"}), 500
         # Add cache-busting headers
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         response.headers['Pragma'] = 'no-cache'
@@ -656,7 +686,21 @@ def convert_pdf(filename):
         return response
     
     except Exception as e:
-        return f"Error converting PDF: {str(e)}", 500
+        import traceback
+        error_trace = traceback.format_exc()
+        error_msg = str(e)
+        print(f"ERROR converting PDF: {error_msg}")
+        print(f"Traceback:\n{error_trace}")
+        # Return error with details for debugging - ensure it's JSON
+        try:
+            return jsonify({
+                "error": f"Error converting PDF: {error_msg}",
+                "error_type": type(e).__name__,
+                "traceback_lines": error_trace.split('\n')[-10:] if error_trace else []
+            }), 500
+        except:
+            # Fallback if jsonify fails
+            return f"Error converting PDF: {error_msg}", 500
 
 @app.route("/editor/<filename>")
 def convert_pdf_for_editor(filename):
@@ -681,7 +725,7 @@ def convert_pdf_for_editor(filename):
             page_dict = page.get_text("dict")
             print(f"DEBUG: Page {page_idx + 1} has {len(page_dict['blocks'])} blocks")
             
-            page_html = f'<div class="pdf-page" data-page="{page_idx + 1}">'
+            page_html = f'<div class="pdf-page" data-page="{page_idx + 1}" data-width="{page.rect.width}" data-height="{page.rect.height}">'
             
             for block in page_dict["blocks"]:
                 if "lines" in block:
