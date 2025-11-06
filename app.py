@@ -641,23 +641,27 @@ def convert_pdf(filename):
                 flask.templating._template_cache.clear()
         except:
             pass
-        # Check if mobile request
-        is_mobile = request.args.get('mobile', 'false').lower() == 'true'
+        # Check if mobile request - check both query param and request args
+        mobile_param = request.args.get('mobile', 'false')
+        is_mobile = str(mobile_param).lower() == 'true'
+        
+        print(f"🔍 [TEMPLATE SELECTION] Mobile param: '{mobile_param}', is_mobile: {is_mobile}")
+        print(f"🔍 [TEMPLATE SELECTION] All request args: {dict(request.args)}")
         
         # Force reload by touching the template file
-        template_name = "converted-mobile-simple.html" if is_mobile else "converted.html"
+        template_name = "converted-mobile.html" if is_mobile else "converted.html"
         template_path = os.path.join(app.template_folder, template_name)
-        print(f"DEBUG: Mobile request: {is_mobile}")
-        print(f"DEBUG: Using template: {template_name}")
-        print(f"DEBUG: Template folder: {app.template_folder}")
-        print(f"DEBUG: Template path: {template_path}")
-        print(f"DEBUG: Template exists: {os.path.exists(template_path)}")
+        print(f"🔍 [TEMPLATE SELECTION] Selected template: {template_name}")
+        print(f"🔍 [TEMPLATE SELECTION] Template folder: {app.template_folder}")
+        print(f"🔍 [TEMPLATE SELECTION] Template path: {template_path}")
+        print(f"🔍 [TEMPLATE SELECTION] Template exists: {os.path.exists(template_path)}")
         
         # Fallback to desktop template if mobile template doesn't exist
         if is_mobile and not os.path.exists(template_path):
-            print(f"WARNING: Mobile template not found, falling back to desktop template")
+            print(f"⚠️ [TEMPLATE SELECTION] WARNING: Mobile template not found, falling back to desktop template")
             template_name = "converted.html"
             template_path = os.path.join(app.template_folder, template_name)
+            is_mobile = False  # Reset flag since we're using desktop template
         
         if not os.path.exists(template_path):
             print(f"ERROR: Template not found: {template_path}")
@@ -680,9 +684,11 @@ def convert_pdf(filename):
             print(f"Traceback: {traceback.format_exc()}")
             return jsonify({"error": f"Template rendering failed: {str(render_error)}"}), 500
         # Add cache-busting headers
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
+        response.headers['X-Template-Name'] = template_name  # Debug header
+        response.headers['X-Is-Mobile'] = str(is_mobile)  # Debug header
         return response
     
     except Exception as e:

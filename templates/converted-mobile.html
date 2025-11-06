@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<!-- MOBILE TEMPLATE - converted-mobile.html -->
+<html>
+  <head>
+    <title>PDF - {{ filename }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-cache, no-store, must-revalidate"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100vh;
+        overflow-x: auto;
+        overflow-y: auto;
+        background: #1a1a1a;
+        -webkit-overflow-scrolling: touch;
+        margin: 0;
+        padding: 0;
+      }
+
+      .pdf-container {
+        width: 100%;
+        height: 100vh;
+        min-height: 100vh;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: center;
+        overflow: auto;
+        position: relative;
+      }
+
+      .pdf-page {
+        width: 100%;
+        max-width: 100%;
+        background: white;
+        margin: 0 auto;
+        display: block;
+        position: relative;
+        page-break-after: always;
+        flex-shrink: 0;
+      }
+
+      .pdf-page:not(.hidden) {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .pdf-page.hidden {
+        display: none !important;
+      }
+
+      .text-line {
+        position: relative;
+      }
+
+      .text-span {
+        position: absolute;
+      }
+
+      .editable-image {
+        position: absolute;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="pdf-container">
+      {% for page in pages %} {{ page.html | safe }} {% endfor %}
+    </div>
+    <script>
+      // MOBILE TEMPLATE - Zoom and page display
+      console.log("📱 [MOBILE TEMPLATE] converted-mobile.html loaded");
+
+      let currentPage = 1;
+      const totalPages = parseInt("{{ pages|length }}");
+      let currentZoom = 1.0; // Zoom multiplier (1.0 = 100%)
+      let baseScales = {}; // Store base scale for each page
+
+      // Apply zoom to visible page
+      function applyZoom(zoom) {
+        currentZoom = zoom;
+        const pages = document.querySelectorAll(".pdf-page");
+        const viewportWidth = window.innerWidth;
+
+        pages.forEach((page, index) => {
+          if (!page.classList.contains("hidden")) {
+            const pageNum = index + 1;
+            const baseScale = baseScales[pageNum] || 1;
+            const dataWidth =
+              parseFloat(page.getAttribute("data-width")) || 595;
+            const dataHeight =
+              parseFloat(page.getAttribute("data-height")) || 842;
+
+            // Base dimensions (at 100% zoom)
+            const baseWidth = viewportWidth;
+            const baseHeight = dataHeight * baseScale;
+
+            // Keep base dimensions, use transform to scale
+            page.style.width = baseWidth + "px";
+            page.style.height = baseHeight + "px";
+
+            if (zoom < 1.0) {
+              // Zoom out: scale down and center with white background
+              page.style.transform = `scale(${zoom})`;
+              page.style.transformOrigin = "center center";
+              page.style.margin = "auto";
+            } else {
+              // Zoom in: scale up, allow scrolling from top-left
+              page.style.transform = `scale(${zoom})`;
+              page.style.transformOrigin = "top left";
+              page.style.margin = "0";
+            }
+          }
+        });
+      }
+
+      function showPage(pageNumber) {
+        const pages = document.querySelectorAll(".pdf-page");
+        const totalPagesCount = pages.length;
+        let visibleCount = 0;
+
+        pages.forEach((page, index) => {
+          if (index + 1 === pageNumber) {
+            page.classList.remove("hidden");
+            page.style.display = "block";
+            page.style.visibility = "visible";
+            page.style.opacity = "1";
+            visibleCount++;
+          } else {
+            page.classList.add("hidden");
+            page.style.display = "none";
+            page.style.visibility = "hidden";
+            page.style.opacity = "0";
+          }
+        });
+
+        currentPage = pageNumber;
+        // Reapply zoom when page changes
+        applyZoom(currentZoom);
+
+        console.log(
+          `📄 [Mobile PDF] Pages: ${totalPagesCount} total, ${visibleCount} visible (showing page ${pageNumber})`
+        );
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        const pages = document.querySelectorAll(".pdf-page");
+        const totalPagesCount = pages.length;
+
+        console.log(`📑 [Mobile PDF] Total pages found: ${totalPagesCount}`);
+
+        // Initially show only first page
+        showPage(1);
+
+        pages.forEach((page, index) => {
+          const pageNum = index + 1;
+          const dataWidth = parseFloat(page.getAttribute("data-width")) || 595;
+          const dataHeight =
+            parseFloat(page.getAttribute("data-height")) || 842;
+
+          // Calculate base scale to fit width (100% of viewport)
+          const viewportWidth = window.innerWidth;
+          const baseScale = viewportWidth / dataWidth;
+          baseScales[pageNum] = baseScale;
+
+          // Set initial dimensions (will be adjusted by zoom)
+          page.style.width = viewportWidth + "px";
+          page.style.height = dataHeight * baseScale + "px";
+
+          // Scale all absolutely positioned content inside the page
+          const textSpans = page.querySelectorAll(".text-span, .editable-text");
+          const images = page.querySelectorAll(".editable-image");
+
+          textSpans.forEach((span) => {
+            const left = parseFloat(span.style.left) || 0;
+            const top = parseFloat(span.style.top) || 0;
+            const fontSize = parseFloat(span.style.fontSize) || 12;
+
+            span.style.left = left * baseScale + "px";
+            span.style.top = top * baseScale + "px";
+            span.style.fontSize = fontSize * baseScale + "px";
+          });
+
+          images.forEach((img) => {
+            const left = parseFloat(img.style.left) || 0;
+            const top = parseFloat(img.style.top) || 0;
+            const width = parseFloat(img.style.width) || 0;
+            const height = parseFloat(img.style.height) || 0;
+
+            img.style.left = left * baseScale + "px";
+            img.style.top = top * baseScale + "px";
+            img.style.width = width * baseScale + "px";
+            img.style.height = height * baseScale + "px";
+          });
+        });
+
+        // Apply initial zoom
+        applyZoom(1.0);
+
+        // Listen for messages from parent
+        window.addEventListener("message", function (event) {
+          if (event.data && event.data.type === "CHANGE_PAGE") {
+            const pageNumber = event.data.pageNumber;
+            if (pageNumber >= 1 && pageNumber <= totalPages) {
+              showPage(pageNumber);
+            }
+          } else if (event.data && event.data.type === "MOBILE_ZOOM") {
+            const zoom = event.data.zoom;
+            if (typeof zoom === "number" && zoom >= 0.25 && zoom <= 3.0) {
+              applyZoom(zoom);
+            }
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

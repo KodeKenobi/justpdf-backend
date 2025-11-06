@@ -87,10 +87,12 @@
           height: 100%;
           position: fixed; /* Prevent bounce scrolling on iOS */
           touch-action: pan-x pan-y pinch-zoom; /* Better touch handling */
+          margin: 0 !important;
+          padding: 0 !important;
         }
 
         .pdf-container {
-          margin: 0;
+          margin: 0 !important;
           padding: 0 !important; /* No padding to allow edge-to-edge scrolling */
           width: 100vw !important;
           min-width: 100vw !important;
@@ -111,15 +113,14 @@
         }
 
         .pdf-page {
-          margin: 15px 0 !important; /* No auto margins - we'll center via positioning */
+          margin: 15px 0 15px 0 !important; /* Top and bottom only, no left/right */
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
           width: 595px !important; /* Keep original width for scaling reference */
           max-width: none !important; /* Allow full width scaling */
           min-width: 595px !important;
           height: auto !important;
           min-height: auto !important;
-          transform-origin: 0 0 !important; /* Scale from top-left - we'll translate to center */
-          /* Don't set transform here - let JavaScript handle it for better mobile support */
+          transform-origin: 0 0 !important; /* Scale from top-left */
           margin-bottom: 15px; /* Better spacing between pages */
           box-sizing: border-box;
           will-change: transform; /* Optimize for animations */
@@ -128,6 +129,9 @@
           visibility: visible !important;
           opacity: 1 !important;
           position: relative; /* Allow positioning adjustments */
+          left: 0 !important;
+          padding-left: 0 !important;
+          margin-left: 0 !important;
         }
 
         /* Ensure first page is visible on mobile */
@@ -1012,6 +1016,39 @@
         const viewportWidth = window.innerWidth;
         const baseWidth = pageWidth || 595; // Default A4 width
         return viewportWidth / baseWidth;
+      }
+
+      // Simple mobile zoom - fixed scale, no complex calculations
+      function changeZoomMobile(zoom) {
+        currentZoom = zoom;
+        const pages = document.querySelectorAll(".pdf-page");
+
+        pages.forEach((page) => {
+          // Skip hidden pages (keep them hidden)
+          if (
+            page.classList.contains("hidden") &&
+            (!page.id ||
+              !page.id.startsWith("page-") ||
+              parseInt(page.id.replace("page-", "")) !== currentPage)
+          ) {
+            return;
+          }
+
+          // Show current page
+          if (
+            page.id &&
+            page.id.startsWith("page-") &&
+            parseInt(page.id.replace("page-", "")) === currentPage
+          ) {
+            page.classList.remove("hidden");
+            page.style.display = "block";
+            page.style.visibility = "visible";
+          }
+
+          // Simple scale transform - just apply the zoom value directly
+          page.style.transform = `scale(${zoom})`;
+          page.style.transformOrigin = "center top";
+        });
       }
 
       function changeZoom(zoom) {
@@ -2030,32 +2067,25 @@
           event.data.type === "CHANGE_ZOOM" ||
           String(event.data.type) === "CHANGE_ZOOM"
         ) {
-          console.log(
-            "🚀 [ZOOM-FIX-V3] CHANGE_ZOOM DETECTED! Zoom value:",
-            event.data.zoom,
-            "Type:",
-            typeof event.data.zoom
-          );
           if (typeof event.data.zoom === "number") {
-            console.log(
-              "🚀 [ZOOM-FIX-V3] Calling changeZoom with:",
-              event.data.zoom
-            );
-            try {
-              changeZoom(event.data.zoom);
-              console.log("✅ [ZOOM-FIX-V3] Zoom changed successfully!");
-            } catch (error) {
-              console.error(
-                "❌ [ZOOM-FIX-V3] Error calling changeZoom:",
-                error
-              );
+            // Use simple mobile zoom if mobile flag is set
+            if (event.data.mobile === true) {
+              try {
+                changeZoomMobile(event.data.zoom);
+              } catch (error) {
+                console.error("❌ Mobile zoom error:", error);
+              }
+            } else {
+              // Use full desktop zoom with complex calculations
+              try {
+                changeZoom(event.data.zoom);
+              } catch (error) {
+                console.error(
+                  "❌ [ZOOM-FIX-V3] Error calling changeZoom:",
+                  error
+                );
+              }
             }
-          } else {
-            console.error(
-              "❌ [ZOOM-FIX-V3] Invalid zoom value:",
-              event.data.zoom,
-              typeof event.data.zoom
-            );
           }
           return; // CRITICAL: return early to prevent other handlers
         }
