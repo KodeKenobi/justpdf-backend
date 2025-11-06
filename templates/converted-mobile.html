@@ -10,6 +10,8 @@
     />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <style>
       * {
         margin: 0;
@@ -223,8 +225,119 @@
             if (typeof zoom === "number" && zoom >= 0.25 && zoom <= 3.0) {
               applyZoom(zoom);
             }
+          } else if (event.data && event.data.type === "SET_EDIT_MODE") {
+            // Handle edit mode - for mobile, enable text editing on existing text elements
+            console.log("📱 [Mobile] Setting edit mode to:", event.data.mode);
+            const mode = event.data.mode;
+
+            // Enable contentEditable on text elements when edit-text mode is active
+            if (mode === "edit-text") {
+              document
+                .querySelectorAll(".editable-text, .text-span")
+                .forEach((element) => {
+                  element.contentEditable = true;
+                  element.style.cursor = "text";
+                  element.addEventListener("click", function (e) {
+                    e.stopPropagation();
+                  });
+                });
+            } else {
+              // Disable editing for other modes
+              document
+                .querySelectorAll(".editable-text, .text-span")
+                .forEach((element) => {
+                  element.contentEditable = false;
+                  element.style.cursor = "default";
+                });
+            }
+
+            // Send confirmation back to parent
+            window.parent.postMessage(
+              {
+                type: "EDIT_MODE_SET",
+                mode: mode,
+              },
+              "*"
+            );
+          } else if (
+            event.data &&
+            event.data.type === "GENERATE_PDF_FOR_PREVIEW"
+          ) {
+            // Generate PDF for preview using html2canvas and jsPDF
+            console.log("📱 [Mobile] Generating PDF for preview");
+            generatePDFForPreview();
           }
         });
+
+        // PDF generation function for mobile
+        async function generatePDFForPreview() {
+          try {
+            // Check if libraries are loaded
+            if (
+              typeof html2canvas === "undefined" ||
+              typeof window.jspdf === "undefined"
+            ) {
+              throw new Error("PDF generation libraries not loaded");
+            }
+
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({
+              orientation: "portrait",
+              unit: "px",
+              format: [595, 842], // A4 size
+            });
+
+            // Get all visible pages
+            const pages = document.querySelectorAll(".pdf-page:not(.hidden)");
+
+            for (let i = 0; i < pages.length; i++) {
+              const page = pages[i];
+
+              // Capture page as canvas
+              const canvas = await html2canvas(page, {
+                scale: 2,
+                useCORS: true,
+                logging: false,
+              });
+
+              const imgData = canvas.toDataURL("image/jpeg", 0.95);
+              const imgWidth = 595;
+              const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+              // Add new page if not the first
+              if (i > 0) {
+                pdf.addPage();
+              }
+
+              // Add image to PDF
+              pdf.addImage(imgData, "JPEG", 0, 0, imgWidth, imgHeight);
+            }
+
+            // Generate blob URL
+            const pdfBlob = pdf.output("blob");
+            const url = URL.createObjectURL(pdfBlob);
+
+            // Send to parent
+            window.parent.postMessage(
+              {
+                type: "PDF_GENERATED_FOR_PREVIEW",
+                pdfUrl: url,
+              },
+              "*"
+            );
+
+            console.log("✅ [Mobile] PDF generated successfully");
+          } catch (error) {
+            console.error("❌ [Mobile] Error generating PDF:", error);
+            window.parent.postMessage(
+              {
+                type: "PDF_GENERATION_ERROR",
+                error: error.message,
+              },
+              "*"
+            );
+          }
+        }
       });
     </script>
   </body>
