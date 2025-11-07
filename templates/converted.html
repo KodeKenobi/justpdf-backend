@@ -844,6 +844,42 @@
         }
       }
 
+      // Custom confirmation function that uses postMessage instead of browser confirm()
+      let confirmationCallbacks = {};
+      let confirmationIdCounter = 0;
+
+      function showConfirmation(message) {
+        return new Promise((resolve) => {
+          const id = "confirm_" + Date.now() + "_" + confirmationIdCounter++;
+
+          // Set up listener for response
+          const handleResponse = (event) => {
+            if (
+              event.data &&
+              event.data.type === "CONFIRMATION_RESPONSE" &&
+              event.data.id === id
+            ) {
+              window.removeEventListener("message", handleResponse);
+              delete confirmationCallbacks[id];
+              resolve(event.data.confirmed);
+            }
+          };
+
+          window.addEventListener("message", handleResponse);
+          confirmationCallbacks[id] = resolve;
+
+          // Send confirmation request to parent
+          window.parent.postMessage(
+            {
+              type: "SHOW_CONFIRMATION",
+              id: id,
+              message: message,
+            },
+            "*"
+          );
+        });
+      }
+
       // Initialize session and zoom on page load
       document.addEventListener("DOMContentLoaded", function () {
         // VERSION CHECK - If you see this, new template is loaded
@@ -3593,11 +3629,14 @@
         textElement.setAttribute("ondragstart", "return false;");
 
         // Delete button event handler
-        deleteBtn.addEventListener("click", function (e) {
+        deleteBtn.addEventListener("click", async function (e) {
           console.log("🗑️ Delete button clicked for text element");
           e.preventDefault();
           e.stopPropagation();
-          if (confirm("Are you sure you want to delete this text element?")) {
+          const confirmed = await showConfirmation(
+            "Are you sure you want to delete this text element?"
+          );
+          if (confirmed) {
             textContainer.remove();
             // Remove from edits array if it was saved
             const editIndex = edits.findIndex(
@@ -4992,13 +5031,14 @@
         signatureElement.setAttribute("onselectstart", "return false;");
 
         // Delete button event handler
-        deleteBtn.addEventListener("click", function (e) {
+        deleteBtn.addEventListener("click", async function (e) {
           console.log("🗑️ Delete button clicked for signature element");
           e.preventDefault();
           e.stopPropagation();
-          if (
-            confirm("Are you sure you want to delete this signature element?")
-          ) {
+          const confirmed = await showConfirmation(
+            "Are you sure you want to delete this signature element?"
+          );
+          if (confirmed) {
             signatureContainer.remove();
             // Remove from edits array if it was saved
             const editIndex = edits.findIndex(
@@ -5708,10 +5748,13 @@
           deleteBtn.innerHTML = "×";
           deleteBtn.title = "Delete text";
 
-          deleteBtn.addEventListener("click", function (e) {
+          deleteBtn.addEventListener("click", async function (e) {
             e.preventDefault();
             e.stopPropagation();
-            if (confirm("Are you sure you want to delete this text element?")) {
+            const confirmed = await showConfirmation(
+              "Are you sure you want to delete this text element?"
+            );
+            if (confirmed) {
               textContainer.remove();
             }
           });
@@ -5760,12 +5803,13 @@
           deleteBtn.innerHTML = "×";
           deleteBtn.title = "Delete signature";
 
-          deleteBtn.addEventListener("click", function (e) {
+          deleteBtn.addEventListener("click", async function (e) {
             e.preventDefault();
             e.stopPropagation();
-            if (
-              confirm("Are you sure you want to delete this signature element?")
-            ) {
+            const confirmed = await showConfirmation(
+              "Are you sure you want to delete this signature element?"
+            );
+            if (confirmed) {
               signatureContainer.remove();
             }
           });
@@ -5829,12 +5873,13 @@
           deleteBtn.innerHTML = "×";
           deleteBtn.title = "Delete image";
 
-          deleteBtn.addEventListener("click", function (e) {
+          deleteBtn.addEventListener("click", async function (e) {
             e.preventDefault();
             e.stopPropagation();
-            if (
-              confirm("Are you sure you want to delete this image element?")
-            ) {
+            const confirmed = await showConfirmation(
+              "Are you sure you want to delete this image element?"
+            );
+            if (confirmed) {
               imageContainer.remove();
             }
           });

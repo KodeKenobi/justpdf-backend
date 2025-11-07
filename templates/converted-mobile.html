@@ -97,6 +97,43 @@
         overflow: visible !important;
       }
 
+      /* Delete button styles - now in toolbar, but keep for signatures */
+      .element-delete-btn {
+        position: absolute;
+        top: -12px;
+        right: -12px;
+        width: 32px;
+        height: 32px;
+        background: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        font-size: 18px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 200;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        opacity: 0;
+        transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+        pointer-events: none;
+        touch-action: manipulation;
+      }
+
+      .element-delete-btn:hover,
+      .element-delete-btn:active {
+        background: #c82333;
+        transform: scale(1.1);
+      }
+
+      /* Show delete button when signature is selected */
+      .signature-container.selected .element-delete-btn {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
       .text-formatting-toolbar select,
       .text-formatting-toolbar input[type="color"] {
         z-index: 99999 !important;
@@ -194,6 +231,67 @@
         console.log(
           `📄 [Mobile PDF] Pages: ${totalPagesCount} total, ${visibleCount} visible (showing page ${pageNumber})`
         );
+      }
+
+      // Custom confirmation function that uses postMessage instead of browser confirm()
+      let confirmationCallbacks = {};
+      let confirmationIdCounter = 0;
+
+      function showConfirmation(message) {
+        return new Promise((resolve, reject) => {
+          const id = "confirm_" + Date.now() + "_" + confirmationIdCounter++;
+
+          // Set up listener for response
+          let timeoutId;
+          const handleResponse = (event) => {
+            console.log(
+              "🗑️ [Mobile] Message received in confirmation handler:",
+              event.data
+            );
+            if (
+              event.data &&
+              event.data.type === "CONFIRMATION_RESPONSE" &&
+              event.data.id === id
+            ) {
+              console.log("🗑️ [Mobile] Confirmation response matches ID:", id);
+              if (timeoutId) clearTimeout(timeoutId);
+              window.removeEventListener("message", handleResponse);
+              delete confirmationCallbacks[id];
+              console.log(
+                "🗑️ [Mobile] Confirmation response received:",
+                event.data.confirmed
+              );
+              resolve(event.data.confirmed);
+            }
+          };
+
+          // Set timeout to reject if no response (30 seconds)
+          timeoutId = setTimeout(() => {
+            window.removeEventListener("message", handleResponse);
+            delete confirmationCallbacks[id];
+            console.error(
+              "🗑️ [Mobile] Confirmation timeout - no response from parent"
+            );
+            reject(new Error("Confirmation timeout"));
+          }, 30000);
+
+          window.addEventListener("message", handleResponse);
+          confirmationCallbacks[id] = { resolve, timeoutId, handleResponse };
+
+          // Send confirmation request to parent
+          console.log("🗑️ [Mobile] Sending confirmation request to parent:", {
+            id,
+            message,
+          });
+          window.parent.postMessage(
+            {
+              type: "SHOW_CONFIRMATION",
+              id: id,
+              message: message,
+            },
+            "*"
+          );
+        });
       }
 
       document.addEventListener("DOMContentLoaded", function () {
@@ -610,11 +708,87 @@
           doneButton.style.position = "relative";
           doneButton.style.flexShrink = "0";
 
+          // Delete button - add to toolbar
+          const deleteBtn = document.createElement("button");
+          deleteBtn.innerHTML = "🗑️";
+          deleteBtn.title = "Delete text";
+          deleteBtn.style.padding = "8px 14px";
+          deleteBtn.style.fontSize = "16px";
+          deleteBtn.style.borderRadius = "8px";
+          deleteBtn.style.border = "1px solid rgba(220, 53, 69, 0.8)";
+          deleteBtn.style.backgroundColor = "rgba(220, 53, 69, 0.1)";
+          deleteBtn.style.color = "#dc3545";
+          deleteBtn.style.cursor = "pointer";
+          deleteBtn.style.fontWeight = "600";
+          deleteBtn.style.minWidth = "40px";
+          deleteBtn.style.transition = "all 0.2s ease";
+          deleteBtn.style.pointerEvents = "auto";
+          deleteBtn.style.zIndex = "99999";
+          deleteBtn.style.position = "relative";
+          deleteBtn.style.flexShrink = "0";
+          deleteBtn.style.display = "flex";
+          deleteBtn.style.alignItems = "center";
+          deleteBtn.style.justifyContent = "center";
+
+          // Delete button event handler - prevent multiple clicks
+          let isDeleting = false;
+          let deleteTimeoutId = null;
+          deleteBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Prevent multiple simultaneous delete attempts
+            if (isDeleting) {
+              console.log(
+                "🗑️ [Mobile] Delete already in progress, ignoring click"
+              );
+              return;
+            }
+
+            isDeleting = true;
+            console.log("🗑️ [Mobile] Delete button clicked for text element");
+
+            // Set timeout to reset flag if confirmation doesn't respond (15 seconds)
+            if (deleteTimeoutId) clearTimeout(deleteTimeoutId);
+            deleteTimeoutId = setTimeout(() => {
+              console.warn(
+                "🗑️ [Mobile] Delete confirmation timeout - resetting flag"
+              );
+              isDeleting = false;
+              deleteTimeoutId = null;
+            }, 15000);
+
+            try {
+              const confirmed = await showConfirmation(
+                "Are you sure you want to delete this text element?"
+              );
+              if (deleteTimeoutId) {
+                clearTimeout(deleteTimeoutId);
+                deleteTimeoutId = null;
+              }
+              if (confirmed) {
+                textContainer.remove();
+                console.log("🗑️ [Mobile] Text element deleted");
+              } else {
+                console.log("🗑️ [Mobile] Delete cancelled by user");
+              }
+            } catch (error) {
+              console.error("🗑️ [Mobile] Error during delete:", error);
+            } finally {
+              if (deleteTimeoutId) {
+                clearTimeout(deleteTimeoutId);
+                deleteTimeoutId = null;
+              }
+              isDeleting = false;
+            }
+          });
+
           // Add buttons to toolbar
           toolbar.appendChild(fontButton);
           toolbar.appendChild(sizeButton);
           toolbar.appendChild(colorButton);
           toolbar.appendChild(boldButton);
+          toolbar.appendChild(deleteBtn);
           toolbar.appendChild(doneButton);
 
           // Create editable text element
@@ -1005,10 +1179,11 @@
           textContainer.addEventListener(
             "touchstart",
             (e) => {
-              // Don't drag if clicking on toolbar or buttons
+              // Don't drag if clicking on toolbar or buttons (including delete button in toolbar)
               if (
                 e.target.closest(".text-formatting-toolbar") ||
-                e.target.closest("button")
+                e.target.closest("button") ||
+                e.target.tagName === "BUTTON"
               ) {
                 return;
               }
@@ -1058,10 +1233,11 @@
               e.preventDefault();
               e.stopPropagation();
 
-              // Don't drag if touching toolbar
+              // Don't drag if touching toolbar or buttons
               if (
                 e.target.closest(".text-formatting-toolbar") ||
-                e.target.closest("button")
+                e.target.closest("button") ||
+                e.target.tagName === "BUTTON"
               ) {
                 return;
               }
@@ -1194,7 +1370,8 @@
             // Don't drag if clicking on toolbar or buttons
             if (
               e.target.closest(".text-formatting-toolbar") ||
-              e.target.closest("button")
+              e.target.closest("button") ||
+              e.target.tagName === "BUTTON"
             ) {
               return;
             }
@@ -1228,6 +1405,15 @@
           });
 
           textContainer.addEventListener("mousemove", (e) => {
+            // Don't drag if touching toolbar or buttons
+            if (
+              e.target.closest(".text-formatting-toolbar") ||
+              e.target.closest("button") ||
+              e.target.tagName === "BUTTON"
+            ) {
+              return;
+            }
+
             // If toolbar is visible, don't drag
             if (toolbar.style.display === "flex") {
               return;
@@ -1437,12 +1623,53 @@
           resizeHandle.style.zIndex = "1001";
           signatureContainer.appendChild(resizeHandle);
 
+          // Create delete button for signature
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "element-delete-btn";
+          deleteBtn.innerHTML = "×";
+          deleteBtn.title = "Delete signature";
+          deleteBtn.style.lineHeight = "1";
+          console.log("🗑️ [Mobile] Created delete button for signature");
+
+          // Delete button event handler
+          deleteBtn.addEventListener("click", async (e) => {
+            console.log("🗑️ [Mobile] Delete button clicked for signature");
+            e.preventDefault();
+            e.stopPropagation();
+            const confirmed = await showConfirmation(
+              "Are you sure you want to delete this signature?"
+            );
+            if (confirmed) {
+              signatureContainer.remove();
+              console.log("🗑️ [Mobile] Signature deleted");
+            }
+          });
+
+          // Prevent drag/resize when clicking delete button
+          deleteBtn.addEventListener("touchstart", (e) => {
+            e.stopPropagation();
+          });
+
+          deleteBtn.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+          });
+
+          signatureContainer.appendChild(deleteBtn);
+
           // Make draggable
           let isDragging = false;
           let isResizing = false;
           let startX, startY, initialX, initialY, initialWidth, initialHeight;
 
           signatureContainer.addEventListener("touchstart", (e) => {
+            // Don't drag/resize if clicking on delete button
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn")
+            ) {
+              return;
+            }
+
             if (e.target === resizeHandle) {
               e.stopPropagation();
               isResizing = true;
@@ -1465,6 +1692,14 @@
           });
 
           signatureContainer.addEventListener("touchmove", (e) => {
+            // Don't drag/resize if touching delete button
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn")
+            ) {
+              return;
+            }
+
             e.preventDefault();
             if (isResizing) {
               const touch = e.touches[0];
@@ -1489,6 +1724,51 @@
             isDragging = false;
             isResizing = false;
           });
+
+          // Show delete button when signature is clicked
+          signatureContainer.addEventListener("click", (e) => {
+            // Don't show if clicking on delete button or resize handle
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn") ||
+              e.target === resizeHandle
+            ) {
+              return;
+            }
+            // Remove selected from all other signatures
+            document
+              .querySelectorAll(".signature-container.selected")
+              .forEach((container) => {
+                if (container !== signatureContainer) {
+                  container.classList.remove("selected");
+                }
+              });
+            // Add selected class to show delete button
+            signatureContainer.classList.add("selected");
+          });
+
+          // Hide delete button when clicking away from signature
+          const handleSignatureDocumentClick = (e) => {
+            if (!signatureContainer.contains(e.target)) {
+              signatureContainer.classList.remove("selected");
+            }
+          };
+          document.addEventListener(
+            "click",
+            handleSignatureDocumentClick,
+            true
+          );
+
+          // Clean up listener when element is removed
+          const originalSignatureRemove = signatureContainer.remove;
+          signatureContainer.remove = function () {
+            document.removeEventListener(
+              "click",
+              handleSignatureDocumentClick,
+              true
+            );
+            originalSignatureRemove.call(this);
+          };
 
           // Send confirmation
           window.parent.postMessage(
