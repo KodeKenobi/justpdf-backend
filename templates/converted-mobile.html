@@ -25,7 +25,7 @@
         height: 100vh;
         overflow-x: auto;
         overflow-y: auto;
-        background: #1a1a1a;
+        background: #f3f4f6;
         -webkit-overflow-scrolling: touch;
         margin: 0;
         padding: 0;
@@ -43,6 +43,7 @@
         align-items: center;
         overflow: auto;
         position: relative;
+        background: #f3f4f6;
       }
 
       .pdf-page {
@@ -77,6 +78,36 @@
       .editable-image {
         position: absolute;
       }
+
+      /* Ensure select dropdowns appear above everything */
+      select {
+        position: relative;
+        z-index: 99999 !important;
+      }
+
+      /* Ensure select dropdown options appear above everything */
+      select option {
+        z-index: 99999 !important;
+      }
+
+      /* Ensure text formatting toolbar and its children have proper z-index */
+      .text-formatting-toolbar {
+        z-index: 99998 !important;
+        position: relative;
+        overflow: visible !important;
+      }
+
+      .text-formatting-toolbar select,
+      .text-formatting-toolbar input[type="color"] {
+        z-index: 99999 !important;
+        position: relative;
+      }
+
+      /* Ensure text element container doesn't block dropdowns */
+      .text-element-container {
+        z-index: 100 !important;
+        overflow: visible !important;
+      }
     </style>
   </head>
   <body>
@@ -91,6 +122,12 @@
       const totalPages = parseInt("{{ pages|length }}");
       let currentZoom = 1.0; // Zoom multiplier (1.0 = 100%)
       let baseScales = {}; // Store base scale for each page
+
+      // GLOBAL flags to disable page touch handlers when select/input is open
+      // These must be defined at top level so handlePageTouchStart can access them
+      let isSelectOpen = false;
+      let isSizeSelectOpen = false;
+      let isColorInputOpen = false;
 
       // Apply zoom to visible page
       function applyZoom(zoom) {
@@ -241,14 +278,92 @@
                     e.stopPropagation();
                   });
                 });
+            } else if (mode === "text") {
+              // Add text mode - create text element on tap
+              console.log("📝 [Mobile] Add text mode activated");
+              const page = document.querySelector(".pdf-page:not(.hidden)");
+              console.log("📝 [Mobile] Page found for text creation:", !!page);
+              if (page) {
+                // Remove previous handlers
+                console.log(
+                  "📝 [Mobile] Removing previous text creation handlers"
+                );
+                page.removeEventListener("click", createTextOnClick);
+                page.removeEventListener("touchend", createTextOnTouch);
+
+                // Add touchstart handler to allow form controls to work natively
+                function handlePageTouchStart(e) {
+                  // CRITICAL: If ANY select/input is open, completely ignore ALL touches
+                  // This allows native picker options to be selected without interference
+                  if (isSelectOpen || isSizeSelectOpen || isColorInputOpen) {
+                    console.log(
+                      "📝 [Mobile] Page touchstart - select/input is open, ignoring touch completely"
+                    );
+                    return; // Don't interfere at all when picker is open
+                  }
+
+                  // If touching a form control, allow native behavior completely
+                  if (
+                    e.target.tagName === "SELECT" ||
+                    e.target.tagName === "INPUT" ||
+                    e.target.closest("select") ||
+                    e.target.closest("input") ||
+                    e.target.closest(".text-formatting-toolbar") ||
+                    e.target.closest(".text-element-container")
+                  ) {
+                    console.log(
+                      "📝 [Mobile] Page touchstart on form control - allowing native behavior"
+                    );
+                    // Stop propagation to prevent other handlers from interfering
+                    e.stopPropagation();
+                    // DON'T prevent default - let native dropdown work
+                    return; // Just return early, don't interfere
+                  }
+                  // For other touches, don't interfere (text creation happens on touchend)
+                }
+
+                // Add handlers for both click and touch (once only - auto-remove after first use)
+                // Note: Not using passive: true because we need stopImmediatePropagation()
+                page.addEventListener("touchstart", handlePageTouchStart);
+                page.addEventListener("click", createTextOnClick, {
+                  once: true,
+                });
+                page.addEventListener("touchend", createTextOnTouch, {
+                  once: true,
+                });
+                console.log(
+                  "📝 [Mobile] Click and touch handlers added for text creation (once only)"
+                );
+                console.log("📝 [Mobile] Page element:", page);
+                console.log("📝 [Mobile] Page classes:", page.className);
+                console.log(
+                  "📝 [Mobile] Page display:",
+                  window.getComputedStyle(page).display
+                );
+              } else {
+                console.error(
+                  "❌ [Mobile] No visible page found for text creation"
+                );
+              }
             } else {
               // Disable editing for other modes
+              console.log(
+                "📝 [Mobile] Disabling text creation mode, mode:",
+                mode
+              );
               document
                 .querySelectorAll(".editable-text, .text-span")
                 .forEach((element) => {
                   element.contentEditable = false;
                   element.style.cursor = "default";
                 });
+              // Remove text creation handlers
+              const page = document.querySelector(".pdf-page:not(.hidden)");
+              if (page) {
+                console.log("📝 [Mobile] Removing text creation handlers");
+                page.removeEventListener("click", createTextOnClick);
+                page.removeEventListener("touchend", createTextOnTouch);
+              }
             }
 
             // Send confirmation back to parent
@@ -266,8 +381,1124 @@
             // Generate PDF for preview using html2canvas and jsPDF
             console.log("📱 [Mobile] Generating PDF for preview");
             generatePDFForPreview();
+          } else if (event.data && event.data.type === "INSERT_SIGNATURE") {
+            // Insert signature into the current page
+            console.log("✍️ [Mobile] Inserting signature");
+            insertSignature(
+              event.data.signatureData,
+              event.data.page || currentPage
+            );
           }
         });
+
+        // Create text element on touch
+        function createTextOnTouch(e) {
+          console.log("📝 [Mobile] createTextOnTouch called");
+          console.log("📝 [Mobile] Touch event:", e);
+
+          // Don't create text if clicking on form controls or toolbar
+          if (
+            e.target.tagName === "SELECT" ||
+            e.target.tagName === "INPUT" ||
+            e.target.closest("select") ||
+            e.target.closest("input") ||
+            e.target.closest(".text-formatting-toolbar") ||
+            e.target.closest(".text-element-container")
+          ) {
+            console.log(
+              "📝 [Mobile] Touch on form control or toolbar, ignoring"
+            );
+            return; // Allow native behavior
+          }
+
+          e.preventDefault();
+          const page = e.currentTarget;
+          console.log("📝 [Mobile] Page element from touch:", page);
+          const pageRect = page.getBoundingClientRect();
+          console.log("📝 [Mobile] Page rect:", pageRect);
+          const touch = e.changedTouches[0];
+          console.log(
+            "📝 [Mobile] Touch coordinates:",
+            touch.clientX,
+            touch.clientY
+          );
+          const x = touch.clientX - pageRect.left;
+          const y = touch.clientY - pageRect.top;
+          console.log("📝 [Mobile] Calculated position:", x, y);
+          createTextElement(page, x, y);
+        }
+
+        // Create text element on click
+        function createTextOnClick(e) {
+          console.log("📝 [Mobile] createTextOnClick called");
+          console.log("📝 [Mobile] Click event:", e);
+
+          // Don't create text if clicking on form controls or toolbar
+          if (
+            e.target.tagName === "SELECT" ||
+            e.target.tagName === "INPUT" ||
+            e.target.closest("select") ||
+            e.target.closest("input") ||
+            e.target.closest(".text-formatting-toolbar") ||
+            e.target.closest(".text-element-container")
+          ) {
+            console.log(
+              "📝 [Mobile] Click on form control or toolbar, ignoring"
+            );
+            return; // Allow native behavior
+          }
+
+          const page = e.currentTarget;
+          console.log("📝 [Mobile] Page element from click:", page);
+          const pageRect = page.getBoundingClientRect();
+          console.log("📝 [Mobile] Page rect:", pageRect);
+          console.log("📝 [Mobile] Click coordinates:", e.clientX, e.clientY);
+          const x = e.clientX - pageRect.left;
+          const y = e.clientY - pageRect.top;
+          console.log("📝 [Mobile] Calculated position:", x, y);
+          createTextElement(page, x, y);
+        }
+
+        // Create text element at position
+        function createTextElement(page, x, y) {
+          console.log("📝 [Mobile] createTextElement called");
+          console.log("📝 [Mobile] Page:", page);
+          console.log("📝 [Mobile] Position:", x, y);
+
+          // Remove handlers immediately to prevent multiple creations
+          console.log("📝 [Mobile] Removing text creation handlers");
+          page.removeEventListener("click", createTextOnClick);
+          page.removeEventListener("touchend", createTextOnTouch);
+
+          // Create text container
+          console.log("📝 [Mobile] Creating text container");
+          const textContainer = document.createElement("div");
+          textContainer.className = "text-element-container";
+          textContainer.style.position = "absolute";
+          textContainer.style.left = x + "px";
+          textContainer.style.top = y + "px";
+          textContainer.style.minWidth = "100px";
+          textContainer.style.minHeight = "30px";
+          textContainer.style.zIndex = "100";
+          textContainer.style.overflow = "visible"; // Ensure dropdowns aren't clipped
+          textContainer.style.border = "2px dashed rgba(255, 255, 255, 0.2)";
+          textContainer.style.padding = "8px";
+          textContainer.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+          textContainer.style.borderRadius = "12px";
+          textContainer.style.transition = "none"; // NO TRANSITION - instant updates for dragging
+          console.log(
+            "📝 [Mobile] Text container created with position:",
+            x,
+            y
+          );
+
+          // Create simple button-based formatting toolbar
+          console.log("📝 [Mobile] Creating formatting toolbar");
+          const toolbar = document.createElement("div");
+          toolbar.className = "text-formatting-toolbar";
+          toolbar.style.position = "absolute";
+          toolbar.style.top = "-70px";
+          toolbar.style.left = "50%";
+          toolbar.style.transform = "translateX(-50%)";
+          toolbar.style.zIndex = "99998";
+          toolbar.style.display = "none";
+          toolbar.style.gap = "8px";
+          toolbar.style.padding = "10px 12px";
+          toolbar.style.backgroundColor = "rgba(255, 255, 255, 0.98)";
+          toolbar.style.backdropFilter = "blur(20px)";
+          toolbar.style.borderRadius = "12px";
+          toolbar.style.alignItems = "center";
+          toolbar.style.boxShadow =
+            "0 4px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1)";
+          toolbar.style.border = "1px solid rgba(0, 0, 0, 0.1)";
+          toolbar.style.flexWrap = "nowrap";
+          toolbar.style.maxWidth = "90vw";
+          toolbar.style.flexDirection = "row";
+          console.log("📝 [Mobile] Toolbar created");
+
+          // Current formatting values
+          let currentFont = "Arial";
+          let currentSize = "14";
+          let currentColor = "#000000";
+          let isBold = false;
+
+          // Font button
+          const fontButton = document.createElement("button");
+          fontButton.textContent = "Font";
+          fontButton.style.padding = "8px 14px";
+          fontButton.style.fontSize = "13px";
+          fontButton.style.borderRadius = "8px";
+          fontButton.style.border = "1px solid rgba(209, 213, 219, 0.8)";
+          fontButton.style.backgroundColor = "rgba(249, 250, 251, 0.9)";
+          fontButton.style.color = "#374151";
+          fontButton.style.cursor = "pointer";
+          fontButton.style.fontWeight = "500";
+          fontButton.style.minWidth = "70px";
+          fontButton.style.transition = "all 0.2s ease";
+          fontButton.style.pointerEvents = "auto";
+          fontButton.style.zIndex = "99999";
+          fontButton.style.position = "relative";
+          fontButton.style.flexShrink = "0";
+
+          // Size button
+          const sizeButton = document.createElement("button");
+          sizeButton.textContent = "14px";
+          sizeButton.style.padding = "8px 14px";
+          sizeButton.style.fontSize = "13px";
+          sizeButton.style.borderRadius = "8px";
+          sizeButton.style.border = "1px solid rgba(209, 213, 219, 0.8)";
+          sizeButton.style.backgroundColor = "rgba(249, 250, 251, 0.9)";
+          sizeButton.style.color = "#374151";
+          sizeButton.style.cursor = "pointer";
+          sizeButton.style.fontWeight = "500";
+          sizeButton.style.minWidth = "60px";
+          sizeButton.style.transition = "all 0.2s ease";
+          sizeButton.style.pointerEvents = "auto";
+          sizeButton.style.zIndex = "99999";
+          sizeButton.style.position = "relative";
+          sizeButton.style.flexShrink = "0";
+
+          // Color button
+          const colorButton = document.createElement("button");
+          colorButton.style.width = "40px";
+          colorButton.style.height = "40px";
+          colorButton.style.borderRadius = "8px";
+          colorButton.style.border = "2px solid rgba(209, 213, 219, 0.8)";
+          colorButton.style.backgroundColor = "#000000";
+          colorButton.style.cursor = "pointer";
+          colorButton.style.transition = "all 0.2s ease";
+          colorButton.style.pointerEvents = "auto";
+          colorButton.style.zIndex = "99999";
+          colorButton.style.position = "relative";
+          colorButton.style.padding = "0";
+          colorButton.style.minWidth = "40px";
+          colorButton.style.flexShrink = "0";
+
+          // Bold button
+          const boldButton = document.createElement("button");
+          boldButton.textContent = "B";
+          boldButton.style.padding = "8px 14px";
+          boldButton.style.fontSize = "16px";
+          boldButton.style.fontWeight = "bold";
+          boldButton.style.borderRadius = "8px";
+          boldButton.style.border = "1px solid rgba(209, 213, 219, 0.8)";
+          boldButton.style.backgroundColor = "rgba(249, 250, 251, 0.9)";
+          boldButton.style.color = "#374151";
+          boldButton.style.cursor = "pointer";
+          boldButton.style.minWidth = "40px";
+          boldButton.style.transition = "all 0.2s ease";
+          boldButton.style.pointerEvents = "auto";
+          boldButton.style.zIndex = "99999";
+          boldButton.style.position = "relative";
+          boldButton.style.flexShrink = "0";
+
+          // Done/Close button to exit text editing
+          const doneButton = document.createElement("button");
+          doneButton.textContent = "Done";
+          doneButton.style.padding = "8px 14px";
+          doneButton.style.fontSize = "13px";
+          doneButton.style.borderRadius = "8px";
+          doneButton.style.border = "1px solid rgba(34, 197, 94, 0.8)";
+          doneButton.style.backgroundColor = "rgba(34, 197, 94, 0.1)";
+          doneButton.style.color = "#16a34a";
+          doneButton.style.cursor = "pointer";
+          doneButton.style.fontWeight = "600";
+          doneButton.style.minWidth = "60px";
+          doneButton.style.transition = "all 0.2s ease";
+          doneButton.style.pointerEvents = "auto";
+          doneButton.style.zIndex = "99999";
+          doneButton.style.position = "relative";
+          doneButton.style.flexShrink = "0";
+
+          // Add buttons to toolbar
+          toolbar.appendChild(fontButton);
+          toolbar.appendChild(sizeButton);
+          toolbar.appendChild(colorButton);
+          toolbar.appendChild(boldButton);
+          toolbar.appendChild(doneButton);
+
+          // Create editable text element
+          console.log("📝 [Mobile] Creating editable text element");
+          const textElement = document.createElement("div");
+          textElement.className = "new-text-element";
+          textElement.contentEditable = true;
+          textElement.style.outline = "none";
+          textElement.style.minWidth = "100px";
+          textElement.style.minHeight = "20px";
+          textElement.textContent = "New Text";
+          textElement.style.cursor = "text";
+          textElement.style.fontSize = "14px";
+          textElement.style.fontFamily = "Arial";
+          textElement.style.color = "#000000";
+          console.log("📝 [Mobile] Text element created");
+
+          // Function to show font selection modal
+          const showFontModal = () => {
+            const modal = document.createElement("div");
+            modal.style.position = "fixed";
+            modal.style.top = "0";
+            modal.style.left = "0";
+            modal.style.width = "100%";
+            modal.style.height = "100%";
+            modal.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+            modal.style.zIndex = "100000";
+            modal.style.display = "flex";
+            modal.style.alignItems = "center";
+            modal.style.justifyContent = "center";
+
+            const content = document.createElement("div");
+            content.style.backgroundColor = "white";
+            content.style.borderRadius = "16px";
+            content.style.padding = "24px";
+            content.style.maxWidth = "90%";
+            content.style.width = "300px";
+            content.style.maxHeight = "80vh";
+            content.style.overflowY = "auto";
+
+            const title = document.createElement("h3");
+            title.textContent = "Select Font";
+            title.style.margin = "0 0 16px 0";
+            title.style.fontSize = "18px";
+            title.style.fontWeight = "600";
+            content.appendChild(title);
+
+            const fonts = [
+              "Arial",
+              "Times New Roman",
+              "Courier New",
+              "Georgia",
+              "Verdana",
+              "Helvetica",
+            ];
+            fonts.forEach((font) => {
+              const option = document.createElement("button");
+              option.textContent = font;
+              option.style.width = "100%";
+              option.style.padding = "12px";
+              option.style.marginBottom = "8px";
+              option.style.borderRadius = "8px";
+              option.style.border = "1px solid #e5e7eb";
+              option.style.backgroundColor =
+                currentFont === font ? "#3b82f6" : "white";
+              option.style.color = currentFont === font ? "white" : "#374151";
+              option.style.cursor = "pointer";
+              option.style.fontFamily = font;
+              option.style.fontSize = "14px";
+              option.style.textAlign = "left";
+              option.onclick = () => {
+                currentFont = font;
+                textElement.style.fontFamily = font;
+                fontButton.textContent =
+                  font.length > 8 ? font.substring(0, 8) + "..." : font;
+                document.body.removeChild(modal);
+              };
+              content.appendChild(option);
+            });
+
+            modal.onclick = (e) => {
+              if (e.target === modal) {
+                document.body.removeChild(modal);
+              }
+            };
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+          };
+
+          // Function to show size selection modal
+          const showSizeModal = () => {
+            const modal = document.createElement("div");
+            modal.style.position = "fixed";
+            modal.style.top = "0";
+            modal.style.left = "0";
+            modal.style.width = "100%";
+            modal.style.height = "100%";
+            modal.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+            modal.style.zIndex = "100000";
+            modal.style.display = "flex";
+            modal.style.alignItems = "center";
+            modal.style.justifyContent = "center";
+
+            const content = document.createElement("div");
+            content.style.backgroundColor = "white";
+            content.style.borderRadius = "16px";
+            content.style.padding = "24px";
+            content.style.maxWidth = "90%";
+            content.style.width = "250px";
+            content.style.maxHeight = "80vh";
+            content.style.overflowY = "auto";
+
+            const title = document.createElement("h3");
+            title.textContent = "Select Size";
+            title.style.margin = "0 0 16px 0";
+            title.style.fontSize = "18px";
+            title.style.fontWeight = "600";
+            content.appendChild(title);
+
+            const sizes = [
+              "10",
+              "12",
+              "14",
+              "16",
+              "18",
+              "20",
+              "24",
+              "28",
+              "32",
+            ];
+            sizes.forEach((size) => {
+              const option = document.createElement("button");
+              option.textContent = size + "px";
+              option.style.width = "100%";
+              option.style.padding = "12px";
+              option.style.marginBottom = "8px";
+              option.style.borderRadius = "8px";
+              option.style.border = "1px solid #e5e7eb";
+              option.style.backgroundColor =
+                currentSize === size ? "#3b82f6" : "white";
+              option.style.color = currentSize === size ? "white" : "#374151";
+              option.style.cursor = "pointer";
+              option.style.fontSize = size + "px";
+              option.style.textAlign = "left";
+              option.onclick = () => {
+                currentSize = size;
+                textElement.style.fontSize = size + "px";
+                sizeButton.textContent = size + "px";
+                document.body.removeChild(modal);
+              };
+              content.appendChild(option);
+            });
+
+            modal.onclick = (e) => {
+              if (e.target === modal) {
+                document.body.removeChild(modal);
+              }
+            };
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+          };
+
+          // Function to show color picker modal
+          const showColorModal = () => {
+            const modal = document.createElement("div");
+            modal.style.position = "fixed";
+            modal.style.top = "0";
+            modal.style.left = "0";
+            modal.style.width = "100%";
+            modal.style.height = "100%";
+            modal.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+            modal.style.zIndex = "100000";
+            modal.style.display = "flex";
+            modal.style.alignItems = "center";
+            modal.style.justifyContent = "center";
+
+            const content = document.createElement("div");
+            content.style.backgroundColor = "white";
+            content.style.borderRadius = "16px";
+            content.style.padding = "24px";
+            content.style.maxWidth = "90%";
+            content.style.width = "300px";
+
+            const title = document.createElement("h3");
+            title.textContent = "Select Color";
+            title.style.margin = "0 0 16px 0";
+            title.style.fontSize = "18px";
+            title.style.fontWeight = "600";
+            content.appendChild(title);
+
+            const colorInput = document.createElement("input");
+            colorInput.type = "color";
+            colorInput.value = currentColor;
+            colorInput.style.width = "100%";
+            colorInput.style.height = "60px";
+            colorInput.style.border = "2px solid #e5e7eb";
+            colorInput.style.borderRadius = "8px";
+            colorInput.style.cursor = "pointer";
+            colorInput.onchange = (e) => {
+              currentColor = e.target.value;
+              textElement.style.color = currentColor;
+              colorButton.style.backgroundColor = currentColor;
+              document.body.removeChild(modal);
+            };
+            content.appendChild(colorInput);
+
+            const presetColors = [
+              "#000000",
+              "#FFFFFF",
+              "#FF0000",
+              "#00FF00",
+              "#0000FF",
+              "#FFFF00",
+              "#FF00FF",
+              "#00FFFF",
+              "#808080",
+              "#FFA500",
+            ];
+            const presetContainer = document.createElement("div");
+            presetContainer.style.display = "grid";
+            presetContainer.style.gridTemplateColumns = "repeat(5, 1fr)";
+            presetContainer.style.gap = "8px";
+            presetContainer.style.marginTop = "16px";
+            presetColors.forEach((color) => {
+              const preset = document.createElement("button");
+              preset.style.width = "40px";
+              preset.style.height = "40px";
+              preset.style.borderRadius = "8px";
+              preset.style.border = "2px solid #e5e7eb";
+              preset.style.backgroundColor = color;
+              preset.style.cursor = "pointer";
+              preset.onclick = () => {
+                currentColor = color;
+                textElement.style.color = currentColor;
+                colorButton.style.backgroundColor = currentColor;
+                document.body.removeChild(modal);
+              };
+              presetContainer.appendChild(preset);
+            });
+            content.appendChild(presetContainer);
+
+            modal.onclick = (e) => {
+              if (e.target === modal) {
+                document.body.removeChild(modal);
+              }
+            };
+
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+          };
+
+          // Add button event listeners
+          fontButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            showFontModal();
+          });
+
+          sizeButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            showSizeModal();
+          });
+
+          colorButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            showColorModal();
+          });
+
+          // Bold button - toggle bold
+          boldButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            isBold = !isBold;
+            if (isBold) {
+              textElement.style.fontWeight = "bold";
+              boldButton.style.backgroundColor = "#3b82f6";
+              boldButton.style.color = "white";
+            } else {
+              textElement.style.fontWeight = "normal";
+              boldButton.style.backgroundColor = "rgba(249, 250, 251, 0.9)";
+              boldButton.style.color = "#374151";
+            }
+            console.log("📝 [Mobile] Bold toggled:", isBold);
+          });
+
+          // Done button - exit text editing mode
+          doneButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            // Hide toolbar and make text non-editable but draggable
+            toolbar.style.display = "none";
+            textElement.contentEditable = false;
+            textElement.blur();
+            textContainer.style.border = "2px dashed rgba(255, 255, 255, 0.2)";
+            textContainer.style.backgroundColor = "rgba(255, 255, 255, 0.05)";
+            textContainer.style.boxShadow = "none";
+            // Switch back to select mode
+            window.parent.postMessage(
+              {
+                type: "SET_EDIT_MODE",
+                mode: "select",
+              },
+              "*"
+            );
+            console.log(
+              "📝 [Mobile] Done button clicked - hiding toolbar, text is now draggable"
+            );
+          });
+
+          // Prevent blur when clicking on toolbar
+          toolbar.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+          });
+
+          toolbar.addEventListener("touchstart", (e) => {
+            e.stopPropagation();
+          });
+
+          // Show/hide toolbar on text element focus/blur
+          textElement.addEventListener("focus", () => {
+            console.log("📝 [Mobile] Text element focused");
+            toolbar.style.display = "flex";
+            textContainer.style.border = "2px solid rgba(255, 255, 255, 0.4)";
+            textContainer.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+            textContainer.style.boxShadow =
+              "0 0 0 4px rgba(255, 255, 255, 0.1)";
+            console.log("📝 [Mobile] Toolbar shown");
+          });
+
+          textElement.addEventListener("blur", (e) => {
+            const relatedTarget = e.relatedTarget;
+            if (relatedTarget && toolbar.contains(relatedTarget)) {
+              return;
+            }
+
+            setTimeout(() => {
+              const activeElement = document.activeElement;
+              if (
+                activeElement !== textElement &&
+                !toolbar.contains(activeElement) &&
+                !document.querySelector('[style*="z-index: 100000"]') // Don't hide if modal is open
+              ) {
+                console.log("📝 [Mobile] Text element blur - hiding toolbar");
+                toolbar.style.display = "none";
+                textContainer.style.border =
+                  "2px dashed rgba(255, 255, 255, 0.2)";
+                textContainer.style.backgroundColor =
+                  "rgba(255, 255, 255, 0.05)";
+                textContainer.style.boxShadow = "none";
+              }
+            }, 200);
+          });
+
+          textContainer.appendChild(toolbar);
+          textContainer.appendChild(textElement);
+          console.log("📝 [Mobile] Appending text container to page");
+          page.appendChild(textContainer);
+          console.log("📝 [Mobile] Text container appended to page");
+          console.log("📝 [Mobile] Page children count:", page.children.length);
+
+          // Make text container draggable
+          let isDragging = false;
+          let dragStartTime = 0;
+          let dragStartX = 0;
+          let dragStartY = 0;
+          let startX, startY;
+          let cachedPageRect = null;
+
+          // Click handler to show toolbar when text is clicked (but not when dragging)
+          textElement.addEventListener("click", (e) => {
+            // Only show toolbar if it's hidden and not dragging
+            if (toolbar.style.display === "none" && !isDragging) {
+              e.stopPropagation();
+              toolbar.style.display = "flex";
+              textElement.contentEditable = true;
+              textElement.focus();
+              textContainer.style.border = "2px solid rgba(255, 255, 255, 0.4)";
+              textContainer.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+              textContainer.style.boxShadow =
+                "0 0 0 4px rgba(255, 255, 255, 0.1)";
+            }
+          });
+
+          textContainer.addEventListener(
+            "touchstart",
+            (e) => {
+              // Don't drag if clicking on toolbar or buttons
+              if (
+                e.target.closest(".text-formatting-toolbar") ||
+                e.target.closest("button")
+              ) {
+                return;
+              }
+
+              // If toolbar is visible, clicking on text should focus it, not drag
+              if (toolbar.style.display === "flex") {
+                if (
+                  e.target === textElement ||
+                  textElement.contains(e.target)
+                ) {
+                  textElement.focus();
+                  return;
+                }
+              }
+
+              // Prevent page scroll immediately to allow drag
+              e.stopPropagation();
+
+              // Record drag start
+              dragStartTime = Date.now();
+              const touch = e.touches[0];
+              dragStartX = touch.clientX;
+              dragStartY = touch.clientY;
+              isDragging = false; // Will be set to true on move if movement detected
+
+              // Log click/touch on text
+              const containerRect = textContainer.getBoundingClientRect();
+              console.log("🖐️ [DRAG] TOUCH STARTED on text:", {
+                touchX: touch.clientX,
+                touchY: touch.clientY,
+                containerPosition: {
+                  left: textContainer.style.left,
+                  top: textContainer.style.top,
+                  rectLeft: containerRect.left,
+                  rectTop: containerRect.top,
+                },
+                isDragging: false,
+              });
+            },
+            { passive: false }
+          );
+
+          textContainer.addEventListener(
+            "touchmove",
+            (e) => {
+              // Prevent page scroll immediately - critical for instant drag
+              e.preventDefault();
+              e.stopPropagation();
+
+              // Don't drag if touching toolbar
+              if (
+                e.target.closest(".text-formatting-toolbar") ||
+                e.target.closest("button")
+              ) {
+                return;
+              }
+
+              // If toolbar is visible, don't drag
+              if (toolbar.style.display === "flex") {
+                return;
+              }
+
+              const touch = e.touches[0];
+              const deltaX = Math.abs(touch.clientX - dragStartX);
+              const deltaY = Math.abs(touch.clientY - dragStartY);
+
+              // Log finger/mouse movement
+              if (!isDragging) {
+                console.log("🖐️ [DRAG] FINGER MOVING (not dragging yet):", {
+                  touchX: touch.clientX,
+                  touchY: touch.clientY,
+                  deltaX: deltaX,
+                  deltaY: deltaY,
+                  dragStartX: dragStartX,
+                  dragStartY: dragStartY,
+                  threshold: 2,
+                  willStartDrag: deltaX > 2 || deltaY > 2,
+                });
+              }
+
+              // Start dragging immediately on any movement
+              if (!isDragging && (deltaX > 2 || deltaY > 2)) {
+                isDragging = true;
+                const rect = textContainer.getBoundingClientRect();
+                const pageRect = page.getBoundingClientRect();
+                startX = touch.clientX - rect.left;
+                startY = touch.clientY - rect.top;
+                cachedPageRect = pageRect;
+                textContainer.style.cursor = "move";
+                textContainer.style.transition = "none"; // Disable transition for instant drag
+
+                // Log when drag actually starts
+                console.log("🖐️ [DRAG] DRAG STARTED - Text is now moving:", {
+                  touchX: touch.clientX,
+                  touchY: touch.clientY,
+                  startX: startX,
+                  startY: startY,
+                  initialPosition: {
+                    left: textContainer.style.left,
+                    top: textContainer.style.top,
+                    rectLeft: rect.left,
+                    rectTop: rect.top,
+                  },
+                  pageRect: {
+                    left: pageRect.left,
+                    top: pageRect.top,
+                  },
+                });
+              }
+
+              if (!isDragging) {
+                return;
+              }
+
+              // Update position INSTANTLY - use cached pageRect, no recalculation
+              if (!cachedPageRect) {
+                cachedPageRect = page.getBoundingClientRect();
+              }
+              const newX = touch.clientX - cachedPageRect.left - startX;
+              const newY = touch.clientY - cachedPageRect.top - startY;
+
+              // Direct synchronous style update - instant like desktop, NO DELAY
+              textContainer.style.left = newX + "px";
+              textContainer.style.top = newY + "px";
+
+              // Log position updates (throttled to avoid spam)
+              if (
+                !textContainer._lastLogTime ||
+                Date.now() - textContainer._lastLogTime > 100
+              ) {
+                console.log("🖐️ [DRAG] POSITION UPDATED:", {
+                  newX: newX,
+                  newY: newY,
+                  touchX: touch.clientX,
+                  touchY: touch.clientY,
+                  styleLeft: textContainer.style.left,
+                  styleTop: textContainer.style.top,
+                });
+                textContainer._lastLogTime = Date.now();
+              }
+            },
+            { passive: false }
+          );
+
+          textContainer.addEventListener("touchend", (e) => {
+            // Don't interfere with toolbar buttons
+            if (
+              e.target.closest(".text-formatting-toolbar") ||
+              e.target.closest("button")
+            ) {
+              return;
+            }
+
+            // If it was a quick tap (not a drag) and toolbar is hidden, show it
+            if (!isDragging && toolbar.style.display === "none") {
+              const touchDuration = Date.now() - dragStartTime;
+              if (touchDuration < 300) {
+                // Quick tap - show toolbar
+                toolbar.style.display = "flex";
+                textElement.contentEditable = true;
+                textElement.focus();
+                textContainer.style.border =
+                  "2px solid rgba(255, 255, 255, 0.4)";
+                textContainer.style.backgroundColor =
+                  "rgba(255, 255, 255, 0.1)";
+                textContainer.style.boxShadow =
+                  "0 0 0 4px rgba(255, 255, 255, 0.1)";
+                return;
+              }
+            }
+
+            isDragging = false;
+            cachedPageRect = null;
+            textContainer.style.cursor = "default";
+          });
+
+          // Also support mouse for desktop testing
+          let mouseDragStartTime = 0;
+          let mouseDragStartX = 0;
+          let mouseDragStartY = 0;
+
+          textContainer.addEventListener("mousedown", (e) => {
+            // Don't drag if clicking on toolbar or buttons
+            if (
+              e.target.closest(".text-formatting-toolbar") ||
+              e.target.closest("button")
+            ) {
+              return;
+            }
+
+            // If toolbar is visible, clicking on text should focus it, not drag
+            if (toolbar.style.display === "flex") {
+              if (e.target === textElement || textElement.contains(e.target)) {
+                textElement.focus();
+                return;
+              }
+            }
+
+            mouseDragStartTime = Date.now();
+            mouseDragStartX = e.clientX;
+            mouseDragStartY = e.clientY;
+            isDragging = false;
+
+            // Log click on text
+            const containerRect = textContainer.getBoundingClientRect();
+            console.log("🖱️ [DRAG] MOUSE CLICKED on text:", {
+              mouseX: e.clientX,
+              mouseY: e.clientY,
+              containerPosition: {
+                left: textContainer.style.left,
+                top: textContainer.style.top,
+                rectLeft: containerRect.left,
+                rectTop: containerRect.top,
+              },
+              isDragging: false,
+            });
+          });
+
+          textContainer.addEventListener("mousemove", (e) => {
+            // If toolbar is visible, don't drag
+            if (toolbar.style.display === "flex") {
+              return;
+            }
+
+            const deltaX = Math.abs(e.clientX - mouseDragStartX);
+            const deltaY = Math.abs(e.clientY - mouseDragStartY);
+
+            // Log mouse movement
+            if (!isDragging) {
+              console.log("🖱️ [DRAG] MOUSE MOVING (not dragging yet):", {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                deltaX: deltaX,
+                deltaY: deltaY,
+                mouseDragStartX: mouseDragStartX,
+                mouseDragStartY: mouseDragStartY,
+                threshold: 5,
+                willStartDrag: deltaX > 5 || deltaY > 5,
+              });
+            }
+
+            // Start dragging if moved more than 5px
+            if (!isDragging && (deltaX > 5 || deltaY > 5)) {
+              isDragging = true;
+              e.preventDefault();
+              const rect = textContainer.getBoundingClientRect();
+              const pageRect = page.getBoundingClientRect();
+              startX = e.clientX - rect.left;
+              startY = e.clientY - rect.top;
+              cachedPageRect = pageRect;
+              textContainer.style.cursor = "move";
+              textContainer.style.transition = "none"; // Disable transition for instant drag
+
+              // Log when drag actually starts
+              console.log("🖱️ [DRAG] DRAG STARTED - Text is now moving:", {
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                startX: startX,
+                startY: startY,
+                initialPosition: {
+                  left: textContainer.style.left,
+                  top: textContainer.style.top,
+                  rectLeft: rect.left,
+                  rectTop: rect.top,
+                },
+                pageRect: {
+                  left: pageRect.left,
+                  top: pageRect.top,
+                },
+              });
+            }
+
+            if (!isDragging) {
+              return;
+            }
+
+            e.preventDefault();
+
+            // Update position instantly - use cached pageRect, no recalculation
+            if (!cachedPageRect) {
+              cachedPageRect = page.getBoundingClientRect();
+            }
+            const newX = e.clientX - cachedPageRect.left - startX;
+            const newY = e.clientY - cachedPageRect.top - startY;
+
+            // Direct synchronous style update - instant like desktop, NO DELAY
+            textContainer.style.left = newX + "px";
+            textContainer.style.top = newY + "px";
+
+            // Log position updates (throttled to avoid spam)
+            if (
+              !textContainer._lastMouseLogTime ||
+              Date.now() - textContainer._lastMouseLogTime > 100
+            ) {
+              console.log("🖱️ [DRAG] POSITION UPDATED:", {
+                newX: newX,
+                newY: newY,
+                mouseX: e.clientX,
+                mouseY: e.clientY,
+                styleLeft: textContainer.style.left,
+                styleTop: textContainer.style.top,
+              });
+              textContainer._lastMouseLogTime = Date.now();
+            }
+          });
+
+          textContainer.addEventListener("mouseup", (e) => {
+            if (
+              e.target.closest(".text-formatting-toolbar") ||
+              e.target.closest("button")
+            ) {
+              return;
+            }
+
+            // If it was a quick click (not a drag) and toolbar is hidden, show it
+            if (!isDragging && toolbar.style.display === "none") {
+              const clickDuration = Date.now() - mouseDragStartTime;
+              if (clickDuration < 300) {
+                // Quick click - show toolbar
+                toolbar.style.display = "flex";
+                textElement.contentEditable = true;
+                textElement.focus();
+                textContainer.style.border =
+                  "2px solid rgba(255, 255, 255, 0.4)";
+                textContainer.style.backgroundColor =
+                  "rgba(255, 255, 255, 0.1)";
+                textContainer.style.boxShadow =
+                  "0 0 0 4px rgba(255, 255, 255, 0.1)";
+                isDragging = false;
+                return;
+              }
+            }
+
+            isDragging = false;
+            cachedPageRect = null;
+            textContainer.style.cursor = "default";
+          });
+
+          // Show toolbar and focus text
+          setTimeout(() => {
+            console.log(
+              "📝 [Mobile] Showing toolbar and focusing text element"
+            );
+            // Show toolbar immediately
+            toolbar.style.display = "flex";
+            textContainer.style.border = "2px solid rgba(255, 255, 255, 0.4)";
+            textContainer.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+            textContainer.style.boxShadow =
+              "0 0 0 4px rgba(255, 255, 255, 0.1)";
+            // Focus text element
+            textElement.focus();
+            console.log(
+              "📝 [Mobile] Text element focused, activeElement:",
+              document.activeElement
+            );
+            const range = document.createRange();
+            range.selectNodeContents(textElement);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            console.log("📝 [Mobile] Text selected");
+          }, 10);
+
+          // Switch back to edit-text mode after creating text
+          setTimeout(() => {
+            window.parent.postMessage(
+              {
+                type: "EDIT_MODE_SET",
+                mode: "edit-text",
+              },
+              "*"
+            );
+            console.log(
+              "📝 [Mobile] Switched back to edit-text mode after creating text"
+            );
+          }, 100);
+
+          console.log("📝 [Mobile] Text element created at:", x, y);
+        }
+
+        // Insert signature function
+        function insertSignature(signatureData, pageNumber) {
+          const page = document.querySelector(
+            `.pdf-page:nth-child(${pageNumber})`
+          );
+          if (!page) {
+            console.error("❌ [Mobile] Page not found for signature insertion");
+            return;
+          }
+
+          // Create signature container
+          const signatureContainer = document.createElement("div");
+          signatureContainer.className = "signature-container";
+          signatureContainer.style.position = "absolute";
+          signatureContainer.style.left = "50%";
+          signatureContainer.style.top = "50%";
+          signatureContainer.style.transform = "translate(-50%, -50%)";
+          signatureContainer.style.width = "200px";
+          signatureContainer.style.height = "100px";
+          signatureContainer.style.zIndex = "100";
+          signatureContainer.style.cursor = "move";
+
+          // Create signature image
+          const signatureImg = document.createElement("img");
+          signatureImg.src = signatureData;
+          signatureImg.style.width = "100%";
+          signatureImg.style.height = "100%";
+          signatureImg.style.objectFit = "contain";
+          signatureImg.style.pointerEvents = "none";
+
+          signatureContainer.appendChild(signatureImg);
+          page.appendChild(signatureContainer);
+
+          // Add resize handles
+          const resizeHandle = document.createElement("div");
+          resizeHandle.className = "resize-handle";
+          resizeHandle.style.position = "absolute";
+          resizeHandle.style.width = "20px";
+          resizeHandle.style.height = "20px";
+          resizeHandle.style.bottom = "0";
+          resizeHandle.style.right = "0";
+          resizeHandle.style.backgroundColor = "#3b82f6";
+          resizeHandle.style.border = "2px solid white";
+          resizeHandle.style.borderRadius = "50%";
+          resizeHandle.style.cursor = "nwse-resize";
+          resizeHandle.style.zIndex = "1001";
+          signatureContainer.appendChild(resizeHandle);
+
+          // Make draggable
+          let isDragging = false;
+          let isResizing = false;
+          let startX, startY, initialX, initialY, initialWidth, initialHeight;
+
+          signatureContainer.addEventListener("touchstart", (e) => {
+            if (e.target === resizeHandle) {
+              e.stopPropagation();
+              isResizing = true;
+              const touch = e.touches[0];
+              const rect = signatureContainer.getBoundingClientRect();
+              startX = touch.clientX;
+              startY = touch.clientY;
+              initialWidth = rect.width;
+              initialHeight = rect.height;
+              initialX = rect.left;
+              initialY = rect.top;
+            } else {
+              e.preventDefault();
+              isDragging = true;
+              const touch = e.touches[0];
+              const rect = signatureContainer.getBoundingClientRect();
+              startX = touch.clientX - rect.left;
+              startY = touch.clientY - rect.top;
+            }
+          });
+
+          signatureContainer.addEventListener("touchmove", (e) => {
+            e.preventDefault();
+            if (isResizing) {
+              const touch = e.touches[0];
+              const deltaX = touch.clientX - startX;
+              const deltaY = touch.clientY - startY;
+              const newWidth = Math.max(50, initialWidth + deltaX);
+              const newHeight = Math.max(50, initialHeight + deltaY);
+              signatureContainer.style.width = newWidth + "px";
+              signatureContainer.style.height = newHeight + "px";
+            } else if (isDragging) {
+              const touch = e.touches[0];
+              const pageRect = page.getBoundingClientRect();
+              const newX = touch.clientX - pageRect.left - startX;
+              const newY = touch.clientY - pageRect.top - startY;
+              signatureContainer.style.left = newX + "px";
+              signatureContainer.style.top = newY + "px";
+              signatureContainer.style.transform = "none";
+            }
+          });
+
+          signatureContainer.addEventListener("touchend", () => {
+            isDragging = false;
+            isResizing = false;
+          });
+
+          // Send confirmation
+          window.parent.postMessage(
+            {
+              type: "SIGNATURE_INSERTED",
+              page: pageNumber,
+            },
+            "*"
+          );
+        }
 
         // PDF generation function for mobile
         async function generatePDFForPreview() {
