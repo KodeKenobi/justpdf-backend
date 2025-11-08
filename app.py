@@ -1981,7 +1981,9 @@ def convert_html_to_pdf_playwright(html_path, output_path):
         html_dir = os.path.dirname(os.path.abspath(html_path))
         # Convert to file:// URL format (Windows compatible)
         if os.sep == '\\':
-            base_url = f"file:///{html_dir.replace('\\', '/')}/"
+            # Fix: Cannot use backslash in f-string expression, so do replace first
+            html_dir_normalized = html_dir.replace('\\', '/')
+            base_url = f"file:///{html_dir_normalized}/"
         else:
             base_url = f"file://{html_dir}/"
         
