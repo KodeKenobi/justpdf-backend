@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system dependencies including FFmpeg and build tools for pycairo
+# Install system dependencies including FFmpeg, build tools for pycairo, and Playwright deps
 # Updated for Railway build context - using justpdf-backend/ prefix
 # Force rebuild - Railway cache issue
 RUN apt-get update && apt-get install -y \
@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     pkg-config \
     libcairo2-dev \
+    libnspr4 \
+    libnss3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

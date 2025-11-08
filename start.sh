@@ -16,7 +16,10 @@ echo "PYTHONPATH: $PYTHONPATH"
 
 # Test if we can import the app
 echo "Testing Python import..."
-python -c "import app; print('App import successful')"
+python -c "import app; print('App import successful')" || {
+    echo "ERROR: Failed to import app"
+    exit 1
+}
 
 # Test health endpoint before starting gunicorn
 echo "Testing health endpoint..."
@@ -29,7 +32,9 @@ with flask_app.test_client() as client:
         print('Health endpoint working!')
     else:
         print(f'Health endpoint failed: {response.get_data(as_text=True)}')
-"
+" || {
+    echo "WARNING: Health endpoint test failed, but continuing..."
+}
 
 # Start gunicorn with the port
 echo "Starting Gunicorn on 0.0.0.0:$PORT..."
