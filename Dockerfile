@@ -1,10 +1,14 @@
 FROM python:3.11-slim
 
-# Install system dependencies including FFmpeg
+# Install system dependencies including FFmpeg and build tools for pycairo
 # Updated for Railway build context - using justpdf-backend/ prefix
 # Force rebuild - Railway cache issue
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    gcc \
+    python3-dev \
+    pkg-config \
+    libcairo2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
