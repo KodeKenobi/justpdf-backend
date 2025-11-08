@@ -134,6 +134,12 @@
         pointer-events: auto;
       }
 
+      /* Show delete button when image is selected */
+      .image-container.selected .element-delete-btn {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
       .text-formatting-toolbar select,
       .text-formatting-toolbar input[type="color"] {
         z-index: 99999 !important;
@@ -484,6 +490,14 @@
             console.log("✍️ [Mobile] Inserting signature");
             insertSignature(
               event.data.signatureData,
+              event.data.page || currentPage
+            );
+          } else if (event.data && event.data.type === "INSERT_IMAGE") {
+            // Insert image into the current page
+            console.log("🖼️ [Mobile] Inserting image");
+            insertImage(
+              event.data.imageData,
+              event.data.fileName || "image",
               event.data.page || currentPage
             );
           }
@@ -1720,13 +1734,12 @@
             }
           });
 
-          signatureContainer.addEventListener("touchend", () => {
-            isDragging = false;
-            isResizing = false;
-          });
+          // Show delete button when signature is clicked or touched
+          let signatureTapStartTime = 0;
+          let signatureTapStartX = 0;
+          let signatureTapStartY = 0;
 
-          // Show delete button when signature is clicked
-          signatureContainer.addEventListener("click", (e) => {
+          const handleSignatureSelect = (e) => {
             // Don't show if clicking on delete button or resize handle
             if (
               e.target.classList.contains("element-delete-btn") ||
@@ -1735,6 +1748,14 @@
             ) {
               return;
             }
+
+            if (e.type === "touchstart") {
+              signatureTapStartTime = Date.now();
+              const touch = e.touches[0];
+              signatureTapStartX = touch.clientX;
+              signatureTapStartY = touch.clientY;
+            }
+
             // Remove selected from all other signatures
             document
               .querySelectorAll(".signature-container.selected")
@@ -1745,6 +1766,33 @@
               });
             // Add selected class to show delete button
             signatureContainer.classList.add("selected");
+          };
+
+          signatureContainer.addEventListener("click", handleSignatureSelect);
+          signatureContainer.addEventListener(
+            "touchstart",
+            handleSignatureSelect
+          );
+
+          signatureContainer.addEventListener("touchend", (e) => {
+            // Handle drag end
+            isDragging = false;
+            isResizing = false;
+
+            // Handle tap detection for selection
+            if (signatureTapStartTime > 0 && !isDragging && !isResizing) {
+              const touchDuration = Date.now() - signatureTapStartTime;
+              const touch = e.changedTouches[0];
+              const deltaX = Math.abs(touch.clientX - signatureTapStartX);
+              const deltaY = Math.abs(touch.clientY - signatureTapStartY);
+
+              // If it was a quick tap (not a drag), ensure selected state
+              if (touchDuration < 300 && deltaX < 5 && deltaY < 5) {
+                signatureContainer.classList.add("selected");
+              }
+
+              signatureTapStartTime = 0;
+            }
           });
 
           // Hide delete button when clicking away from signature
@@ -1753,9 +1801,19 @@
               signatureContainer.classList.remove("selected");
             }
           };
+          const handleSignatureDocumentTouch = (e) => {
+            if (!signatureContainer.contains(e.target)) {
+              signatureContainer.classList.remove("selected");
+            }
+          };
           document.addEventListener(
             "click",
             handleSignatureDocumentClick,
+            true
+          );
+          document.addEventListener(
+            "touchstart",
+            handleSignatureDocumentTouch,
             true
           );
 
@@ -1767,6 +1825,11 @@
               handleSignatureDocumentClick,
               true
             );
+            document.removeEventListener(
+              "touchstart",
+              handleSignatureDocumentTouch,
+              true
+            );
             originalSignatureRemove.call(this);
           };
 
@@ -1774,6 +1837,259 @@
           window.parent.postMessage(
             {
               type: "SIGNATURE_INSERTED",
+              page: pageNumber,
+            },
+            "*"
+          );
+        }
+
+        // Insert image function
+        function insertImage(imageData, fileName, pageNumber) {
+          const page = document.querySelector(
+            `.pdf-page:nth-child(${pageNumber})`
+          );
+          if (!page) {
+            console.error("❌ [Mobile] Page not found for image insertion");
+            return;
+          }
+
+          // Create image container
+          const imageContainer = document.createElement("div");
+          imageContainer.className = "image-container";
+          imageContainer.style.position = "absolute";
+          imageContainer.style.left = "50%";
+          imageContainer.style.top = "50%";
+          imageContainer.style.transform = "translate(-50%, -50%)";
+          imageContainer.style.width = "200px";
+          imageContainer.style.height = "200px";
+          imageContainer.style.minWidth = "50px";
+          imageContainer.style.minHeight = "50px";
+          imageContainer.style.zIndex = "100";
+          imageContainer.style.cursor = "move";
+          imageContainer.style.border = "2px dashed #3b82f6";
+          imageContainer.style.borderRadius = "4px";
+
+          // Create image element
+          const img = document.createElement("img");
+          img.src = imageData;
+          img.style.width = "100%";
+          img.style.height = "100%";
+          img.style.objectFit = "contain";
+          img.style.pointerEvents = "none";
+          img.style.userSelect = "none";
+          img.draggable = false;
+
+          imageContainer.appendChild(img);
+          page.appendChild(imageContainer);
+
+          // Add resize handles
+          const resizeHandle = document.createElement("div");
+          resizeHandle.className = "resize-handle";
+          resizeHandle.style.position = "absolute";
+          resizeHandle.style.width = "20px";
+          resizeHandle.style.height = "20px";
+          resizeHandle.style.bottom = "0";
+          resizeHandle.style.right = "0";
+          resizeHandle.style.backgroundColor = "#3b82f6";
+          resizeHandle.style.border = "2px solid white";
+          resizeHandle.style.borderRadius = "50%";
+          resizeHandle.style.cursor = "nwse-resize";
+          resizeHandle.style.zIndex = "1001";
+          imageContainer.appendChild(resizeHandle);
+
+          // Create delete button for image
+          const deleteBtn = document.createElement("button");
+          deleteBtn.className = "element-delete-btn";
+          deleteBtn.innerHTML = "×";
+          deleteBtn.title = "Delete image";
+          deleteBtn.style.lineHeight = "1";
+          console.log("🗑️ [Mobile] Created delete button for image");
+
+          // Delete button event handler
+          deleteBtn.addEventListener("click", async (e) => {
+            console.log("🗑️ [Mobile] Delete button clicked for image");
+            e.preventDefault();
+            e.stopPropagation();
+            const confirmed = await showConfirmation(
+              "Are you sure you want to delete this image?"
+            );
+            if (confirmed) {
+              imageContainer.remove();
+              console.log("🗑️ [Mobile] Image deleted");
+            }
+          });
+
+          // Prevent drag/resize when clicking delete button
+          deleteBtn.addEventListener("touchstart", (e) => {
+            e.stopPropagation();
+          });
+
+          deleteBtn.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+          });
+
+          imageContainer.appendChild(deleteBtn);
+
+          // Make draggable
+          let isDragging = false;
+          let isResizing = false;
+          let startX, startY, initialX, initialY, initialWidth, initialHeight;
+
+          imageContainer.addEventListener("touchstart", (e) => {
+            // Don't drag/resize if clicking on delete button
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn")
+            ) {
+              return;
+            }
+
+            if (e.target === resizeHandle) {
+              e.stopPropagation();
+              isResizing = true;
+              const touch = e.touches[0];
+              const rect = imageContainer.getBoundingClientRect();
+              startX = touch.clientX;
+              startY = touch.clientY;
+              initialWidth = rect.width;
+              initialHeight = rect.height;
+              initialX = rect.left;
+              initialY = rect.top;
+            } else {
+              e.preventDefault();
+              isDragging = true;
+              const touch = e.touches[0];
+              const rect = imageContainer.getBoundingClientRect();
+              startX = touch.clientX - rect.left;
+              startY = touch.clientY - rect.top;
+            }
+          });
+
+          imageContainer.addEventListener("touchmove", (e) => {
+            // Don't drag/resize if touching delete button
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn")
+            ) {
+              return;
+            }
+
+            e.preventDefault();
+            if (isResizing) {
+              const touch = e.touches[0];
+              const deltaX = touch.clientX - startX;
+              const deltaY = touch.clientY - startY;
+              const newWidth = Math.max(50, initialWidth + deltaX);
+              const newHeight = Math.max(50, initialHeight + deltaY);
+              imageContainer.style.width = newWidth + "px";
+              imageContainer.style.height = newHeight + "px";
+            } else if (isDragging) {
+              const touch = e.touches[0];
+              const pageRect = page.getBoundingClientRect();
+              const newX = touch.clientX - pageRect.left - startX;
+              const newY = touch.clientY - pageRect.top - startY;
+              imageContainer.style.left = newX + "px";
+              imageContainer.style.top = newY + "px";
+              imageContainer.style.transform = "none";
+            }
+          });
+
+          // Show delete button when image is clicked or touched
+          let imageTapStartTime = 0;
+          let imageTapStartX = 0;
+          let imageTapStartY = 0;
+
+          const handleImageSelect = (e) => {
+            // Don't show if clicking on delete button or resize handle
+            if (
+              e.target.classList.contains("element-delete-btn") ||
+              e.target.closest(".element-delete-btn") ||
+              e.target === resizeHandle
+            ) {
+              return;
+            }
+
+            if (e.type === "touchstart") {
+              imageTapStartTime = Date.now();
+              const touch = e.touches[0];
+              imageTapStartX = touch.clientX;
+              imageTapStartY = touch.clientY;
+            }
+
+            // Remove selected from all other images
+            document
+              .querySelectorAll(".image-container.selected")
+              .forEach((container) => {
+                if (container !== imageContainer) {
+                  container.classList.remove("selected");
+                }
+              });
+            // Add selected class to show delete button
+            imageContainer.classList.add("selected");
+          };
+
+          imageContainer.addEventListener("click", handleImageSelect);
+          imageContainer.addEventListener("touchstart", handleImageSelect);
+
+          imageContainer.addEventListener("touchend", (e) => {
+            // Handle drag end
+            isDragging = false;
+            isResizing = false;
+
+            // Handle tap detection for selection
+            if (imageTapStartTime > 0 && !isDragging && !isResizing) {
+              const touchDuration = Date.now() - imageTapStartTime;
+              const touch = e.changedTouches[0];
+              const deltaX = Math.abs(touch.clientX - imageTapStartX);
+              const deltaY = Math.abs(touch.clientY - imageTapStartY);
+
+              // If it was a quick tap (not a drag), ensure selected state
+              if (touchDuration < 300 && deltaX < 5 && deltaY < 5) {
+                imageContainer.classList.add("selected");
+              }
+
+              imageTapStartTime = 0;
+            }
+          });
+
+          // Hide delete button when clicking away from image
+          const handleImageDocumentClick = (e) => {
+            if (!imageContainer.contains(e.target)) {
+              imageContainer.classList.remove("selected");
+            }
+          };
+          const handleImageDocumentTouch = (e) => {
+            if (!imageContainer.contains(e.target)) {
+              imageContainer.classList.remove("selected");
+            }
+          };
+          document.addEventListener("click", handleImageDocumentClick, true);
+          document.addEventListener(
+            "touchstart",
+            handleImageDocumentTouch,
+            true
+          );
+
+          // Clean up listener when element is removed
+          const originalImageRemove = imageContainer.remove;
+          imageContainer.remove = function () {
+            document.removeEventListener(
+              "click",
+              handleImageDocumentClick,
+              true
+            );
+            document.removeEventListener(
+              "touchstart",
+              handleImageDocumentTouch,
+              true
+            );
+            originalImageRemove.call(this);
+          };
+
+          // Send confirmation
+          window.parent.postMessage(
+            {
+              type: "IMAGE_INSERTED",
               page: pageNumber,
             },
             "*"
