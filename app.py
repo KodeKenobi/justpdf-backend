@@ -14,6 +14,35 @@ import subprocess
 import shutil
 import threading
 
+# Try to import HTML to PDF conversion libraries
+WEASYPRINT_AVAILABLE = False
+XHTML2PDF_AVAILABLE = False
+PLAYWRIGHT_AVAILABLE = False
+
+# Try WeasyPrint (requires GTK+ on Windows - often problematic)
+try:
+    from weasyprint import HTML, CSS
+    WEASYPRINT_AVAILABLE = True
+    print("✅ WeasyPrint available")
+except (ImportError, OSError) as e:
+    print(f"⚠️ WeasyPrint not available: {e}")
+
+# Try xhtml2pdf (pure Python, works on Windows)
+try:
+    from xhtml2pdf import pisa
+    XHTML2PDF_AVAILABLE = True
+    print("✅ xhtml2pdf available")
+except ImportError:
+    print("⚠️ xhtml2pdf not available")
+
+# Try Playwright (browser-based, most accurate but requires browser installation)
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+    print("✅ Playwright available")
+except ImportError:
+    print("⚠️ Playwright not available")
+
 # Import new API modules
 import sys
 import os
@@ -456,7 +485,7 @@ def get_pdf_thumbnail(filename, page_num):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route("/api/split_pdf", methods=["POST"])
+@app.route("/split_pdf", methods=["POST"])
 def split_pdf():
     """Split PDF into individual pages"""
     try:
@@ -1711,31 +1740,105 @@ def convert_pdf_to_word():
         filepath = os.path.join(UPLOAD_FOLDER, file.filename)
         file.save(filepath)
         
-        # Convert PDF to HTML first
+        # Use the EXACT same conversion logic as /convert/<filename>
         doc = fitz.open(filepath)
-        html_content = ""
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            html_content += page.get_text("html")
+        pages_data = []
+        image_counter = 0
+        
+        for page_idx in range(len(doc)):
+            page = doc[page_idx]
+            page_dict = page.get_text("dict")
+            
+            page_html = f'<div class="pdf-page" data-page="{page_idx + 1}" data-width="{page.rect.width}" data-height="{page.rect.height}">'
+            
+            for block in page_dict["blocks"]:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        line_html = '<div class="text-line">'
+                        for span in line["spans"]:
+                            text = span["text"]
+                            if text.strip():
+                                bbox = span["bbox"]
+                                font = span["font"]
+                                size = span["size"]
+                                flags = span["flags"]
+                                
+                                style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; font-size: {size}px; font-family: {font};"
+                                if flags & 2**4:
+                                    style += " font-weight: bold;"
+                                if flags & 2**1:
+                                    style += " font-style: italic;"
+                                
+                                line_html += f'<span class="text-span editable-text" data-text="{text}" style="{style}">{text}</span>'
+                        line_html += '</div>'
+                        page_html += line_html
+                
+                elif "image" in block:
+                    image_counter += 1
+                    bbox = block["bbox"]
+                    image_data = block["image"]
+                    image_base64 = base64.b64encode(image_data).decode()
+                    
+                    style = f"position: absolute; left: {bbox[0]}px; top: {bbox[1]}px; width: {bbox[2] - bbox[0]}px; height: {bbox[3] - bbox[1]}px;"
+                    page_html += f'<img class="editable-image" data-image-id="{image_counter}" src="data:image/png;base64,{image_base64}" style="{style}">'
+            
+            page_html += '</div>'
+            pages_data.append({
+                'html': page_html,
+                'width': page.rect.width,
+                'height': page.rect.height
+            })
+        
         doc.close()
         
-        # Save HTML
+        # Use the EXACT same template rendering as /convert/<filename>
         html_filename = f"{file.filename.replace('.pdf', '')}_converted.html"
         html_filepath = os.path.join(HTML_FOLDER, html_filename)
-        with open(html_filepath, 'w', encoding='utf-8') as f:
-            f.write(html_content)
         
-        # For now, return HTML (can be enhanced to convert to DOCX later)
+        # Clear template cache like convert_pdf does
+        import flask.templating
+        import jinja2
+        if hasattr(app, 'jinja_env'):
+            app.jinja_env.cache.clear()
+        try:
+            if hasattr(flask.templating, '_template_cache'):
+                flask.templating._template_cache.clear()
+        except:
+            pass
+        
+        # Use desktop template (same as convert_pdf default)
+        template_name = "converted.html"
+        template_path = os.path.join(app.template_folder, template_name)
+        
+        # Force clear template cache and touch file
+        if hasattr(app, 'jinja_env'):
+            app.jinja_env.cache.clear()
+        if os.path.exists(template_path):
+            os.utime(template_path, None)
+        
+        # Render using the EXACT same method as convert_pdf
+        rendered_html = render_template(template_name, 
+                                       filename=file.filename, 
+                                       pages=pages_data)
+        
+        # Save the rendered HTML to file with UTF-8 encoding
+        with open(html_filepath, 'w', encoding='utf-8') as f:
+            f.write(rendered_html)
+        
         return jsonify({
             "status": "success",
             "message": "PDF converted to HTML successfully",
             "converted_filename": html_filename,
             "original_format": "PDF",
             "converted_format": "HTML",
-            "download_url": f"/download_converted/{html_filename}"
+            "download_url": f"/download_converted/{html_filename}",
+            "preview_url": f"/preview_html/{html_filename}"
         })
         
     except Exception as e:
+        import traceback
+        print(f"Error converting PDF to HTML: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 
@@ -1769,31 +1872,773 @@ def convert_word_to_pdf():
 
 @app.route("/convert_html_to_pdf", methods=["POST"])
 def convert_html_to_pdf():
-    if "pdf" not in request.files:
+    """Convert HTML to PDF while preserving layout"""
+    if "html" not in request.files and "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
     
-    file = request.files["pdf"]
-    if file.filename == "":
+    # Accept both "html" and "file" as field names
+    file = request.files.get("html") or request.files.get("file")
+    if not file or file.filename == "":
         return jsonify({"error": "No selected file"}), 400
 
     try:
-        # Save file
-        filepath = os.path.join(UPLOAD_FOLDER, file.filename)
+        # Save file with unique filename
+        original_filename = secure_filename(file.filename)
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{unique_id}_{original_filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
         file.save(filepath)
         
-        # For HTML to PDF, we'll return the original file for now
-        # This can be enhanced with proper HTML to PDF conversion
+        # Generate output filename
+        base_name = os.path.splitext(original_filename)[0]
+        pdf_filename = f"{base_name}_converted.pdf"
+        pdf_path = os.path.join(EDITED_FOLDER, pdf_filename)
+        
+        # Convert HTML to PDF - use step-by-step PyMuPDF method first (most accurate for our HTML format)
+        # This method parses the HTML and recreates the PDF using the same library that created it
+        conversion_success = False
+        
+        # Method 1: Try step-by-step PyMuPDF reconstruction (best for HTML generated from PDF)
+        try:
+            conversion_success = convert_html_to_pdf_pymupdf_step_by_step(filepath, pdf_path)
+            if conversion_success:
+                print("✅ Successfully converted using PyMuPDF step-by-step method")
+        except Exception as e:
+            print(f"PyMuPDF step-by-step conversion error: {e}")
+        
+        # Method 2: Try Playwright (most accurate, browser-based)
+        if not conversion_success and PLAYWRIGHT_AVAILABLE:
+            try:
+                conversion_success = convert_html_to_pdf_playwright(filepath, pdf_path)
+                if conversion_success:
+                    print("✅ Successfully converted using Playwright")
+            except Exception as e:
+                print(f"Playwright conversion error: {e}")
+        
+        # Method 3: Try WeasyPrint (good CSS support, but requires GTK+ on Windows)
+        if not conversion_success and WEASYPRINT_AVAILABLE:
+            try:
+                conversion_success = convert_html_to_pdf_weasyprint(filepath, pdf_path)
+                if conversion_success:
+                    print("✅ Successfully converted using WeasyPrint")
+            except Exception as e:
+                print(f"WeasyPrint conversion error: {e}")
+        
+        # Method 4: Try xhtml2pdf (pure Python, works on Windows)
+        if not conversion_success and XHTML2PDF_AVAILABLE:
+            try:
+                conversion_success = convert_html_to_pdf_xhtml2pdf(filepath, pdf_path)
+                if conversion_success:
+                    print("✅ Successfully converted using xhtml2pdf")
+            except Exception as e:
+                print(f"xhtml2pdf conversion error: {e}")
+        
+        # Method 5: Fallback to PyMuPDF insert_htmlbox
+        if not conversion_success:
+            print("Trying PyMuPDF insert_htmlbox fallback...")
+            conversion_success = convert_html_to_pdf_pymupdf(filepath, pdf_path)
+        
+        if not conversion_success:
+            return jsonify({
+                "status": "error",
+                "message": "HTML to PDF conversion failed",
+                "error": "Could not convert HTML to PDF"
+            }), 500
+        
+        # Get file sizes
+        original_size = os.path.getsize(filepath)
+        pdf_size = os.path.getsize(pdf_path)
+        
         return jsonify({
             "status": "success",
-            "message": "HTML file processed successfully",
-            "converted_filename": file.filename,
+            "message": "HTML converted to PDF successfully",
+            "converted_filename": pdf_filename,
             "original_format": "HTML",
             "converted_format": "PDF",
-            "download_url": f"/download_converted/{file.filename}"
+            "original_size": original_size,
+            "pdf_size": pdf_size,
+            "download_url": f"/download_edited/{pdf_filename}"
         })
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"ERROR: HTML to PDF conversion failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": f"Conversion failed: {str(e)}",
+            "error": str(e)
+        }), 500
+
+def convert_html_to_pdf_playwright(html_path, output_path):
+    """Convert HTML to PDF using Playwright - most accurate, browser-based rendering"""
+    try:
+        # Read HTML content first to check structure
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Get the directory of the HTML file for resolving relative paths (images, CSS, etc.)
+        html_dir = os.path.dirname(os.path.abspath(html_path))
+        # Convert to file:// URL format (Windows compatible)
+        if os.sep == '\\':
+            base_url = f"file:///{html_dir.replace('\\', '/')}/"
+        else:
+            base_url = f"file://{html_dir}/"
+        
+        with sync_playwright() as p:
+            # Launch browser with proper settings for accurate rendering
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox'
+                ]
+            )
+            
+            # Create a new page - use device scale factor of 1 to ensure 1:1 pixel mapping
+            browser_page = browser.new_page(
+                viewport={'width': 4000, 'height': 4000},  # Very large to avoid clipping
+                device_scale_factor=1  # Ensure 1:1 pixel mapping
+            )
+            
+            # Inject CSS to remove any transforms/scaling that might affect layout
+            # and ensure pages are visible and properly positioned
+            prepended_css = """
+            <style id="pdf-conversion-override">
+                /* Remove all transforms that might affect layout */
+                .pdf-page, .page {
+                    transform: none !important;
+                    transform-origin: unset !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    display: block !important;
+                    visibility: visible !important;
+                    opacity: 1 !important;
+                    position: relative !important;
+                    width: auto !important;
+                    height: auto !important;
+                }
+                /* Ensure container doesn't add padding/margins */
+                .pdf-container {
+                    padding: 0 !important;
+                    margin: 0 !important;
+                    width: auto !important;
+                    height: auto !important;
+                }
+                /* Ensure body doesn't add spacing */
+                body {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    width: auto !important;
+                    height: auto !important;
+                }
+                /* Ensure absolute positioned elements maintain their positions */
+                .text-span, .editable-text, .editable-image {
+                    position: absolute !important;
+                }
+            </style>
+            """
+            
+            # Prepend the override CSS to the HTML
+            html_with_override = html_content.replace('<head>', f'<head>{prepended_css}')
+            
+            # Load HTML content - this preserves all CSS and absolute positioning
+            browser_page.set_content(html_with_override, base_url=base_url, wait_until="networkidle", timeout=60000)
+            
+            # Wait for rendering to complete
+            browser_page.wait_for_timeout(3000)
+            
+            # Get page information - use data attributes if available, otherwise detect
+            page_info = browser_page.evaluate("""
+                () => {
+                    // Find all page containers
+                    const pageElements = document.querySelectorAll('.pdf-page, .page');
+                    
+                    if (pageElements.length === 0) {
+                        // Single page - use body dimensions
+                        const body = document.body;
+                        const rect = body.getBoundingClientRect();
+                        return {
+                            singlePage: true,
+                            width: Math.max(rect.width, body.scrollWidth, 595),
+                            height: Math.max(rect.height, body.scrollHeight, 842)
+                        };
+                    }
+                    
+                    // Try to get dimensions from data attributes first (most accurate)
+                    const firstPage = pageElements[0];
+                    let width = parseFloat(firstPage.getAttribute('data-width'));
+                    let height = parseFloat(firstPage.getAttribute('data-height'));
+                    
+                    // If data attributes not available, use rendered dimensions
+                    if (!width || !height || isNaN(width) || isNaN(height)) {
+                        const rect = firstPage.getBoundingClientRect();
+                        width = rect.width;
+                        height = rect.height;
+                        
+                        // Get the actual content bounds within the page
+                        const content = firstPage.querySelector('.page-content');
+                        if (content) {
+                            const contentRect = content.getBoundingClientRect();
+                            width = Math.max(contentRect.width, rect.width);
+                            height = Math.max(contentRect.height, rect.height);
+                        }
+                    }
+                    
+                    // Ensure minimum A4 size
+                    width = Math.max(width, 595);
+                    height = Math.max(height, 842);
+                    
+                    return {
+                        singlePage: false,
+                        pageCount: pageElements.length,
+                        width: width,
+                        height: height
+                    };
+                }
+            """)
+            
+            page_width = int(page_info.get('width', 595))
+            page_height = int(page_info.get('height', 842))
+            is_single_page = page_info.get('singlePage', True)
+            page_count = page_info.get('pageCount', 1)
+            
+            print(f"Detected: {page_count} page(s), dimensions: {page_width}x{page_height}px")
+            
+            # For multi-page HTML, we need to create a multi-page PDF
+            # Playwright's PDF generation can handle this if we set the right height
+            # But we might need to handle each page separately
+            
+            if not is_single_page and page_count > 1:
+                # Multi-page: calculate total height
+                total_height = page_height * page_count
+                print(f"Multi-page document: total height = {total_height}px")
+                
+                # Generate PDF with full document height
+                pdf_options = {
+                    "path": output_path,
+                    "print_background": True,
+                    "margin": {"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                    "width": f"{page_width}px",
+                    "height": f"{total_height}px",  # Full document height
+                    "scale": 1.0,
+                    "prefer_css_page_size": False
+                }
+            else:
+                # Single page
+                pdf_options = {
+                    "path": output_path,
+                    "print_background": True,
+                    "margin": {"top": "0", "right": "0", "bottom": "0", "left": "0"},
+                    "width": f"{page_width}px",
+                    "height": f"{page_height}px",
+                    "scale": 1.0,
+                    "prefer_css_page_size": False
+                }
+            
+            browser_page.pdf(**pdf_options)
+            browser.close()
+        
+        # Verify the PDF was created
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully converted HTML to PDF using Playwright: {output_path}")
+            print(f"PDF size: {os.path.getsize(output_path)} bytes")
+            return True
+        else:
+            print("Playwright conversion failed: PDF file not created or empty")
+            return False
+            
+    except Exception as e:
+        print(f"Error in Playwright conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def convert_html_to_pdf_xhtml2pdf(html_path, output_path):
+    """Convert HTML to PDF using xhtml2pdf - pure Python, works on Windows"""
+    try:
+        from xhtml2pdf import pisa
+        
+        # Read HTML content
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # Convert HTML to PDF
+        with open(output_path, "wb") as pdf_file:
+            pisa_status = pisa.CreatePDF(
+                html_content,
+                dest=pdf_file,
+                encoding='utf-8'
+            )
+        
+        # Check for errors
+        if pisa_status.err:
+            print(f"xhtml2pdf conversion errors: {pisa_status.err}")
+            return False
+        
+        # Verify the PDF was created
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully converted HTML to PDF using xhtml2pdf: {output_path}")
+            return True
+        else:
+            print("xhtml2pdf conversion failed: PDF file not created or empty")
+            return False
+            
+    except Exception as e:
+        print(f"Error in xhtml2pdf conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def convert_html_to_pdf_weasyprint(html_path, output_path):
+    """Convert HTML to PDF using WeasyPrint - best for preserving CSS and layout"""
+    try:
+        # Read HTML content
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Get the directory of the HTML file for resolving relative paths (images, CSS, etc.)
+        html_dir = os.path.dirname(os.path.abspath(html_path))
+        # Convert Windows path to file:// URL format
+        if os.sep == '\\':
+            base_url = f"file:///{html_dir.replace('\\', '/')}/"
+        else:
+            base_url = f"file://{html_dir}/"
+        
+        # Ensure output directory exists
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # Convert HTML to PDF using WeasyPrint
+        # WeasyPrint supports modern CSS features and preserves layout accurately
+        # It handles:
+        # - CSS positioning (absolute, relative, fixed)
+        # - Flexbox and Grid layouts
+        # - Fonts and typography
+        # - Colors and backgrounds
+        # - Images (including base64 encoded)
+        # - Page breaks and pagination
+        
+        html_doc = HTML(
+            string=html_content,
+            base_url=base_url  # Helps resolve relative URLs in HTML (images, CSS files, etc.)
+        )
+        
+        # Write PDF with default settings (good quality)
+        html_doc.write_pdf(
+            output_path,
+            # Optional: You can add stylesheets here if needed
+            # stylesheets=[CSS(string='@page { size: A4; margin: 0; }')]
+        )
+        
+        # Verify the PDF was created
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully converted HTML to PDF using WeasyPrint: {output_path}")
+            print(f"PDF size: {os.path.getsize(output_path)} bytes")
+            return True
+        else:
+            print("WeasyPrint conversion failed: PDF file not created or empty")
+            return False
+            
+    except Exception as e:
+        print(f"Error in WeasyPrint conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def convert_html_to_pdf_pymupdf_step_by_step(html_path, output_path):
+    """
+    Convert HTML to PDF by parsing the HTML structure and recreating the PDF page by page.
+    This method extracts absolute positioned elements and places them exactly where they were.
+    This is the most accurate method for HTML generated from PDF using PyMuPDF.
+    """
+    try:
+        import re
+        from html import unescape
+        
+        # Read HTML content
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Create new PDF document
+        doc = fitz.open()
+        
+        # Find all page divs - HTML can use either .pdf-page with data attributes OR .page with style attributes
+        pages = []
+        
+        # Method 1: Try to find .pdf-page divs with data attributes (from convert_pdf_to_html endpoint)
+        page_openings = []
+        for match in re.finditer(r'<div[^>]*class="[^"]*pdf-page[^"]*"[^>]*data-page="(\d+)"[^>]*data-width="([\d.]+)"[^>]*data-height="([\d.]+)"[^>]*>', html_content, re.IGNORECASE):
+            page_num = int(match.group(1))
+            page_width = float(match.group(2))
+            page_height = float(match.group(3))
+            start_pos = match.end()
+            page_openings.append((page_num, page_width, page_height, start_pos))
+        
+        if page_openings:
+            # Extract content for each page
+            for i, (page_num, page_width, page_height, start_pos) in enumerate(page_openings):
+                if i + 1 < len(page_openings):
+                    end_pos = page_openings[i + 1][3] - len('<div')
+                    closing_match = re.search(r'</div>\s*(?=<div[^>]*class="[^"]*pdf-page)', html_content[start_pos:end_pos], re.IGNORECASE)
+                    if closing_match:
+                        end_pos = start_pos + closing_match.start()
+                else:
+                    closing_match = re.search(r'</div>\s*(?=</div>\s*</div>\s*</div>|$)', html_content[start_pos:], re.IGNORECASE)
+                    if closing_match:
+                        end_pos = start_pos + closing_match.start()
+                    else:
+                        end_pos = len(html_content)
+                
+                page_html = html_content[start_pos:end_pos]
+                pages.append((page_num, page_width, page_height, page_html))
+        else:
+            # Method 2: Find .page divs with style attributes (from convert_with_pymupdf)
+            page_matches = list(re.finditer(r'<div[^>]*class="[^"]*page[^"]*"[^>]*style="[^"]*width:\s*([\d.]+)pt[^"]*min-height:\s*([\d.]+)pt[^"]*"[^>]*>', html_content, re.IGNORECASE))
+            
+            if not page_matches:
+                # Try alternative pattern without min-height
+                page_matches = list(re.finditer(r'<div[^>]*class="[^"]*page[^"]*"[^>]*style="[^"]*width:\s*([\d.]+)pt[^"]*"[^>]*>', html_content, re.IGNORECASE))
+            
+            if page_matches:
+                for i, match in enumerate(page_matches):
+                    page_width = float(match.group(1))
+                    
+                    # Get page content div to extract height
+                    start_pos = match.end()
+                    content_match = re.search(r'<div[^>]*class="[^"]*page-content[^"]*"[^>]*style="[^"]*height:\s*([\d.]+)pt', html_content[start_pos:], re.IGNORECASE)
+                    if content_match:
+                        page_height = float(content_match.group(1))
+                        start_pos = start_pos + content_match.end()
+                    else:
+                        # Try to get from min-height in page div
+                        page_height = float(match.group(2)) if len(match.groups()) > 1 else 842.0  # Default A4 height
+                        # Find page-content div start
+                        content_match = re.search(r'<div[^>]*class="[^"]*page-content[^"]*"[^>]*>', html_content[start_pos:], re.IGNORECASE)
+                        if content_match:
+                            start_pos = start_pos + content_match.end()
+                    
+                    # Find end of page
+                    if i + 1 < len(page_matches):
+                        end_pos = page_matches[i + 1].start()
+                    else:
+                        end_pos = len(html_content)
+                    
+                    # Find closing divs
+                    closing_match = re.search(r'</div>\s*</div>\s*(?=<div[^"]*class="[^"]*page|$)', html_content[start_pos:end_pos], re.IGNORECASE)
+                    if closing_match:
+                        end_pos = start_pos + closing_match.start()
+                    
+                    page_html = html_content[start_pos:end_pos]
+                    pages.append((i + 1, page_width, page_height, page_html))
+        
+        print(f"Found {len(pages)} pages in HTML")
+        
+        if not pages:
+            print("No pages found in HTML, trying single page approach")
+            # Single page - extract dimensions from body or first page element
+            width_match = re.search(r'data-width="([\d.]+)"', html_content)
+            height_match = re.search(r'data-height="([\d.]+)"', html_content)
+            width = float(width_match.group(1)) if width_match else 595.0
+            height = float(height_match.group(1)) if height_match else 842.0
+            
+            page = doc.new_page(width=width, height=height)
+            _add_elements_to_page(html_content, page, width, height)
+        else:
+            # Process each page
+            for page_num, page_width_str, page_height_str, page_html in pages:
+                page_num = int(page_num)
+                page_width = float(page_width_str)
+                page_height = float(page_height_str)
+                
+                print(f"Processing page {page_num}: {page_width}x{page_height}pt")
+                
+                # Create new PDF page with exact dimensions
+                page = doc.new_page(width=page_width, height=page_height)
+                
+                # Add all elements to this page
+                _add_elements_to_page(page_html, page, page_width, page_height)
+        
+        # Save PDF
+        doc.save(output_path)
+        doc.close()
+        
+        # Verify the PDF was created
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully converted HTML to PDF using step-by-step method: {output_path}")
+            print(f"PDF size: {os.path.getsize(output_path)} bytes")
+            return True
+        else:
+            print("Step-by-step conversion failed: PDF file not created or empty")
+            return False
+            
+    except Exception as e:
+        print(f"Error in step-by-step conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def _add_elements_to_page(page_html, page, page_width, page_height):
+    """Helper function to add text spans and images to a PDF page"""
+    import re
+    from html import unescape
+    from io import BytesIO
+    
+    # Extract all text spans with absolute positioning
+    # Pattern: <span style="position: absolute; left: Xpt; top: Ypt; font-size: Spt; font-family: F;">text</span>
+    # Note: HTML uses 'pt' units, not 'px' - coordinates are already in points (PyMuPDF units)
+    text_pattern = r'<span[^>]*style="([^"]*)"[^>]*>(.*?)</span>'
+    
+    all_spans = re.findall(text_pattern, page_html, re.DOTALL | re.IGNORECASE)
+    text_spans = []
+    
+    for style_attr, text_content in all_spans:
+        # Check if it's an absolute positioned span
+        if 'position: absolute' not in style_attr and 'position:absolute' not in style_attr:
+            continue
+        
+        # Extract coordinates and font info from style - handle both 'pt' and 'px' units
+        left_match = re.search(r'left:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        top_match = re.search(r'top:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        size_match = re.search(r'font-size:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        font_match = re.search(r"font-family:\s*['\"]?([^;'\"]+)['\"]?", style_attr, re.IGNORECASE)
+        
+        if left_match and top_match and size_match:
+            left_val = float(left_match.group(1))
+            top_val = float(top_match.group(1))
+            size_val = float(size_match.group(1))
+            
+            # Coordinates are already in points (pt), so use directly
+            # If px units are found, we'd need to convert, but HTML from PDF uses pt
+            text_spans.append((
+                str(left_val),
+                str(top_val),
+                str(size_val),
+                font_match.group(1).strip() if font_match else 'Arial',
+                style_attr,
+                text_content
+            ))
+    
+    # Process text spans
+    for left_str, top_str, size_str, font_family, style_attr, text_content in text_spans:
+        try:
+            left = float(left_str)
+            top = float(top_str)
+            size = float(size_str)
+            
+            # Extract font-weight and font-style from style
+            is_bold = 'font-weight: bold' in style_attr or 'font-weight:bold' in style_attr or 'font-weight:700' in style_attr
+            is_italic = 'font-style: italic' in style_attr or 'font-style:italic' in style_attr
+            
+            # Decode HTML entities
+            text = unescape(text_content)
+            text = text.replace('&nbsp;', ' ')
+            text = text.strip()
+            
+            if text:
+                # Insert text at exact position
+                # The HTML uses 'pt' (points) units, which is the same unit PyMuPDF uses
+                # So coordinates are already in the correct format - use directly
+                point = fitz.Point(left, top)
+                
+                # Clean up font name - remove variants like 'Arial,Bold' -> 'Arial'
+                font_name = font_family.split(',')[0].strip().strip("'\"")
+                # Remove any variant suffixes
+                font_name = re.sub(r'[,;].*$', '', font_name).strip()
+                
+                # Map common font names to PyMuPDF font names
+                font_map = {
+                    'Arial': 'helv',
+                    'Helvetica': 'helv',
+                    'Times': 'times',
+                    'Times New Roman': 'times',
+                    'Courier': 'cour',
+                    'Courier New': 'cour',
+                    'ArialMT': 'helv',
+                    'Arial,Bold': 'helv',
+                    'Arial,Italic': 'helv'
+                }
+                
+                pdf_font = font_map.get(font_name, 'helv')
+                
+                # Build font flags
+                font_flags = 0
+                if is_bold:
+                    font_flags |= 16  # Bold flag
+                if is_italic:
+                    font_flags |= 2   # Italic flag
+                
+                # Insert text with proper font and flags
+                try:
+                    page.insert_text(
+                        point,
+                        text,
+                        fontsize=size,
+                        fontname=pdf_font,
+                        render_mode=0,  # Fill text
+                        fontfile=None
+                    )
+                    # Apply font flags if needed
+                    if font_flags:
+                        # Note: PyMuPDF's insert_text doesn't directly support flags, 
+                        # but we can use insert_font and insert_textbox for better control
+                        # For now, we'll use the basic method
+                        pass
+                except Exception as e:
+                    print(f"Warning: Could not insert text with font {pdf_font}, trying default: {e}")
+                    # Fallback to default font
+                    page.insert_text(point, text, fontsize=size, fontname='helv', render_mode=0)
+        except Exception as e:
+            print(f"Error adding text span: {e}")
+            continue
+    
+    # Extract all images with absolute positioning
+    # Pattern: <img style="position: absolute; left: Xpt; top: Ypt; width: Wpt; height: Hpt;" src="data:image/png;base64,...">
+    # Note: HTML uses 'pt' units, not 'px'
+    # The src attribute might come before or after style, so we need a more flexible pattern
+    img_pattern = r'<img[^>]*src="data:image/([^;]+);base64,([^"]+)"[^>]*style="([^"]*)"'
+    img_pattern2 = r'<img[^>]*style="([^"]*)"[^>]*src="data:image/([^;]+);base64,([^"]+)"'
+    
+    all_images = re.findall(img_pattern, page_html, re.IGNORECASE)
+    all_images2 = re.findall(img_pattern2, page_html, re.IGNORECASE)
+    
+    # Combine both patterns
+    all_image_matches = []
+    for match in all_images:
+        all_image_matches.append((match[2], match[0], match[1]))  # style, format, data
+    for match in all_images2:
+        all_image_matches.append((match[0], match[1], match[2]))  # style, format, data
+    
+    images = []
+    print(f"Found {len(all_image_matches)} image tags in HTML")
+    
+    for style_attr, img_format, base64_data in all_image_matches:
+        # Check if it's an absolute positioned image
+        if 'position: absolute' not in style_attr and 'position:absolute' not in style_attr:
+            continue
+        
+        # Extract coordinates and dimensions from style - handle both 'pt' and 'px' units
+        left_match = re.search(r'left:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        top_match = re.search(r'top:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        width_match = re.search(r'width:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        height_match = re.search(r'height:\s*([\d.]+)(pt|px)', style_attr, re.IGNORECASE)
+        
+        if left_match and top_match and width_match and height_match:
+            left_val = float(left_match.group(1))
+            top_val = float(top_match.group(1))
+            width_val = float(width_match.group(1))
+            height_val = float(height_match.group(1))
+            
+            # Coordinates are already in points (pt), so use directly
+            images.append((
+                str(left_val),
+                str(top_val),
+                str(width_val),
+                str(height_val),
+                img_format,
+                base64_data
+            ))
+        else:
+            print(f"Warning: Image missing required style attributes. Style: {style_attr[:100]}")
+    
+    print(f"Extracted {len(images)} images with absolute positioning")
+    
+    for left_str, top_str, width_str, height_str, img_format, base64_data in images:
+        try:
+            left = float(left_str)
+            top = float(top_str)
+            width = float(width_str)
+            height = float(height_str)
+            
+            # Decode base64 image
+            image_data = base64.b64decode(base64_data)
+            
+            # Create rectangle for image placement
+            rect = fitz.Rect(left, top, left + width, top + height)
+            
+            # Insert image - use stream parameter for base64 decoded data
+            page.insert_image(rect, stream=image_data, keep_proportion=False)
+            print(f"Inserted image at ({left}, {top}) with size {width}x{height}")
+        except Exception as e:
+            print(f"Error adding image at ({left_str}, {top_str}): {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+
+def convert_html_to_pdf_pymupdf(html_path, output_path):
+    """Convert HTML to PDF using PyMuPDF"""
+    try:
+        # Read HTML content
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        # Create a new PDF document
+        doc = fitz.open()
+        
+        # Create a page (A4 size: 595 x 842 points)
+        page = doc.new_page(width=595, height=842)
+        rect = page.rect
+        
+        # Use PyMuPDF's insert_htmlbox to render HTML
+        # This method renders HTML content into the PDF
+        try:
+            # Insert HTML content into the page
+            # insert_htmlbox renders HTML with CSS support
+            # Parameters: rect, text (HTML content), css (optional)
+            page.insert_htmlbox(
+                rect,  # Rectangle to fill
+                html_content,  # HTML content (parameter name is 'text' but accepts HTML)
+                css=""  # Additional CSS if needed
+            )
+            
+        except Exception as e:
+            print(f"Warning: insert_htmlbox failed, trying alternative: {e}")
+            # Fallback: Try with file path instead
+            try:
+                # Convert to absolute path for file:// URL
+                abs_html_path = os.path.abspath(html_path)
+                file_url = f"file:///{abs_html_path.replace(os.sep, '/')}"
+                
+                # Try rendering from file URL
+                page.insert_htmlbox(rect, file_url)
+                
+            except Exception as e2:
+                print(f"Warning: File URL method failed, using text extraction: {e2}")
+                # Last resort: Extract text and add as plain text
+                import re
+                from html import unescape
+                # Remove HTML tags and decode entities
+                text_content = re.sub(r'<[^>]+>', ' ', html_content)
+                text_content = unescape(text_content)
+                # Clean up whitespace
+                text_content = ' '.join(text_content.split())
+                
+                # Insert text with basic formatting
+                if text_content:
+                    page.insert_text((50, 50), text_content[:10000], fontsize=11)
+                else:
+                    print("ERROR: No text content extracted from HTML")
+                    return False
+        
+        # Save PDF
+        doc.save(output_path)
+        doc.close()
+        
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in HTML to PDF conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 @app.route("/convert_image_to_pdf", methods=["POST"])
 def convert_image_to_pdf():
@@ -1867,6 +2712,352 @@ def convert_pdf_to_images():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/convert_pdf_to_html", methods=["POST"])
+def convert_pdf_to_html():
+    """Convert PDF to HTML while preserving layout"""
+    if "pdf" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+    
+    file = request.files["pdf"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+    
+    # Get conversion method preference (default: pymupdf)
+    method = request.form.get("method", "pymupdf").lower()
+    
+    try:
+        # Save file with unique filename
+        original_filename = secure_filename(file.filename)
+        unique_id = str(uuid.uuid4())[:8]
+        filename = f"{unique_id}_{original_filename}"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        file.save(filepath)
+        
+        # Generate output filename
+        base_name = os.path.splitext(original_filename)[0]
+        html_filename = f"{base_name}_converted.html"
+        html_path = os.path.join(HTML_FOLDER, html_filename)
+        
+        conversion_success = False
+        conversion_method_used = None
+        error_message = None
+        
+        # Try pdf2htmlEX first if requested (higher fidelity)
+        if method == "pdf2htmlex":
+            try:
+                conversion_success = convert_with_pdf2htmlex(filepath, html_path)
+                if conversion_success:
+                    conversion_method_used = "pdf2htmlEX"
+            except Exception as e:
+                error_message = f"pdf2htmlEX conversion failed: {str(e)}"
+                print(f"WARNING: {error_message}")
+        
+        # Fallback to PyMuPDF if pdf2htmlEX failed or not requested
+        if not conversion_success:
+            try:
+                conversion_success = convert_with_pymupdf(filepath, html_path)
+                if conversion_success:
+                    conversion_method_used = "PyMuPDF"
+            except Exception as e:
+                error_message = f"PyMuPDF conversion failed: {str(e)}"
+                print(f"ERROR: {error_message}")
+        
+        if not conversion_success:
+            return jsonify({
+                "status": "error",
+                "message": f"Conversion failed. {error_message}",
+                "error": error_message
+            }), 500
+        
+        # Get file sizes
+        original_size = os.path.getsize(filepath)
+        html_size = os.path.getsize(html_path)
+        
+        return jsonify({
+            "status": "success",
+            "message": f"PDF converted to HTML successfully using {conversion_method_used}",
+            "converted_filename": html_filename,
+            "original_format": "PDF",
+            "converted_format": "HTML",
+            "method_used": conversion_method_used,
+            "original_size": original_size,
+            "html_size": html_size,
+            "download_url": f"/download_converted/{html_filename}",
+            "preview_url": f"/preview_html/{html_filename}"
+        })
+        
+    except Exception as e:
+        print(f"ERROR: PDF to HTML conversion failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": f"Conversion failed: {str(e)}",
+            "error": str(e)
+        }), 500
+
+def convert_with_pymupdf(pdf_path, output_path):
+    """Convert PDF to HTML with EXACT layout preservation using absolute positioning"""
+    try:
+        doc = fitz.open(pdf_path)
+        html_parts = []
+        
+        # Create HTML structure
+        html_parts.append("""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Converted PDF</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: white;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+        }
+        .pdf-container {
+            margin: 0;
+            padding: 0;
+            background: white;
+        }
+        .page {
+            background: transparent;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            box-shadow: none;
+            outline: none;
+            position: relative;
+            overflow: visible;
+        }
+        .page-content {
+            position: relative;
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+<div class="pdf-container">
+""")
+        
+        # Convert each page with EXACT positioning
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            rect = page.rect
+            page_width = rect.width
+            page_height = rect.height
+            
+            html_parts.append(f'<div class="page" style="width: {page_width}pt; min-height: {page_height}pt;">')
+            html_parts.append(f'<div class="page-content" style="width: {page_width}pt; height: {page_height}pt; position: relative;">')
+            
+            # Get ALL text with exact positions - use dict for text extraction
+            blocks = page.get_text("dict")
+            
+            # Collect all text spans with their exact positions
+            text_spans = []
+            images = []
+            
+            for block in blocks.get("blocks", []):
+                if "lines" in block:  # Text block
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text", "")
+                            if not text or not text.strip():
+                                continue
+                            
+                            bbox = span.get("bbox", [0, 0, 0, 0])
+                            x0, y0, x1, y1 = bbox
+                            
+                            # Get all styling info
+                            font = span.get("font", "Arial")
+                            size = span.get("size", 12)
+                            flags = span.get("flags", 0)
+                            color = span.get("color", 0)
+                            
+                            # Convert color
+                            if isinstance(color, int):
+                                r = (color >> 16) & 0xFF
+                                g = (color >> 8) & 0xFF
+                                b = color & 0xFF
+                                color_hex = f"#{r:02x}{g:02x}{b:02x}"
+                            else:
+                                color_hex = "#000000"
+                            
+                            text_spans.append({
+                                "text": text,
+                                "x": x0,
+                                "y": y0,
+                                "font": font,
+                                "size": size,
+                                "color": color_hex,
+                                "flags": flags
+                            })
+                
+                elif "image" in block:  # Image block
+                    try:
+                        img = block["image"]
+                        img_data = base64.b64encode(img).decode()
+                        bbox = block.get("bbox", [0, 0, 0, 0])
+                        x0, y0, x1, y1 = bbox
+                        width = x1 - x0
+                        height = y1 - y0
+                        
+                        images.append({
+                            "data": img_data,
+                            "x": x0,
+                            "y": y0,
+                            "width": width,
+                            "height": height
+                        })
+                    except Exception as e:
+                        print(f"Warning: Could not process image: {e}")
+            
+            # Render images first (background layer)
+            for img in images:
+                html_parts.append(
+                    f'<img src="data:image/png;base64,{img["data"]}" '
+                    f'style="position: absolute; left: {img["x"]}pt; top: {img["y"]}pt; '
+                    f'width: {img["width"]}pt; height: {img["height"]}pt; z-index: 0;" alt="" />'
+                )
+            
+            # Render text spans with exact positioning (foreground layer)
+            for span in text_spans:
+                style_parts = [
+                    f"position: absolute",
+                    f"left: {span['x']}pt",
+                    f"top: {span['y']}pt",
+                    f"font-family: '{span['font']}', Arial, sans-serif",
+                    f"font-size: {span['size']}pt",
+                    f"color: {span['color']}",
+                    f"white-space: pre",
+                    f"z-index: 1"
+                ]
+                
+                if span["flags"] & 16:  # Bold
+                    style_parts.append("font-weight: bold")
+                if span["flags"] & 2:  # Italic
+                    style_parts.append("font-style: italic")
+                if span["flags"] & 8:  # Underline
+                    style_parts.append("text-decoration: underline")
+                
+                style = "; ".join(style_parts)
+                
+                # Escape HTML
+                text_escaped = (span["text"]
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace('"', "&quot;")
+                    .replace("'", "&#39;"))
+                
+                html_parts.append(f'<span style="{style}">{text_escaped}</span>')
+            
+            html_parts.append('</div>')
+            html_parts.append('</div>')
+        
+        html_parts.append("""
+</div>
+</body>
+</html>
+""")
+        
+        # Write HTML file
+        html_content = "\n".join(html_parts)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html_content)
+        
+        doc.close()
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in PyMuPDF conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def convert_with_pdf2htmlex(pdf_path, output_path):
+    """Convert PDF to HTML using pdf2htmlEX (external tool)"""
+    try:
+        # Check if pdf2htmlEX is available
+        result = subprocess.run(
+            ["pdf2htmlEX", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        if result.returncode != 0:
+            print("pdf2htmlEX not found or not working")
+            return False
+        
+        # Run pdf2htmlEX conversion
+        cmd = [
+            "pdf2htmlEX",
+            "--zoom", "1.5",
+            "--embed", "css",
+            "--embed", "font",
+            "--dest-dir", os.path.dirname(output_path),
+            "--embed-image", "1",
+            pdf_path,
+            os.path.basename(output_path)
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=os.path.dirname(output_path)
+        )
+        
+        if result.returncode == 0:
+            # pdf2htmlEX might add .html extension or use different naming
+            # Check if the file exists with expected name
+            if os.path.exists(output_path):
+                return True
+            
+            # Try to find the generated file
+            base_name = os.path.splitext(os.path.basename(output_path))[0]
+            possible_names = [
+                output_path,
+                os.path.join(os.path.dirname(output_path), base_name + ".html"),
+                os.path.join(os.path.dirname(output_path), os.path.basename(pdf_path).replace(".pdf", ".html"))
+            ]
+            
+            for possible_path in possible_names:
+                if os.path.exists(possible_path):
+                    # Rename to expected output path
+                    if possible_path != output_path:
+                        shutil.move(possible_path, output_path)
+                    return True
+            
+            print(f"pdf2htmlEX completed but output file not found. stderr: {result.stderr}")
+            return False
+        else:
+            print(f"pdf2htmlEX failed with return code {result.returncode}")
+            print(f"stderr: {result.stderr}")
+            return False
+            
+    except FileNotFoundError:
+        print("pdf2htmlEX not found in PATH")
+        return False
+    except subprocess.TimeoutExpired:
+        print("pdf2htmlEX conversion timed out")
+        return False
+    except Exception as e:
+        print(f"ERROR in pdf2htmlEX conversion: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 @app.route("/download_converted/<filename>")
 def download_converted(filename):
     filepath = os.path.join(HTML_FOLDER, filename)
@@ -1874,6 +3065,27 @@ def download_converted(filename):
         return send_file(filepath, as_attachment=True)
     else:
         return "File not found", 404
+
+@app.route("/preview_html/<filename>")
+def preview_html(filename):
+    # Extract the original PDF filename from the converted HTML filename
+    # Format: originalname_converted.html -> originalname.pdf
+    original_filename = filename.replace('_converted.html', '.pdf')
+    
+    # Check if the original PDF exists in uploads folder
+    pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
+    if os.path.exists(pdf_path):
+        # Use the EXACT same conversion endpoint that works perfectly
+        return convert_pdf(original_filename)
+    else:
+        # Fallback: try to find any PDF with similar name
+        base_name = filename.replace('_converted.html', '')
+        for ext in ['.pdf', '.PDF']:
+            test_path = os.path.join(UPLOAD_FOLDER, base_name + ext)
+            if os.path.exists(test_path):
+                return convert_pdf(base_name + ext)
+        
+        return "Original PDF file not found for preview", 404
 
 @app.route("/download_images/<filename>")
 def download_images(filename):
@@ -2107,9 +3319,13 @@ def save_edit_fill_sign(filename):
 @app.route("/download_edited/<filename>")
 def download_edited(filename):
     try:
-        edited_path = os.path.join(HTML_FOLDER, filename)
+        # Check in EDITED_FOLDER first (for HTML to PDF conversions and edited PDFs)
+        edited_path = os.path.join(EDITED_FOLDER, filename)
         if not os.path.exists(edited_path):
-            return "Edited PDF file not found", 404
+            # Fallback to HTML_FOLDER for backward compatibility
+            edited_path = os.path.join(HTML_FOLDER, filename)
+            if not os.path.exists(edited_path):
+                return "Edited PDF file not found", 404
         
         return send_file(edited_path, as_attachment=True, download_name=filename)
     
