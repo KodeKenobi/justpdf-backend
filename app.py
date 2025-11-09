@@ -97,6 +97,7 @@ init_db(app)
 
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
+    "https://web-production-471ae.up.railway.app",
     "https://trevnoctilla.com",
     "https://www.trevnoctilla.com",
     "http://localhost:3000",
