@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dropdown Test - Mobile PDF Editor</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+        background: #f3f4f6;
+      }
+
+      .test-container {
+        max-width: 600px;
+        margin: 0 auto;
+        background: white;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      h1 {
+        margin-bottom: 20px;
+        color: #333;
+      }
+
+      .test-section {
+        margin-bottom: 30px;
+        padding: 15px;
+        background: #f9fafb;
+        border-radius: 8px;
+      }
+
+      .test-section h2 {
+        margin-bottom: 15px;
+        color: #555;
+        font-size: 18px;
+      }
+
+      /* Simulate text container and toolbar */
+      .text-element-container {
+        position: relative;
+        border: 2px dashed rgba(255, 255, 255, 0.2);
+        padding: 8px;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 12px;
+        margin: 20px 0;
+        min-height: 100px;
+      }
+
+      .text-formatting-toolbar {
+        display: flex;
+        gap: 10px;
+        padding: 12px 16px;
+        background-color: rgba(255, 255, 255, 0.98);
+        backdrop-filter: blur(20px);
+        border-radius: 12px;
+        align-items: center;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
+      }
+
+      .text-formatting-toolbar select,
+      .text-formatting-toolbar input[type="color"] {
+        padding: 8px 12px;
+        font-size: 13px;
+        border-radius: 12px;
+        border: 1px solid rgba(209, 213, 219, 0.8);
+        background-color: rgba(249, 250, 251, 0.9);
+        color: #374151;
+        cursor: pointer;
+        font-weight: 500;
+        min-width: 100px;
+        transition: all 0.2s ease;
+        pointer-events: auto;
+        z-index: 1002;
+      }
+
+      .text-formatting-toolbar input[type="color"] {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        border-radius: 8px;
+        padding: 2px;
+      }
+
+      .log-container {
+        background: #1a1a1a;
+        color: #0f0;
+        padding: 15px;
+        border-radius: 8px;
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        max-height: 400px;
+        overflow-y: auto;
+        margin-top: 20px;
+      }
+
+      .log-entry {
+        margin-bottom: 5px;
+        word-wrap: break-word;
+      }
+
+      .log-entry.success {
+        color: #0f0;
+      }
+
+      .log-entry.error {
+        color: #f00;
+      }
+
+      .log-entry.info {
+        color: #0ff;
+      }
+
+      button {
+        padding: 10px 20px;
+        background: #3b82f6;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        margin: 5px;
+      }
+
+      button:hover {
+        background: #2563eb;
+      }
+
+      .status {
+        padding: 10px;
+        margin: 10px 0;
+        border-radius: 8px;
+      }
+
+      .status.success {
+        background: #d1fae5;
+        color: #065f46;
+      }
+
+      .status.error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="test-container">
+      <h1>🧪 Dropdown Functionality Test</h1>
+
+      <div class="test-section">
+        <h2>Test 1: Basic Dropdowns (No Event Handlers)</h2>
+        <p>These should work normally:</p>
+        <select
+          id="test1-select"
+          style="padding: 8px; margin: 10px 0; display: block"
+        >
+          <option value="option1">Option 1</option>
+          <option value="option2">Option 2</option>
+          <option value="option3">Option 3</option>
+        </select>
+        <input
+          type="color"
+          id="test1-color"
+          value="#000000"
+          style="margin: 10px 0; display: block"
+        />
+        <div id="test1-status" class="status"></div>
+      </div>
+
+      <div class="test-section">
+        <h2>Test 2: Dropdowns Inside Text Container (With Event Handlers)</h2>
+        <p>These simulate the actual mobile editor structure:</p>
+        <div class="text-element-container" id="text-container">
+          <div class="text-formatting-toolbar">
+            <select id="test2-font" style="min-width: 100px">
+              <option value="Arial">Arial</option>
+              <option value="Times New Roman">Times</option>
+              <option value="Courier New">Courier</option>
+              <option value="Georgia">Georgia</option>
+            </select>
+            <select id="test2-size" style="min-width: 80px">
+              <option value="10">10px</option>
+              <option value="12">12px</option>
+              <option value="14" selected>14px</option>
+              <option value="16">16px</option>
+              <option value="18">18px</option>
+              <option value="20">20px</option>
+            </select>
+            <input type="color" id="test2-color" value="#000000" />
+          </div>
+          <div style="padding: 10px">
+            <p>Editable text area</p>
+          </div>
+        </div>
+        <div id="test2-status" class="status"></div>
+      </div>
+
+      <div class="test-section">
+        <h2>Test 3: Dropdowns with Page-Level Touch Handlers</h2>
+        <p>This simulates the full mobile editor with page-level handlers:</p>
+        <div
+          id="page-container"
+          style="
+            position: relative;
+            min-height: 200px;
+            border: 2px dashed #ccc;
+            padding: 20px;
+          "
+        >
+          <div class="text-formatting-toolbar">
+            <select id="test3-font">
+              <option value="Arial">Arial</option>
+              <option value="Times New Roman">Times</option>
+              <option value="Courier New">Courier</option>
+            </select>
+            <select id="test3-size">
+              <option value="12">12px</option>
+              <option value="14" selected>14px</option>
+              <option value="16">16px</option>
+            </select>
+            <input type="color" id="test3-color" value="#000000" />
+          </div>
+          <p style="margin-top: 20px">
+            Tap anywhere on this page to create text (simulated)
+          </p>
+        </div>
+        <div id="test3-status" class="status"></div>
+      </div>
+
+      <div class="test-section">
+        <button onclick="clearLogs()">Clear Logs</button>
+        <button onclick="runAllTests()">Run All Tests</button>
+      </div>
+
+      <div class="log-container" id="log-container">
+        <div class="log-entry info">📝 Test logs will appear here...</div>
+      </div>
+    </div>
+
+    <script>
+      let logCount = 0;
+
+      function log(message, type = "info") {
+        const logContainer = document.getElementById("log-container");
+        const entry = document.createElement("div");
+        entry.className = `log-entry ${type}`;
+        entry.textContent = `[${++logCount}] ${new Date().toLocaleTimeString()} - ${message}`;
+        logContainer.appendChild(entry);
+        logContainer.scrollTop = logContainer.scrollHeight;
+        console.log(message);
+      }
+
+      function clearLogs() {
+        document.getElementById("log-container").innerHTML =
+          '<div class="log-entry info">📝 Logs cleared...</div>';
+        logCount = 0;
+      }
+
+      function updateStatus(testId, message, isSuccess) {
+        const statusEl = document.getElementById(testId);
+        statusEl.textContent = message;
+        statusEl.className = `status ${isSuccess ? "success" : "error"}`;
+      }
+
+      // Test 1: Basic dropdowns (no handlers)
+      document
+        .getElementById("test1-select")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 1: Font select changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test1-status",
+            `✅ Font changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      document
+        .getElementById("test1-color")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 1: Color changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test1-status",
+            `✅ Color changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      // Test 2: Dropdowns inside text container
+      const textContainer = document.getElementById("text-container");
+      let isDragging = false;
+
+      // Simulate text container touch handlers
+      textContainer.addEventListener("touchstart", function (e) {
+        log("📝 Text container touchstart");
+        log(
+          `📝 Touch target: ${e.target.tagName}, className: ${e.target.className}`
+        );
+
+        // Allow native behavior for form controls
+        if (
+          e.target.tagName === "SELECT" ||
+          e.target.tagName === "INPUT" ||
+          e.target.closest("select") ||
+          e.target.closest("input")
+        ) {
+          log("📝 Touch on form control, allowing native behavior", "info");
+          return; // Don't prevent default, allow native dropdown/picker
+        }
+
+        log("📝 Starting drag simulation");
+        e.preventDefault();
+        isDragging = true;
+      });
+
+      textContainer.addEventListener("touchmove", function (e) {
+        // Allow native behavior for form controls
+        if (
+          e.target.tagName === "SELECT" ||
+          e.target.tagName === "INPUT" ||
+          e.target.closest("select") ||
+          e.target.closest("input")
+        ) {
+          return; // Don't prevent default for form controls
+        }
+
+        if (!isDragging) return;
+        e.preventDefault();
+      });
+
+      textContainer.addEventListener("touchend", function () {
+        log("📝 Text container touchend, stopping drag");
+        isDragging = false;
+      });
+
+      // Form control handlers
+      document
+        .getElementById("test2-font")
+        .addEventListener("touchstart", function (e) {
+          log("📝 Font select touchstart");
+        });
+
+      document
+        .getElementById("test2-font")
+        .addEventListener("click", function (e) {
+          log("📝 Font select clicked - allowing native dropdown");
+        });
+
+      document
+        .getElementById("test2-font")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 2: Font changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test2-status",
+            `✅ Font changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      document
+        .getElementById("test2-size")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 2: Size changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test2-status",
+            `✅ Size changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      document
+        .getElementById("test2-color")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 2: Color changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test2-status",
+            `✅ Color changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      // Test 3: With page-level handlers
+      const pageContainer = document.getElementById("page-container");
+      let textCreationEnabled = true;
+
+      // Simulate page-level touch handler
+      function handlePageTouchStart(e) {
+        log("📝 Page touchstart");
+
+        // If touching a form control, allow native behavior completely
+        if (
+          e.target.tagName === "SELECT" ||
+          e.target.tagName === "INPUT" ||
+          e.target.closest("select") ||
+          e.target.closest("input") ||
+          e.target.closest(".text-formatting-toolbar") ||
+          e.target.closest(".text-element-container")
+        ) {
+          log(
+            "📝 Page touchstart on form control - allowing native behavior",
+            "info"
+          );
+          return; // Just return early, don't interfere
+        }
+
+        if (textCreationEnabled) {
+          log("📝 Would create text here (simulated)");
+        }
+      }
+
+      function createTextOnTouch(e) {
+        log("📝 createTextOnTouch called");
+
+        // Don't create text if clicking on form controls or toolbar
+        if (
+          e.target.tagName === "SELECT" ||
+          e.target.tagName === "INPUT" ||
+          e.target.closest("select") ||
+          e.target.closest("input") ||
+          e.target.closest(".text-formatting-toolbar") ||
+          e.target.closest(".text-element-container")
+        ) {
+          log("📝 Touch on form control or toolbar, ignoring", "info");
+          return; // Allow native behavior
+        }
+
+        log("📝 Would create text element here (simulated)");
+      }
+
+      pageContainer.addEventListener("touchstart", handlePageTouchStart);
+      pageContainer.addEventListener("touchend", createTextOnTouch);
+
+      // Form control handlers for test 3
+      document
+        .getElementById("test3-font")
+        .addEventListener("touchstart", function (e) {
+          log("📝 Test 3: Font select touchstart");
+        });
+
+      document
+        .getElementById("test3-font")
+        .addEventListener("click", function (e) {
+          log("📝 Test 3: Font select clicked - allowing native dropdown");
+        });
+
+      document
+        .getElementById("test3-font")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 3: Font changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test3-status",
+            `✅ Font changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      document
+        .getElementById("test3-size")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 3: Size changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test3-status",
+            `✅ Size changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      document
+        .getElementById("test3-color")
+        .addEventListener("change", function (e) {
+          log(`✅ Test 3: Color changed to ${e.target.value}`, "success");
+          updateStatus(
+            "test3-status",
+            `✅ Color changed to ${e.target.value}`,
+            true
+          );
+        });
+
+      function runAllTests() {
+        clearLogs();
+        log("🧪 Running all tests...", "info");
+        log(
+          "📱 Please test on a mobile device or use browser dev tools mobile emulation",
+          "info"
+        );
+        log("1. Try Test 1 dropdowns - should work normally", "info");
+        log(
+          "2. Try Test 2 dropdowns - should work despite text container handlers",
+          "info"
+        );
+        log(
+          "3. Try Test 3 dropdowns - should work despite page-level handlers",
+          "info"
+        );
+      }
+
+      // Initial log
+      log(
+        "🧪 Dropdown test page loaded. Open on mobile device or use mobile emulation.",
+        "info"
+      );
+      log(
+        "📱 Test the dropdowns and watch the logs to see if they work.",
+        "info"
+      );
+    </script>
+  </body>
+</html>
