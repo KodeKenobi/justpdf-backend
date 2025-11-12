@@ -65,7 +65,14 @@ def list_users():
         from models import User
         
         page = request.args.get('page', 1, type=int)
-        per_page = min(request.args.get('per_page', 20, type=int), 100)
+        requested_per_page = request.args.get('per_page', 20, type=int)
+        
+        # Super admins can get up to 10000 users per page, regular admins limited to 100
+        if hasattr(g, 'current_user') and g.current_user and g.current_user.role == 'super_admin':
+            per_page = min(requested_per_page, 10000)
+        else:
+            per_page = min(requested_per_page, 100)
+        
         search = request.args.get('search', '')
         roles = request.args.getlist('role')  # Get multiple role values
         is_active = request.args.get('is_active', '')
@@ -88,7 +95,26 @@ def list_users():
         # Order by creation date
         query = query.order_by(desc(User.created_at))
         
-        # Paginate
+        # For super admin with no filters, return all users without pagination
+        if (hasattr(g, 'current_user') and g.current_user and g.current_user.role == 'super_admin' 
+            and not search and not roles and not is_active and not subscription_tiers):
+            # Return all users without pagination
+            all_users = query.all()
+            print(f"🔍 Super Admin list_users - Total users in DB: {User.query.count()}")
+            print(f"🔍 Super Admin list_users - Returning ALL {len(all_users)} users (no pagination)")
+            return jsonify({
+                'users': [user.to_dict() for user in all_users],
+                'pagination': {
+                    'page': 1,
+                    'per_page': len(all_users),
+                    'total': len(all_users),
+                    'pages': 1,
+                    'has_next': False,
+                    'has_prev': False
+                }
+            }), 200
+        
+        # Paginate for filtered queries or regular admins
         users = query.paginate(
             page=page, 
             per_page=per_page, 
@@ -100,6 +126,7 @@ def list_users():
         print(f"🔍 Admin list_users - Query result count: {users.total}")
         print(f"🔍 Admin list_users - Current user: {g.current_user.email if hasattr(g, 'current_user') and g.current_user else 'None'}")
         print(f"🔍 Admin list_users - Current user role: {g.current_user.role if hasattr(g, 'current_user') and g.current_user else 'None'}")
+        print(f"🔍 Admin list_users - Per page: {per_page}, Requested: {requested_per_page}")
         print(f"🔍 Admin list_users - Returning {len(users.items)} users")
         
         return jsonify({
