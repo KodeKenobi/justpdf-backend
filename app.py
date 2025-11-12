@@ -126,10 +126,14 @@ os.makedirs(HTML_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
 
-# Health check endpoint
+# Health check endpoint (must be defined early, before any heavy initialization)
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy", "message": "Backend is running"}), 200
+    """Simple health check for Railway deployment"""
+    try:
+        return jsonify({"status": "healthy", "message": "Backend is running"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # PDF Upload endpoint for frontend tools
 @app.route("/api/upload", methods=["POST"])
