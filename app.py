@@ -59,6 +59,9 @@ try:
     print("✅ Database module imported successfully")
     from models import *  # Import all models to register them with SQLAlchemy
     print("✅ Models imported successfully")
+    # Explicitly import Notification to ensure it's registered
+    from models import Notification
+    print("✅ Notification model imported successfully")
     from auth import jwt
     print("✅ Auth module imported successfully")
 except ImportError as e:

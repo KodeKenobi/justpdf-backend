@@ -34,8 +34,14 @@ def init_db(app):
             # Create notifications table if it doesn't exist
             if 'notifications' not in tables:
                 print("📦 Creating notifications table...")
-                db.create_all()  # This will create all missing tables
-                print("✅ Notifications table created")
+                # Ensure Notification model is imported before creating tables
+                try:
+                    from models import Notification
+                    db.create_all()  # This will create all missing tables
+                    print("✅ Notifications table created")
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not create notifications table: {e}")
+                    # Continue anyway - table might be created later
             
             if 'users' in tables:
                 # Table exists - check and add missing columns
