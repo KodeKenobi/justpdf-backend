@@ -241,3 +241,37 @@ class ResetHistory(db.Model):
             'reset_reason': self.reset_reason,
             'reset_at': self.reset_at.isoformat() if self.reset_at else None
         }
+
+class Notification(db.Model):
+    """System-wide notifications for admins"""
+    __tablename__ = 'notifications'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    type = db.Column(db.String(20), default='info', nullable=False)  # 'info', 'warning', 'error', 'success', 'payment', 'subscription'
+    category = db.Column(db.String(50), default='system', nullable=False)  # 'system', 'payment', 'subscription', 'user', 'api'
+    is_read = db.Column(db.Boolean, default=False, nullable=False)
+    read_at = db.Column(db.DateTime)
+    read_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Admin who read it
+    metadata = db.Column(db.JSON)  # Additional data (user_id, payment_id, etc.)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    read_by_user = db.relationship('User', foreign_keys=[read_by], backref='notifications_read')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'title': self.title,
+            'message': self.message,
+            'type': self.type,
+            'category': self.category,
+            'is_read': self.is_read,
+            'read_at': self.read_at.isoformat() if self.read_at else None,
+            'read_by': self.read_by,
+            'read_by_email': self.read_by_user.email if self.read_by_user else None,
+            'metadata': self.metadata,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }

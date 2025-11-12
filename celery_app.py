@@ -2,7 +2,7 @@ from celery import Celery
 import os
 
 # Create Celery instance
-celery_app = Celery('justpdf_api')
+celery_app = Celery('trevnoctilla_api')
 
 # Configuration
 celery_app.conf.update(
@@ -23,10 +23,10 @@ celery_app.conf.update(
 # Optional configuration for better performance
 celery_app.conf.update(
     task_routes={
-        'justpdf_backend.tasks.convert_video_async': {'queue': 'video'},
-        'justpdf_backend.tasks.convert_audio_async': {'queue': 'audio'},
-        'justpdf_backend.tasks.convert_image_async': {'queue': 'image'},
-        'justpdf_backend.tasks.process_pdf_async': {'queue': 'pdf'},
+        'trevnoctilla_backend.tasks.convert_video_async': {'queue': 'video'},
+        'trevnoctilla_backend.tasks.convert_audio_async': {'queue': 'audio'},
+        'trevnoctilla_backend.tasks.convert_image_async': {'queue': 'image'},
+        'trevnoctilla_backend.tasks.process_pdf_async': {'queue': 'pdf'},
     },
     task_default_queue='default',
     task_queues={

@@ -1,13 +1,13 @@
-# JUSTPDF Backend
+# Trevnoctilla Backend
 
-Flask backend for the JUSTPDF application.
+Flask backend for the Trevnoctilla application.
 
 ## Installation
 
 1. Navigate to the backend directory:
 
 ```bash
-cd justpdf-backend
+cd trevnoctilla-backend
 ```
 
 2. Install Python dependencies:

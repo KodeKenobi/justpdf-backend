@@ -1,0 +1,39 @@
+Welcome to Trevnoctilla! 🎉
+
+Hi there,
+
+Congratulations! Your Trevnoctilla account has been successfully created. 
+You're now on our {{ tier_info.name }} plan.
+
+What You're Getting:
+- {{ tier_info.calls }}
+{% for feature in tier_info.features %}
+- {{ feature }}
+{% endfor %}
+
+Next Steps:
+1. Generate your API key in the dashboard
+2. Check out our API documentation
+3. Start building amazing features!
+
+Go to Dashboard: https://www.trevnoctilla.com/dashboard
+
+Explore Other Plans:
+
+Production Plan - $29/month
+5,000 API calls/month • Priority support • All features
+
+Enterprise Plan - $49/month
+Unlimited API calls • Dedicated support • Custom SLAs • White-label options
+
+{{ tier_info.upgrade_message }}
+
+View Plans & Upgrade: https://www.trevnoctilla.com/dashboard?tab=settings&section=billing
+
+Need help? Check out our API Documentation at https://www.trevnoctilla.com/api-docs
+or contact us at info@trevnoctilla.com
+
+Best regards,
+The Trevnoctilla Team
+www.trevnoctilla.com
+

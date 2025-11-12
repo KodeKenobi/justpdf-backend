@@ -1,4 +1,4 @@
-# JustPDF API Documentation
+# Trevnoctilla API Documentation
 
 A comprehensive file conversion API with authentication, rate limiting, and async processing.
 
@@ -30,7 +30,7 @@ A comprehensive file conversion API with authentication, rate limiting, and asyn
 
    ```bash
    git clone <repository-url>
-   cd justpdf-backend
+   cd trevnoctilla-backend
    ```
 
 2. **Install dependencies**
@@ -207,16 +207,16 @@ curl -H "X-API-Key: admin-key" \
 
 ### Environment Variables
 
-| Variable             | Description                | Default                        |
-| -------------------- | -------------------------- | ------------------------------ |
-| `DATABASE_URL`       | Database connection string | `sqlite:///justpdf_api.db`     |
-| `REDIS_URL`          | Redis connection string    | `redis://localhost:6379/0`     |
-| `SECRET_KEY`         | Flask secret key           | Required                       |
-| `JWT_SECRET_KEY`     | JWT signing key            | Required                       |
-| `API_BASE_URL`       | Base URL for API           | `https://api.trevnoctilla.com` |
-| `FRONTEND_URL`       | Frontend URL               | `https://trevnoctilla.com`     |
-| `MAX_FILE_SIZE`      | Maximum file size          | `100MB`                        |
-| `DEFAULT_RATE_LIMIT` | Default rate limit         | `1000`                         |
+| Variable             | Description                | Default                         |
+| -------------------- | -------------------------- | ------------------------------- |
+| `DATABASE_URL`       | Database connection string | `sqlite:///trevnoctilla_api.db` |
+| `REDIS_URL`          | Redis connection string    | `redis://localhost:6379/0`      |
+| `SECRET_KEY`         | Flask secret key           | Required                        |
+| `JWT_SECRET_KEY`     | JWT signing key            | Required                        |
+| `API_BASE_URL`       | Base URL for API           | `https://api.trevnoctilla.com`  |
+| `FRONTEND_URL`       | Frontend URL               | `https://trevnoctilla.com`      |
+| `MAX_FILE_SIZE`      | Maximum file size          | `100MB`                         |
+| `DEFAULT_RATE_LIMIT` | Default rate limit         | `1000`                          |
 
 ### Database Setup
 
@@ -225,7 +225,7 @@ The API uses SQLAlchemy with support for SQLite (development) and PostgreSQL (pr
 For PostgreSQL:
 
 ```bash
-export DATABASE_URL="postgresql://user:password@localhost/justpdf_api"
+export DATABASE_URL="postgresql://user:password@localhost/trevnoctilla_api"
 ```
 
 ### Redis Setup

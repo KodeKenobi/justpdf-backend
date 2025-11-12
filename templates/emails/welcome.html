@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Welcome to Trevnoctilla</title>
+  </head>
+  <body
+    style="
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #f5f5f5;
+      background-color: #0a0a0a;
+      margin: 0;
+      padding: 0;
+    "
+  >
+    <table
+      role="presentation"
+      cellspacing="0"
+      cellpadding="0"
+      border="0"
+      width="100%"
+      style="background-color: #0a0a0a; padding: 40px 20px"
+    >
+      <tr>
+        <td align="center">
+          <table
+            role="presentation"
+            cellspacing="0"
+            cellpadding="0"
+            border="0"
+            width="600"
+            style="
+              max-width: 600px;
+              background-color: #111111;
+              border-radius: 8px;
+              overflow: hidden;
+            "
+          >
+            <!-- Header with Logo -->
+            <tr>
+              <td style="padding: 40px 40px 30px; text-align: center">
+                <img
+                  src="https://www.trevnoctilla.com/logo.png"
+                  alt="Trevnoctilla Logo"
+                  width="40"
+                  height="40"
+                  style="display: inline-block; vertical-align: middle"
+                />
+                <h1
+                  style="
+                    display: inline-block;
+                    margin: 0 0 0 12px;
+                    font-size: 24px;
+                    font-weight: 600;
+                    color: #ffffff;
+                    vertical-align: middle;
+                  "
+                >
+                  Trevnoctilla
+                </h1>
+              </td>
+            </tr>
+
+            <!-- Main Content -->
+            <tr>
+              <td style="padding: 0 40px 40px">
+                <h2
+                  style="
+                    font-size: 28px;
+                    font-weight: 600;
+                    color: #ffffff;
+                    margin: 0 0 20px;
+                    line-height: 1.2;
+                  "
+                >
+                  Welcome to Trevnoctilla
+                </h2>
+
+                <p
+                  style="
+                    font-size: 16px;
+                    color: #a0a0a0;
+                    margin: 0 0 24px;
+                    line-height: 1.6;
+                  "
+                >
+                  Your Trevnoctilla account has been successfully created.
+                  You're now on our
+                  <strong style="color: #ffffff">{{ tier_info.name }}</strong>
+                  plan.
+                </p>
+
+                <!-- What You're Getting -->
+                <div
+                  style="
+                    background-color: #1a1a1a;
+                    border: 1px solid #2a2a2a;
+                    border-radius: 6px;
+                    padding: 24px;
+                    margin: 32px 0;
+                  "
+                >
+                  <h3
+                    style="
+                      font-size: 18px;
+                      font-weight: 600;
+                      color: #ffffff;
+                      margin: 0 0 16px;
+                    "
+                  >
+                    What You're Getting
+                  </h3>
+                  <ul
+                    style="
+                      margin: 0;
+                      padding-left: 20px;
+                      color: #a0a0a0;
+                      font-size: 15px;
+                      line-height: 1.8;
+                    "
+                  >
+                    <li style="margin: 8px 0">
+                      <strong style="color: #ffffff"
+                        >{{ tier_info.calls }}</strong
+                      >
+                    </li>
+                    {% for feature in tier_info.features %}
+                    <li style="margin: 8px 0">{{ feature }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+
+                <!-- Next Steps -->
+                <div
+                  style="
+                    background-color: #1a1a1a;
+                    border: 1px solid #2a2a2a;
+                    border-radius: 6px;
+                    padding: 20px;
+                    margin: 24px 0;
+                  "
+                >
+                  <p
+                    style="
+                      font-size: 15px;
+                      color: #a0a0a0;
+                      margin: 0;
+                      line-height: 1.6;
+                    "
+                  >
+                    <strong style="color: #ffffff">Next Steps:</strong><br />
+                    1. Generate your API key in the dashboard<br />
+                    2. Check out our API documentation<br />
+                    3. Start building amazing features!
+                  </p>
+                </div>
+
+                <!-- CTA Button -->
+                <table
+                  role="presentation"
+                  cellspacing="0"
+                  cellpadding="0"
+                  border="0"
+                >
+                  <tr>
+                    <td align="center" style="padding: 20px 0 32px">
+                      <a
+                        href="https://www.trevnoctilla.com/dashboard"
+                        style="
+                          display: inline-block;
+                          background-color: #8b5cf6;
+                          color: #ffffff;
+                          text-decoration: none;
+                          padding: 14px 32px;
+                          border-radius: 6px;
+                          font-size: 16px;
+                          font-weight: 500;
+                        "
+                        >Go to Dashboard</a
+                      >
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Other Plans -->
+                <div
+                  style="
+                    background-color: #1a1a1a;
+                    border: 1px solid #2a2a2a;
+                    border-radius: 6px;
+                    padding: 24px;
+                    margin: 32px 0;
+                  "
+                >
+                  <h3
+                    style="
+                      font-size: 18px;
+                      font-weight: 600;
+                      color: #ffffff;
+                      margin: 0 0 16px;
+                    "
+                  >
+                    Explore Other Plans
+                  </h3>
+                  <div style="margin: 16px 0">
+                    <p
+                      style="
+                        font-size: 15px;
+                        color: #ffffff;
+                        font-weight: 500;
+                        margin: 0 0 4px;
+                      "
+                    >
+                      Production Plan - $29/month
+                    </p>
+                    <p
+                      style="
+                        font-size: 14px;
+                        color: #808080;
+                        margin: 0 0 16px;
+                        line-height: 1.5;
+                      "
+                    >
+                      5,000 API calls/month • Priority support • All features
+                    </p>
+                  </div>
+                  <div style="margin: 16px 0">
+                    <p
+                      style="
+                        font-size: 15px;
+                        color: #ffffff;
+                        font-weight: 500;
+                        margin: 0 0 4px;
+                      "
+                    >
+                      Enterprise Plan - $49/month
+                    </p>
+                    <p
+                      style="
+                        font-size: 14px;
+                        color: #808080;
+                        margin: 0 0 16px;
+                        line-height: 1.5;
+                      "
+                    >
+                      Unlimited API calls • Dedicated support • Custom SLAs •
+                      White-label options
+                    </p>
+                  </div>
+                  <p
+                    style="
+                      font-size: 14px;
+                      color: #a0a0a0;
+                      margin: 16px 0 0;
+                      line-height: 1.6;
+                    "
+                  >
+                    {{ tier_info.upgrade_message }}
+                  </p>
+                  <p style="margin: 16px 0 0">
+                    <a
+                      href="https://www.trevnoctilla.com/dashboard?tab=settings&section=billing"
+                      style="
+                        color: #8b5cf6;
+                        text-decoration: none;
+                        font-weight: 500;
+                        font-size: 15px;
+                      "
+                      >View Plans & Upgrade →</a
+                    >
+                  </p>
+                </div>
+
+                <!-- Divider -->
+                <div
+                  style="border-top: 1px solid #2a2a2a; margin: 32px 0"
+                ></div>
+
+                <!-- Footer -->
+                <p
+                  style="
+                    font-size: 14px;
+                    color: #808080;
+                    margin: 0 0 8px;
+                    line-height: 1.6;
+                  "
+                >
+                  Need help? Check out our
+                  <a
+                    href="https://www.trevnoctilla.com/api-docs"
+                    style="color: #8b5cf6; text-decoration: none"
+                    >API Documentation</a
+                  >
+                  or contact us at
+                  <a
+                    href="mailto:info@trevnoctilla.com"
+                    style="color: #8b5cf6; text-decoration: none"
+                    >info@trevnoctilla.com</a
+                  >
+                </p>
+
+                <p
+                  style="
+                    font-size: 13px;
+                    color: #666666;
+                    margin: 24px 0 0;
+                    text-align: center;
+                    line-height: 1.6;
+                  "
+                >
+                  Best regards,<br />
+                  The Trevnoctilla Team<br />
+                  <a
+                    href="https://www.trevnoctilla.com"
+                    style="color: #8b5cf6; text-decoration: none"
+                    >www.trevnoctilla.com</a
+                  >
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

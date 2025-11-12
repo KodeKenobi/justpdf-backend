@@ -43,10 +43,22 @@ def register_user(email, password, role='user'):
             return None, message
         
         # Check if user already exists
-        if User.query.filter_by(email=email).first():
-            return None, "Email already registered"
+        existing_user = User.query.filter_by(email=email).first()
         
-        # Create user
+        if existing_user:
+            # If user exists and is active, reject registration
+            if existing_user.is_active:
+                return None, "Email already registered"
+            # If user exists but is deactivated, reactivate them with new password
+            else:
+                existing_user.set_password(password)
+                existing_user.is_active = True
+                existing_user.created_at = datetime.utcnow()  # Reset creation date
+                db.session.commit()
+                print(f"✅ Reactivated deactivated user: {email}")
+                return existing_user, "Account reactivated successfully"
+        
+        # Create new user
         user = User(email=email, role=role)
         user.set_password(password)
         

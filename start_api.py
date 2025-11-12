@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Startup script for the JustPDF API
+Startup script for the Trevnoctilla API
 """
 
 import os
@@ -106,7 +106,7 @@ def start_flask():
 
 def main():
     """Main startup function"""
-    print("JustPDF API Startup")
+    print("Trevnoctilla API Startup")
     print("=" * 50)
     
     # Check dependencies

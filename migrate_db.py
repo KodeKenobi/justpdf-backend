@@ -4,8 +4,8 @@ import os
 
 # Find the database file - check multiple locations
 possible_paths = [
-    os.path.join(os.path.dirname(__file__), 'instance', 'justpdf_api.db'),
-    os.path.join(os.path.dirname(__file__), 'justpdf_api.db'),
+    os.path.join(os.path.dirname(__file__), 'instance', 'trevnoctilla_api.db'),
+    os.path.join(os.path.dirname(__file__), 'trevnoctilla_api.db'),
     os.path.join(os.path.dirname(__file__), 'local.db'),
     os.path.join(os.path.dirname(__file__), 'instance', 'local.db'),
 ]
@@ -23,7 +23,7 @@ if not db_path:
     # Create the instance directory and use default path
     instance_dir = os.path.join(os.path.dirname(__file__), 'instance')
     os.makedirs(instance_dir, exist_ok=True)
-    db_path = os.path.join(instance_dir, 'justpdf_api.db')
+    db_path = os.path.join(instance_dir, 'trevnoctilla_api.db')
     print(f"📝 Will create database at: {db_path}")
 
 print(f"📂 Found database at: {db_path}")

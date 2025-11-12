@@ -362,7 +362,7 @@ from celery.schedules import crontab
 
 celery_app.conf.beat_schedule = {
     'cleanup-old-files': {
-        'task': 'justpdf_backend.tasks.cleanup_old_files',
+        'task': 'trevnoctilla_backend.tasks.cleanup_old_files',
         'schedule': crontab(minute=0),  # Run every hour
     },
 }

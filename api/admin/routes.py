@@ -549,6 +549,37 @@ def reset_user_calls(user_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@admin_api.route('/users/<int:user_id>/toggle-status', methods=['POST'])
+@require_admin
+def toggle_user_status(user_id):
+    """Toggle user active status (activate/deactivate)"""
+    try:
+        from database import db
+        from models import User
+        
+        user = User.query.get_or_404(user_id)
+        
+        # Prevent deactivating yourself
+        if user.id == g.current_user.id:
+            return jsonify({'error': 'Cannot deactivate your own account'}), 400
+        
+        # Toggle status
+        user.is_active = not user.is_active
+        db.session.commit()
+        
+        status = "activated" if user.is_active else "deactivated"
+        print(f"✅ User {user.email} {status} by admin {g.current_user.email}")
+        
+        return jsonify({
+            'message': f'User {status} successfully',
+            'user': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 @admin_api.route('/users/<int:user_id>/reset-history', methods=['GET'])
 @require_admin
 def get_user_reset_history(user_id):
@@ -565,6 +596,153 @@ def get_user_reset_history(user_id):
             'user_id': user_id,
             'user_email': user.email,
             'reset_history': [h.to_dict() for h in history]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/notifications', methods=['GET'])
+@require_admin
+def list_notifications():
+    """List all notifications with filters"""
+    try:
+        from models import Notification
+        
+        # Filters
+        category = request.args.get('category', '')
+        notification_type = request.args.get('type', '')
+        is_read = request.args.get('is_read', '')
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        
+        query = Notification.query
+        
+        if category:
+            query = query.filter(Notification.category == category)
+        if notification_type:
+            query = query.filter(Notification.type == notification_type)
+        if is_read.lower() == 'true':
+            query = query.filter(Notification.is_read == True)
+        elif is_read.lower() == 'false':
+            query = query.filter(Notification.is_read == False)
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Order by newest first and paginate
+        notifications = query.order_by(desc(Notification.created_at))\
+            .limit(limit)\
+            .offset(offset)\
+            .all()
+        
+        return jsonify({
+            'notifications': [n.to_dict() for n in notifications],
+            'total': total,
+            'limit': limit,
+            'offset': offset
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/notifications/<int:notification_id>/read', methods=['POST'])
+@require_admin
+def mark_notification_read(notification_id):
+    """Mark a notification as read"""
+    try:
+        from database import db
+        from models import Notification
+        
+        notification = Notification.query.get_or_404(notification_id)
+        
+        if not notification.is_read:
+            notification.is_read = True
+            notification.read_at = datetime.utcnow()
+            notification.read_by = g.current_user.id
+            db.session.commit()
+        
+        return jsonify({
+            'message': 'Notification marked as read',
+            'notification': notification.to_dict()
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/notifications/<int:notification_id>', methods=['DELETE'])
+@require_admin
+def delete_notification(notification_id):
+    """Delete a notification"""
+    try:
+        from database import db
+        from models import Notification
+        
+        notification = Notification.query.get_or_404(notification_id)
+        db.session.delete(notification)
+        db.session.commit()
+        
+        return jsonify({'message': 'Notification deleted successfully'}), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/notifications/read-all', methods=['POST'])
+@require_admin
+def mark_all_notifications_read():
+    """Mark all notifications as read"""
+    try:
+        from database import db
+        from models import Notification
+        
+        unread_count = Notification.query.filter_by(is_read=False).count()
+        
+        if unread_count > 0:
+            Notification.query.filter_by(is_read=False).update({
+                'is_read': True,
+                'read_at': datetime.utcnow(),
+                'read_by': g.current_user.id
+            })
+            db.session.commit()
+        
+        return jsonify({
+            'message': f'Marked {unread_count} notifications as read'
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/notifications/stats', methods=['GET'])
+@require_admin
+def get_notification_stats():
+    """Get notification statistics"""
+    try:
+        from models import Notification
+        
+        total = Notification.query.count()
+        unread = Notification.query.filter_by(is_read=False).count()
+        
+        # Count by type
+        by_type = {}
+        for ntype in ['info', 'warning', 'error', 'success', 'payment', 'subscription']:
+            by_type[ntype] = Notification.query.filter_by(type=ntype).count()
+        
+        # Count by category
+        by_category = {}
+        for category in ['system', 'payment', 'subscription', 'user', 'api']:
+            by_category[category] = Notification.query.filter_by(category=category).count()
+        
+        return jsonify({
+            'total': total,
+            'unread': unread,
+            'read': total - unread,
+            'by_type': by_type,
+            'by_category': by_category
         }), 200
         
     except Exception as e:

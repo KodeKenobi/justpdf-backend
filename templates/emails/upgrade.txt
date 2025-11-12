@@ -1,0 +1,19 @@
+Upgrade Successful! 🚀
+
+Hi there,
+
+Great news! Your subscription has been successfully upgraded from 
+{{ old_tier_name }} to {{ new_tier_name }}.
+
+Your New Benefits:
+You now have access to all features and benefits of the {{ new_tier_name }}.
+Your new limits and features are now active in your dashboard.
+
+View Dashboard: https://www.trevnoctilla.com/dashboard
+
+Questions about your upgrade? Contact us at info@trevnoctilla.com
+
+Best regards,
+The Trevnoctilla Team
+www.trevnoctilla.com
+

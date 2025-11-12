@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # Install system dependencies including FFmpeg, build tools for pycairo, and Playwright deps
-# Updated for Railway build context - using justpdf-backend/ prefix
+# Updated for Railway build context - using trevnoctilla-backend/ prefix
 # Force rebuild - Railway cache issue
 RUN apt-get update && apt-get install -y \
     ffmpeg \

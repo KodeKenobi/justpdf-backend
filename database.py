@@ -8,7 +8,7 @@ migrate = Migrate()
 def init_db(app):
     """Initialize database with the Flask app"""
     # Database configuration
-    database_url = os.getenv('DATABASE_URL', 'sqlite:///justpdf_api.db')
+    database_url = os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')
     
     # Handle PostgreSQL URL format for SQLAlchemy
     if database_url.startswith('postgres://'):
@@ -30,6 +30,13 @@ def init_db(app):
             
             # Check if users table exists
             tables = inspector.get_table_names()
+            
+            # Create notifications table if it doesn't exist
+            if 'notifications' not in tables:
+                print("📦 Creating notifications table...")
+                db.create_all()  # This will create all missing tables
+                print("✅ Notifications table created")
+            
             if 'users' in tables:
                 # Table exists - check and add missing columns
                 print("🔄 Checking for missing columns...")
@@ -70,17 +77,17 @@ def init_db(app):
             
             # Create default admin user if none exists
             from models import User
-            admin_user = User.query.filter_by(email='admin@justpdf.com').first()
+            admin_user = User.query.filter_by(email='admin@trevnoctilla.com').first()
             if not admin_user:
                 admin_user = User(
-                    email='admin@justpdf.com',
+                    email='admin@trevnoctilla.com',
                     role='admin',
                     is_active=True
                 )
                 admin_user.set_password('admin123')  # Default password
                 db.session.add(admin_user)
                 db.session.commit()
-                print("✅ Default admin user created (email: admin@justpdf.com, password: admin123)")
+                print("✅ Default admin user created (email: admin@trevnoctilla.com, password: admin123)")
             else:
                 print("✅ Admin user already exists")
                 

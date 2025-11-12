@@ -9,7 +9,7 @@ def test_cors_headers():
     """Test CORS headers for the video conversion endpoint"""
     
     # Test URLs
-    base_url = "https://justpdf-backend-production.up.railway.app"
+    base_url = "https://trevnoctilla-backend-production.up.railway.app"
     local_url = "http://localhost:5000"
     
     # Test origins

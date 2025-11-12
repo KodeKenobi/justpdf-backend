@@ -22,6 +22,16 @@ def register():
         user, message = register_user(email, password)
         
         if user:
+            # Send welcome email (async - don't block response)
+            try:
+                from email_service import send_welcome_email
+                # Get subscription tier from user
+                tier = user.subscription_tier or 'free'
+                send_welcome_email(user.email, tier)
+            except Exception as e:
+                print(f"⚠️ Failed to send welcome email: {e}")
+                # Don't fail registration if email fails
+            
             return jsonify({
                 'message': message,
                 'user': user.to_dict()
