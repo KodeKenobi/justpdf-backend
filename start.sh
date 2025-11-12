@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e  # Exit on error
+# Exit on error for critical commands, but allow warnings
+set -e
 
 # Get port from environment variable or default to 5000
 PORT=${PORT:-5000}
@@ -27,13 +28,15 @@ except Exception as e:
     print(f'❌ Failed to import app: {e}')
     traceback.print_exc()
     sys.exit(1)
-" || {
+"
+if [ $? -ne 0 ]; then
     echo "ERROR: Failed to import app"
     exit 1
-}
+fi
 
 # Test health endpoint before starting gunicorn (non-blocking)
 echo "Testing health endpoint..."
+set +e  # Don't exit on error for this test
 python -c "
 import sys
 try:
@@ -49,9 +52,8 @@ except Exception as e:
     print(f'⚠️ Health endpoint test failed: {e}')
     import traceback
     traceback.print_exc()
-" || {
-    echo "WARNING: Health endpoint test failed, but continuing..."
-}
+"
+set -e  # Re-enable exit on error for critical commands
 
 # Start gunicorn with the port
 echo "Starting Gunicorn on 0.0.0.0:$PORT..."

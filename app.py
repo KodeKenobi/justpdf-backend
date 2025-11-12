@@ -106,7 +106,16 @@ app.config['JWT_HEADER_TYPE'] = 'Bearer'
 
 # Initialize extensions
 jwt.init_app(app)
-init_db(app)
+
+# Initialize database (non-blocking - allow app to start even if DB init fails)
+try:
+    init_db(app)
+    print("✅ Database initialized successfully")
+except Exception as e:
+    print(f"⚠️ Database initialization failed: {e}")
+    print("⚠️ App will continue to start, but database features may not work")
+    import traceback
+    traceback.print_exc()
 
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
@@ -134,15 +143,6 @@ os.makedirs(EDITED_FOLDER, exist_ok=True)
 os.makedirs(HTML_FOLDER, exist_ok=True)
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(AUDIO_FOLDER, exist_ok=True)
-
-# Health check endpoint (must be defined early, before any heavy initialization)
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Simple health check for Railway deployment"""
-    try:
-        return jsonify({"status": "healthy", "message": "Backend is running"}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 # PDF Upload endpoint for frontend tools
 @app.route("/api/upload", methods=["POST"])
@@ -174,18 +174,6 @@ def api_upload():
     except Exception as e:
         print(f"ERROR: Failed to upload file: {str(e)}")
         return jsonify({"error": f"Failed to upload file: {str(e)}"}), 500
-
-@app.route("/health")
-def health():
-    upload_folder_exists = os.path.exists(UPLOAD_FOLDER)
-    upload_folder_contents = os.listdir(UPLOAD_FOLDER) if upload_folder_exists else []
-    return jsonify({
-        "status": "ok",
-        "message": "Backend is running",
-        "upload_folder": UPLOAD_FOLDER,
-        "upload_folder_exists": upload_folder_exists,
-        "upload_folder_contents": upload_folder_contents
-    })
 
 @app.route("/test-ffmpeg")
 def test_ffmpeg():

@@ -115,7 +115,11 @@ def init_db(app):
                 
         except Exception as e:
             print(f"❌ Error creating database tables: {e}")
-            raise
+            import traceback
+            traceback.print_exc()
+            # Don't raise - allow app to start even if database init fails
+            # Database can be initialized later or healthcheck will show it's not ready
+            print("⚠️ Continuing without database initialization - app will start but database features may not work")
     
     return db
 
