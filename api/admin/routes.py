@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, g
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, or_
 from datetime import datetime, timedelta
 from api_auth import require_api_key, get_user_stats
 
@@ -11,13 +11,53 @@ def require_admin(f):
     from functools import wraps
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not hasattr(g, 'current_user') or g.current_user.role != 'admin':
+        if not hasattr(g, 'current_user') or (g.current_user.role != 'admin' and g.current_user.role != 'super_admin'):
             return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated_function
 
+@admin_api.before_request
+def load_user():
+    """Set g.current_user from JWT token or API key"""
+    # Skip authentication for OPTIONS requests (CORS preflight)
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+    
+    # Try JWT authentication first (for frontend)
+    try:
+        from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
+        from models import User
+        
+        verify_jwt_in_request(optional=True)
+        user_id = get_jwt_identity()
+        if user_id:
+            if isinstance(user_id, str):
+                user_id = int(user_id)
+            g.current_user = User.query.get(user_id)
+            if g.current_user:
+                return  # JWT auth successful
+    except Exception:
+        pass  # JWT auth failed, try API key
+    
+    # Fallback to API key authentication
+    try:
+        from api_auth import verify_api_key
+        api_key = request.headers.get('X-API-Key') or request.headers.get('Authorization', '').replace('Bearer ', '')
+        if api_key:
+            user = verify_api_key(api_key)
+            if user:
+                g.current_user = user
+                from models import APIKey
+                g.current_api_key = APIKey.query.filter_by(key=api_key).first()
+                return  # API key auth successful
+    except Exception:
+        pass
+    
+    # If neither worked, return error
+    if not hasattr(g, 'current_user') or not g.current_user:
+        return jsonify({'error': 'Authentication required'}), 401
+
 @admin_api.route('/users', methods=['GET'])
-@require_api_key
 @require_admin
 def list_users():
     """List all users with pagination and filtering"""
@@ -27,18 +67,23 @@ def list_users():
         page = request.args.get('page', 1, type=int)
         per_page = min(request.args.get('per_page', 20, type=int), 100)
         search = request.args.get('search', '')
-        role = request.args.get('role', '')
+        roles = request.args.getlist('role')  # Get multiple role values
         is_active = request.args.get('is_active', '')
+        subscription_tiers = request.args.getlist('subscription_tier')  # Get multiple tier values
         
         # Build query
         query = User.query
         
         if search:
             query = query.filter(User.email.contains(search))
-        if role:
-            query = query.filter(User.role == role)
+        if roles:
+            # Use OR logic for multiple roles
+            query = query.filter(or_(*[User.role == role for role in roles]))
         if is_active:
             query = query.filter(User.is_active == (is_active.lower() == 'true'))
+        if subscription_tiers:
+            # Use OR logic for multiple tiers
+            query = query.filter(or_(*[User.subscription_tier == tier for tier in subscription_tiers]))
         
         # Order by creation date
         query = query.order_by(desc(User.created_at))
@@ -49,6 +94,13 @@ def list_users():
             per_page=per_page, 
             error_out=False
         )
+        
+        # Debug logging
+        print(f"🔍 Admin list_users - Total users in DB: {User.query.count()}")
+        print(f"🔍 Admin list_users - Query result count: {users.total}")
+        print(f"🔍 Admin list_users - Current user: {g.current_user.email if hasattr(g, 'current_user') and g.current_user else 'None'}")
+        print(f"🔍 Admin list_users - Current user role: {g.current_user.role if hasattr(g, 'current_user') and g.current_user else 'None'}")
+        print(f"🔍 Admin list_users - Returning {len(users.items)} users")
         
         return jsonify({
             'users': [user.to_dict() for user in users.items],
@@ -66,7 +118,6 @@ def list_users():
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/users/<int:user_id>', methods=['GET'])
-@require_api_key
 @require_admin
 def get_user(user_id):
     """Get detailed user information"""
@@ -99,7 +150,6 @@ def get_user(user_id):
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/users/<int:user_id>/api-keys', methods=['POST'])
-@require_api_key
 @require_admin
 def create_api_key(user_id):
     """Create API key for a user"""
@@ -131,7 +181,6 @@ def create_api_key(user_id):
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/api-keys/<int:key_id>', methods=['DELETE'])
-@require_api_key
 @require_admin
 def revoke_api_key(key_id):
     """Revoke an API key"""
@@ -151,7 +200,6 @@ def revoke_api_key(key_id):
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/api-keys/<int:key_id>', methods=['PUT'])
-@require_api_key
 @require_admin
 def update_api_key(key_id):
     """Update API key settings"""
@@ -179,7 +227,6 @@ def update_api_key(key_id):
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/usage/stats', methods=['GET'])
-@require_api_key
 @require_admin
 def get_usage_stats():
     """Get system-wide usage statistics"""
@@ -247,6 +294,38 @@ def get_usage_stats():
             func.count(UsageLog.id).desc()
         ).limit(10).all()
         
+        # Users by tier with monthly usage
+        users_usage = []
+        all_users = User.query.all()
+        for user in all_users:
+            # Get monthly usage from UsageLog
+            month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            monthly_calls = UsageLog.query.filter(
+                UsageLog.user_id == user.id,
+                UsageLog.timestamp >= month_start
+            ).count()
+            
+            users_usage.append({
+                'id': user.id,
+                'email': user.email,
+                'subscription_tier': user.subscription_tier or 'free',
+                'monthly_used': user.monthly_used,
+                'monthly_limit': user.monthly_call_limit,
+                'monthly_remaining': user.monthly_call_limit - user.monthly_used if user.monthly_call_limit != -1 else -1,
+                'has_exceeded': user.monthly_used >= user.monthly_call_limit if user.monthly_call_limit != -1 else False,
+                'actual_monthly_calls': monthly_calls
+            })
+        
+        # Summary by tier
+        users_by_tier = {}
+        monthly_calls = 0
+        for user in all_users:
+            tier = user.subscription_tier or 'free'
+            if tier not in users_by_tier:
+                users_by_tier[tier] = 0
+            users_by_tier[tier] += 1
+            monthly_calls += user.monthly_used
+        
         return jsonify({
             'summary': {
                 'total_users': total_users,
@@ -254,7 +333,9 @@ def get_usage_stats():
                 'total_calls': total_calls,
                 'success_calls': success_calls,
                 'error_calls': error_calls,
-                'success_rate': (success_calls / total_calls * 100) if total_calls > 0 else 0
+                'success_rate': (success_calls / total_calls * 100) if total_calls > 0 else 0,
+                'monthly_calls': monthly_calls,
+                'users_by_tier': users_by_tier
             },
             'popular_endpoints': [
                 {'endpoint': ep, 'count': count} 
@@ -267,14 +348,14 @@ def get_usage_stats():
             'top_users': [
                 {'email': email, 'count': count} 
                 for email, count in top_users
-            ]
+            ],
+            'users_usage': users_usage
         }), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/jobs', methods=['GET'])
-@require_api_key
 @require_admin
 def list_jobs():
     """List all jobs with filtering"""
@@ -320,7 +401,6 @@ def list_jobs():
         return jsonify({'error': str(e)}), 500
 
 @admin_api.route('/system/health', methods=['GET'])
-@require_api_key
 @require_admin
 def system_health():
     """Get system health information"""
@@ -355,3 +435,111 @@ def system_health():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/users/by-tier', methods=['GET'])
+@require_admin
+def get_users_by_tier():
+    """Get users grouped by subscription tier"""
+    try:
+        from models import User
+        from sqlalchemy import func
+        
+        tier = request.args.get('tier', '')  # Optional tier filter
+        
+        # Build query
+        query = User.query
+        if tier:
+            query = query.filter(User.subscription_tier == tier)
+        
+        users = query.all()
+        
+        # Group by tier
+        users_by_tier = {}
+        for user in users:
+            tier_name = user.subscription_tier or 'free'
+            if tier_name not in users_by_tier:
+                users_by_tier[tier_name] = []
+            users_by_tier[tier_name].append(user.to_dict())
+        
+        # Get stats by tier
+        tier_stats = {}
+        for tier_name in ['free', 'premium', 'enterprise', 'client']:
+            tier_users = [u for u in users if (u.subscription_tier or 'free') == tier_name]
+            total_calls = sum(u.monthly_used for u in tier_users)
+            tier_stats[tier_name] = {
+                'count': len(tier_users),
+                'total_calls_used': total_calls,
+                'users': [u.to_dict() for u in tier_users]
+            }
+        
+        return jsonify({
+            'users_by_tier': users_by_tier,
+            'tier_stats': tier_stats
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/users/<int:user_id>/reset-calls', methods=['POST'])
+@require_admin
+def reset_user_calls(user_id):
+    """Reset a user's API call count"""
+    try:
+        from database import db
+        from models import User, ResetHistory
+        
+        user = User.query.get_or_404(user_id)
+        admin_user = g.current_user
+        
+        data = request.get_json() or {}
+        reason = data.get('reason', '')
+        
+        # Record reset history
+        calls_before = user.monthly_used
+        reset_history = ResetHistory(
+            user_id=user_id,
+            reset_by=admin_user.id,
+            calls_before=calls_before,
+            calls_after=0,
+            reset_reason=reason
+        )
+        
+        # Reset user's monthly_used
+        user.monthly_used = 0
+        user.monthly_reset_date = datetime.utcnow()
+        
+        db.session.add(reset_history)
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'User API calls reset successfully',
+            'user': user.to_dict(),
+            'reset_history': reset_history.to_dict()
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/users/<int:user_id>/reset-history', methods=['GET'])
+@require_admin
+def get_user_reset_history(user_id):
+    """Get reset history for a user"""
+    try:
+        from models import User, ResetHistory
+        
+        user = User.query.get_or_404(user_id)
+        history = ResetHistory.query.filter_by(user_id=user_id)\
+            .order_by(desc(ResetHistory.reset_at))\
+            .all()
+        
+        return jsonify({
+            'user_id': user_id,
+            'user_email': user.email,
+            'reset_history': [h.to_dict() for h in history]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+

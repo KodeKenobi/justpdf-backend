@@ -11,14 +11,21 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(128), nullable=False)
-    role = db.Column(db.String(20), default='user', nullable=False)  # 'user', 'admin'
+    role = db.Column(db.String(20), default='user', nullable=False)  # 'user', 'admin', 'super_admin'
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_login = db.Column(db.DateTime)
     
+    # Subscription fields
+    subscription_tier = db.Column(db.String(20), default='free', nullable=False)  # 'free', 'premium', 'enterprise', 'client'
+    monthly_call_limit = db.Column(db.Integer, default=5, nullable=False)  # -1 for unlimited
+    monthly_used = db.Column(db.Integer, default=0, nullable=False)
+    monthly_reset_date = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)  # Last reset date
+    
     # Relationships
     api_keys = db.relationship('APIKey', backref='user', lazy=True, cascade='all, delete-orphan')
     usage_logs = db.relationship('UsageLog', backref='user', lazy=True)
+    reset_history = db.relationship('ResetHistory', foreign_keys='ResetHistory.user_id', backref='user', lazy=True)
     
     def set_password(self, password):
         """Hash and set password"""
@@ -37,7 +44,12 @@ class User(db.Model):
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None,
-            'api_keys_count': len(self.api_keys)
+            'api_keys_count': len(self.api_keys),
+            'subscription_tier': self.subscription_tier,
+            'monthly_call_limit': self.monthly_call_limit,
+            'monthly_used': self.monthly_used,
+            'monthly_remaining': self.monthly_call_limit - self.monthly_used if self.monthly_call_limit != -1 else -1,
+            'monthly_reset_date': self.monthly_reset_date.isoformat() if self.monthly_reset_date else None
         }
 
 class APIKey(db.Model):
@@ -200,4 +212,32 @@ class Webhook(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_triggered': self.last_triggered.isoformat() if self.last_triggered else None,
             'failure_count': self.failure_count
+        }
+
+class ResetHistory(db.Model):
+    """History of API call resets by admins"""
+    __tablename__ = 'reset_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    reset_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)  # Admin who reset
+    calls_before = db.Column(db.Integer, nullable=False)  # Calls used before reset
+    calls_after = db.Column(db.Integer, default=0, nullable=False)  # Calls after reset (should be 0)
+    reset_reason = db.Column(db.String(500))  # Optional reason
+    reset_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    reset_by_user = db.relationship('User', foreign_keys=[reset_by], backref='resets_performed')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'reset_by': self.reset_by,
+            'reset_by_email': self.reset_by_user.email if self.reset_by_user else None,
+            'calls_before': self.calls_before,
+            'calls_after': self.calls_after,
+            'reset_reason': self.reset_reason,
+            'reset_at': self.reset_at.isoformat() if self.reset_at else None
         }

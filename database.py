@@ -24,8 +24,49 @@ def init_db(app):
     # Create tables
     with app.app_context():
         try:
-            db.create_all()
-            print("✅ Database tables created successfully")
+            # First, check if users table exists and migrate if needed
+            from sqlalchemy import inspect, text
+            inspector = inspect(db.engine)
+            
+            # Check if users table exists
+            tables = inspector.get_table_names()
+            if 'users' in tables:
+                # Table exists - check and add missing columns
+                print("🔄 Checking for missing columns...")
+                columns = [col['name'] for col in inspector.get_columns('users')]
+                
+                if 'subscription_tier' not in columns:
+                    print("🔄 Migrating: Adding subscription_tier column...")
+                    db.session.execute(text("ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(20) DEFAULT 'free'"))
+                    db.session.commit()
+                    print("✅ Added subscription_tier")
+                
+                if 'monthly_call_limit' not in columns:
+                    print("🔄 Migrating: Adding monthly_call_limit column...")
+                    db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_call_limit INTEGER DEFAULT 5"))
+                    db.session.commit()
+                    print("✅ Added monthly_call_limit")
+                
+                if 'monthly_used' not in columns:
+                    print("🔄 Migrating: Adding monthly_used column...")
+                    db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_used INTEGER DEFAULT 0"))
+                    db.session.commit()
+                    print("✅ Added monthly_used")
+                
+                if 'monthly_reset_date' not in columns:
+                    print("🔄 Migrating: Adding monthly_reset_date column...")
+                    # SQLite doesn't allow CURRENT_TIMESTAMP in ALTER TABLE, so add without default then update
+                    db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_reset_date DATETIME"))
+                    # Update existing rows with current timestamp
+                    from datetime import datetime
+                    db.session.execute(text("UPDATE users SET monthly_reset_date = :now WHERE monthly_reset_date IS NULL"), {"now": datetime.utcnow()})
+                    db.session.commit()
+                    print("✅ Added monthly_reset_date")
+            else:
+                # Table doesn't exist - create all tables
+                print("📦 Creating database tables...")
+                db.create_all()
+                print("✅ Database tables created successfully")
             
             # Create default admin user if none exists
             from models import User

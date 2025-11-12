@@ -197,6 +197,23 @@ def get_usage_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@client_api.route('/reset-history', methods=['GET'])
+def get_reset_history():
+    """Get reset history for current user"""
+    try:
+        from models import ResetHistory
+        
+        history = ResetHistory.query.filter_by(user_id=g.current_user.id)\
+            .order_by(desc(ResetHistory.reset_at))\
+            .all()
+        
+        return jsonify({
+            'reset_history': [h.to_dict() for h in history]
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @client_api.route('/jobs', methods=['GET'])
 def get_user_jobs():
     """Get user's jobs"""
