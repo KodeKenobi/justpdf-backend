@@ -84,6 +84,15 @@ app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
 
+# Health check endpoint (must be defined early, before any heavy initialization)
+@app.route("/health", methods=["GET"])
+def health_check():
+    """Simple health check for Railway deployment"""
+    try:
+        return jsonify({"status": "healthy", "message": "Backend is running"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-change-in-production')

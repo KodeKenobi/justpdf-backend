@@ -21,27 +21,43 @@ def init_db(app):
     db.init_app(app)
     migrate.init_app(app, db)
     
-    # Create tables
+    # Create tables (with timeout protection for Railway)
     with app.app_context():
         try:
             # First, check if users table exists and migrate if needed
             from sqlalchemy import inspect, text
-            inspector = inspect(db.engine)
+            import signal
             
-            # Check if users table exists
-            tables = inspector.get_table_names()
+            # Set a timeout for database operations (30 seconds)
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Database initialization timed out")
             
-            # Create notifications table if it doesn't exist
-            if 'notifications' not in tables:
-                print("📦 Creating notifications table...")
-                # Ensure Notification model is imported before creating tables
-                try:
-                    from models import Notification
-                    db.create_all()  # This will create all missing tables
-                    print("✅ Notifications table created")
-                except Exception as e:
-                    print(f"⚠️ Warning: Could not create notifications table: {e}")
-                    # Continue anyway - table might be created later
+            # Only set timeout on Unix systems (not available on Windows)
+            if hasattr(signal, 'SIGALRM'):
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(30)  # 30 second timeout
+            
+            try:
+                inspector = inspect(db.engine)
+                
+                # Check if users table exists
+                tables = inspector.get_table_names()
+                
+                # Create notifications table if it doesn't exist
+                if 'notifications' not in tables:
+                    print("📦 Creating notifications table...")
+                    # Ensure Notification model is imported before creating tables
+                    try:
+                        from models import Notification
+                        db.create_all()  # This will create all missing tables
+                        print("✅ Notifications table created")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not create notifications table: {e}")
+                        # Continue anyway - table might be created later
+            finally:
+                # Cancel alarm if it was set
+                if hasattr(signal, 'SIGALRM'):
+                    signal.alarm(0)
             
             if 'users' in tables:
                 # Table exists - check and add missing columns
