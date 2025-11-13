@@ -1,12 +1,9 @@
 """
 Email service for sending transactional emails
-Uses SMTP to send emails from info@trevnoctilla.com
+Uses Resend API to send emails (works on all Railway plans)
 """
-import smtplib
 import os
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+import requests
 from typing import Optional
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
@@ -15,17 +12,15 @@ from pathlib import Path
 template_dir = Path(__file__).parent / 'templates' / 'emails'
 env = Environment(loader=FileSystemLoader(str(template_dir)))
 
-# Email configuration - Afrihost SMTP
-SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.afrihost.co.za')
-SMTP_PORT = int(os.getenv('SMTP_PORT', '465'))
-SMTP_USER = os.getenv('SMTP_USER', 'kodekenobi@gmail.com')
-SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', 'Kopenikus0218!')
-FROM_EMAIL = 'info@trevnoctilla.com'
-FROM_NAME = 'Trevnoctilla Team'
+# Resend API configuration
+RESEND_API_KEY = os.getenv('RESEND_API_KEY', 're_5yGT4cPu_HkYqbboXDhEy9Kmo2T8Ec2uC')
+RESEND_API_URL = 'https://api.resend.com/emails'
+FROM_EMAIL = os.getenv('FROM_EMAIL', 'Trevnoctilla <onboarding@resend.dev>')
+FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')
 
 def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> bool:
     """
-    Send an email using SMTP
+    Send an email using Resend API
     
     Args:
         to_email: Recipient email address
@@ -37,45 +32,47 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         True if email sent successfully, False otherwise
     """
     try:
-        # Create message
-        msg = MIMEMultipart('alternative')
-        msg['From'] = f"{FROM_NAME} <{FROM_EMAIL}>"
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        
-        # Add text and HTML parts
-        if text_content:
-            text_part = MIMEText(text_content, 'plain')
-            msg.attach(text_part)
-        
-        html_part = MIMEText(html_content, 'html')
-        msg.attach(html_part)
-        
-        # Send email
-        if not SMTP_PASSWORD:
-            print(f"⚠️ SMTP_PASSWORD not set, skipping email to {to_email}")
+        if not RESEND_API_KEY:
+            print(f"⚠️ RESEND_API_KEY not set, skipping email to {to_email}")
             print(f"   Subject: {subject}")
             return False
         
-        # Use SSL for port 465 (Afrihost requires SSL, not STARTTLS)
-        # Add timeout to prevent hanging
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        # Prepare email payload
+        payload = {
+            'from': FROM_EMAIL,
+            'to': to_email,
+            'subject': subject,
+            'html': html_content
+        }
         
-        print(f"✅ Email sent successfully to {to_email}")
-        return True
+        # Add text content if provided
+        if text_content:
+            payload['text'] = text_content
         
-    except (smtplib.SMTPConnectError, TimeoutError, OSError) as e:
-        error_msg = str(e)
-        print(f"❌ SMTP Connection error to {to_email}: {error_msg}")
-        print(f"   This is expected from local machine - SMTP is blocked by firewall/network")
-        return False
+        # Send email via Resend API
+        headers = {
+            'Authorization': f'Bearer {RESEND_API_KEY}',
+            'Content-Type': 'application/json'
+        }
+        
+        response = requests.post(RESEND_API_URL, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"✅ Email sent successfully to {to_email} (ID: {data.get('id', 'N/A')})")
+            return True
+        else:
+            error_msg = response.text
+            print(f"❌ Error sending email to {to_email}: HTTP {response.status_code} - {error_msg}")
+            return False
+        
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error sending email to {to_email}: {error_msg}")
+        error_type = type(e).__name__
+        print(f"❌ Error sending email to {to_email}: {error_type}: {error_msg}")
         import traceback
         traceback.print_exc()
+        # Don't re-raise - return False so registration/upgrade can still succeed
         return False
 
 def get_welcome_email_html(user_email: str, tier: str = 'free') -> tuple[str, str]:
