@@ -25,11 +25,25 @@ def register():
             # Send welcome email (async - don't block response)
             try:
                 from email_service import send_welcome_email
+                import os
                 # Get subscription tier from user
                 tier = user.subscription_tier or 'free'
-                send_welcome_email(user.email, tier)
+                print(f"📧 Attempting to send welcome email to {user.email} (tier: {tier})")
+                
+                # Check if RESEND_API_KEY is set
+                if not os.getenv('RESEND_API_KEY'):
+                    print(f"⚠️ RESEND_API_KEY not set - email will not be sent")
+                    print(f"   Set RESEND_API_KEY environment variable to enable email sending")
+                else:
+                    success = send_welcome_email(user.email, tier)
+                    if success:
+                        print(f"✅ Welcome email sent successfully to {user.email}")
+                    else:
+                        print(f"❌ Failed to send welcome email to {user.email}")
             except Exception as e:
-                print(f"⚠️ Failed to send welcome email: {e}")
+                print(f"❌ Exception sending welcome email to {user.email}: {e}")
+                import traceback
+                traceback.print_exc()
                 # Don't fail registration if email fails
             
             return jsonify({

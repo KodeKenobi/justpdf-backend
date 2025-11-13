@@ -73,3 +73,48 @@ def send_test_welcome_email():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+
+@test_bp.route('/delete-user', methods=['POST'])
+def delete_user():
+    """Delete a user by email (admin/test endpoint)"""
+    try:
+        from database import db
+        from models import User, APIKey, UsageLog, ResetHistory, Notification
+        
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        
+        if not email:
+            return jsonify({'success': False, 'error': 'Email is required'}), 400
+        
+        user = User.query.filter_by(email=email).first()
+        
+        if not user:
+            return jsonify({'success': False, 'error': f'User not found: {email}'}), 404
+        
+        user_id = user.id
+        user_email = user.email
+        
+        # Delete related data
+        APIKey.query.filter_by(user_id=user_id).delete()
+        UsageLog.query.filter_by(user_id=user_id).delete()
+        ResetHistory.query.filter_by(user_id=user_id).delete()
+        Notification.query.filter_by(read_by=user_id).update({'read_by': None})
+        
+        # Delete user
+        db.session.delete(user)
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'User {user_email} deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        error_msg = str(e)
+        print(f"❌ Error deleting user: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
