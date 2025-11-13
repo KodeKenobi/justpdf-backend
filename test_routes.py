@@ -87,27 +87,50 @@ def delete_user():
         if not email:
             return jsonify({'success': False, 'error': 'Email is required'}), 400
         
+        print(f"🗑️ Attempting to delete user: {email}")
+        
         user = User.query.filter_by(email=email).first()
         
         if not user:
+            print(f"❌ User not found: {email}")
             return jsonify({'success': False, 'error': f'User not found: {email}'}), 404
         
         user_id = user.id
         user_email = user.email
+        print(f"📊 Found user: {user_email} (ID: {user_id})")
         
-        # Delete related data
-        APIKey.query.filter_by(user_id=user_id).delete()
-        UsageLog.query.filter_by(user_id=user_id).delete()
-        ResetHistory.query.filter_by(user_id=user_id).delete()
-        Notification.query.filter_by(read_by=user_id).update({'read_by': None})
+        # Delete related data first
+        api_keys_deleted = APIKey.query.filter_by(user_id=user_id).delete()
+        print(f"   Deleted {api_keys_deleted} API keys")
+        
+        usage_logs_deleted = UsageLog.query.filter_by(user_id=user_id).delete()
+        print(f"   Deleted {usage_logs_deleted} usage logs")
+        
+        reset_history_deleted = ResetHistory.query.filter_by(user_id=user_id).delete()
+        print(f"   Deleted {reset_history_deleted} reset history records")
+        
+        notifications_updated = Notification.query.filter_by(read_by=user_id).update({'read_by': None})
+        print(f"   Updated {notifications_updated} notification references")
         
         # Delete user
         db.session.delete(user)
         db.session.commit()
         
+        # Verify deletion
+        verify_user = User.query.filter_by(email=email).first()
+        if verify_user:
+            print(f"❌ ERROR: User still exists after deletion!")
+            return jsonify({
+                'success': False,
+                'error': 'User deletion failed - user still exists',
+                'message': f'Failed to delete user {user_email}'
+            }), 500
+        
+        print(f"✅ User {user_email} deleted successfully and verified")
         return jsonify({
             'success': True,
-            'message': f'User {user_email} deleted successfully'
+            'message': f'User {user_email} deleted successfully',
+            'deleted_id': user_id
         }), 200
         
     except Exception as e:
