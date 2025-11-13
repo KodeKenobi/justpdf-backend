@@ -149,6 +149,68 @@ def delete_user():
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
 
+@test_bp.route('/delete-all-users', methods=['POST'])
+def delete_all_users():
+    """Delete all users from the database (admin/test endpoint)"""
+    try:
+        from database import db
+        from models import User, APIKey, UsageLog, ResetHistory, Notification
+        
+        # Get count before deletion
+        user_count = User.query.count()
+        print(f"🗑️ Attempting to delete all {user_count} users")
+        
+        if user_count == 0:
+            return jsonify({
+                'success': True,
+                'message': 'No users to delete',
+                'deleted_count': 0
+            }), 200
+        
+        # Delete related data first
+        notification_count = Notification.query.count()
+        Notification.query.delete()
+        print(f"   Deleted {notification_count} notifications")
+        
+        usage_log_count = UsageLog.query.count()
+        UsageLog.query.delete()
+        print(f"   Deleted {usage_log_count} usage logs")
+        
+        reset_history_count = ResetHistory.query.count()
+        ResetHistory.query.delete()
+        print(f"   Deleted {reset_history_count} reset history records")
+        
+        api_key_count = APIKey.query.count()
+        APIKey.query.delete()
+        print(f"   Deleted {api_key_count} API keys")
+        
+        # Delete all users
+        deleted_count = User.query.delete()
+        db.session.flush()
+        db.session.commit()
+        
+        # Verify deletion
+        db.session.expire_all()
+        remaining_count = User.query.count()
+        
+        print(f"✅ Deleted {deleted_count} users. Remaining: {remaining_count}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully deleted {deleted_count} users and all related data',
+            'deleted_count': deleted_count,
+            'remaining_count': remaining_count
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        error_msg = str(e)
+        print(f"❌ Error deleting all users: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+
 @test_bp.route('/create-user', methods=['POST'])
 def create_user():
     """Create a new user with email, password, role, and tier"""
