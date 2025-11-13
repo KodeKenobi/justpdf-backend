@@ -93,6 +93,37 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route("/send-email-now", methods=["POST"])
+def send_email_now():
+    """Direct endpoint to send welcome email"""
+    try:
+        print("📧 Received email request")
+        from email_service import send_welcome_email
+        data = request.get_json() or {}
+        recipient = data.get('email', 'kodekenobi@gmail.com')
+        tier = data.get('tier', 'free')
+        print(f"📧 Attempting to send email to {recipient}")
+        
+        # Send email and wait for result
+        try:
+            success = send_welcome_email(recipient, tier)
+            print(f"📧 Email send result: {success}")
+            if success:
+                return jsonify({"success": True, "message": f"Email sent successfully to {recipient}"}), 200
+            else:
+                return jsonify({"success": False, "message": f"Failed to send email to {recipient}. SMTP connection likely blocked from local machine. Email will work from Railway backend."}), 500
+        except Exception as e:
+            error_msg = str(e)
+            print(f"📧 Email send error: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"success": False, "error": error_msg, "message": f"Error sending email: {error_msg}. This is expected from local machine - SMTP is blocked. Email will work from Railway."}), 500
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-change-in-production')

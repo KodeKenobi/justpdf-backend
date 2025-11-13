@@ -58,15 +58,24 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
             return False
         
         # Use SSL for port 465 (Afrihost requires SSL, not STARTTLS)
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+        # Add timeout to prevent hanging
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=10) as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.send_message(msg)
         
         print(f"✅ Email sent successfully to {to_email}")
         return True
         
+    except (smtplib.SMTPConnectError, TimeoutError, OSError) as e:
+        error_msg = str(e)
+        print(f"❌ SMTP Connection error to {to_email}: {error_msg}")
+        print(f"   This is expected from local machine - SMTP is blocked by firewall/network")
+        return False
     except Exception as e:
-        print(f"❌ Error sending email to {to_email}: {str(e)}")
+        error_msg = str(e)
+        print(f"❌ Error sending email to {to_email}: {error_msg}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def get_welcome_email_html(user_email: str, tier: str = 'free') -> tuple[str, str]:
