@@ -20,7 +20,7 @@ FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')
 
 def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> bool:
     """
-    Send an email using Resend API
+    Send an email using Next.js API route (which uses Resend Node.js SDK)
     
     Args:
         to_email: Recipient email address
@@ -32,14 +32,14 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         True if email sent successfully, False otherwise
     """
     try:
-        if not RESEND_API_KEY:
-            print(f"⚠️ RESEND_API_KEY not set, skipping email to {to_email}")
-            print(f"   Subject: {subject}")
-            return False
+        import os
+        
+        # Get Next.js API URL
+        nextjs_url = os.getenv('NEXTJS_API_URL', 'https://www.trevnoctilla.com')
+        email_api_url = f"{nextjs_url}/api/email/send"
         
         # Prepare email payload
         payload = {
-            'from': FROM_EMAIL,
             'to': to_email,
             'subject': subject,
             'html': html_content
@@ -49,27 +49,33 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         if text_content:
             payload['text'] = text_content
         
-        # Send email via Resend API
-        headers = {
-            'Authorization': f'Bearer {RESEND_API_KEY}',
-            'Content-Type': 'application/json'
-        }
+        print(f"📤 [EMAIL] Sending email to {to_email} via Next.js API")
+        print(f"📤 [EMAIL] API URL: {email_api_url}")
+        print(f"📤 [EMAIL] Subject: {subject}")
         
-        response = requests.post(RESEND_API_URL, json=payload, headers=headers, timeout=30)
+        # Send email via Next.js API route
+        response = requests.post(email_api_url, json=payload, timeout=30)
+        
+        print(f"📥 [EMAIL] Response status: {response.status_code}")
+        print(f"📥 [EMAIL] Response body: {response.text[:200]}")
         
         if response.status_code == 200:
             data = response.json()
-            print(f"✅ Email sent successfully to {to_email} (ID: {data.get('id', 'N/A')})")
-            return True
+            if data.get('success'):
+                print(f"✅ [EMAIL] Email sent successfully to {to_email} (ID: {data.get('email_id', 'N/A')})")
+                return True
+            else:
+                print(f"❌ [EMAIL] Email send failed: {data.get('error', 'Unknown error')}")
+                return False
         else:
             error_msg = response.text
-            print(f"❌ Error sending email to {to_email}: HTTP {response.status_code} - {error_msg}")
+            print(f"❌ [EMAIL] Error sending email to {to_email}: HTTP {response.status_code} - {error_msg}")
             return False
         
     except Exception as e:
         error_msg = str(e)
         error_type = type(e).__name__
-        print(f"❌ Error sending email to {to_email}: {error_type}: {error_msg}")
+        print(f"❌ [EMAIL] Error sending email to {to_email}: {error_type}: {error_msg}")
         import traceback
         traceback.print_exc()
         # Don't re-raise - return False so registration/upgrade can still succeed
