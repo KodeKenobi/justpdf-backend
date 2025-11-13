@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, render_template
 
 # Create Blueprint
 test_bp = Blueprint('test', __name__, url_prefix='/test')
@@ -26,6 +26,11 @@ def debug():
 def ping():
     """Simple ping endpoint to test route accessibility"""
     return jsonify({'status': 'ok', 'message': 'Test route is accessible'}), 200
+
+@test_bp.route('/database-admin', methods=['GET'])
+def database_admin():
+    """HTML interface for database administration"""
+    return render_template('database_admin.html')
 
 @test_bp.route('/send-welcome-email', methods=['POST'])
 def send_test_welcome_email():
