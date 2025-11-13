@@ -25,11 +25,15 @@ def register():
             # Send welcome email IMMEDIATELY (synchronous - wait for completion)
             try:
                 from email_service import send_welcome_email
+                from datetime import datetime
                 # Get subscription tier from user
                 tier = user.subscription_tier or 'free'
                 print(f"📧 [REGISTRATION] Attempting to send welcome email to {user.email} (tier: {tier})")
                 
-                success = send_welcome_email(user.email, tier)
+                # Use registration date as payment date for invoice
+                registration_date = datetime.now()
+                
+                success = send_welcome_email(user.email, tier, amount=0.0, payment_id="", payment_date=registration_date)
                 if success:
                     print(f"✅ [REGISTRATION] Welcome email sent successfully to {user.email}")
                 else:

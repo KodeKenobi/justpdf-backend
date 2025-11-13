@@ -108,7 +108,26 @@ def upgrade_subscription():
         # Send upgrade email if tier changed
         if tier_changed:
             try:
-                send_upgrade_email(user.email, old_tier, new_tier)
+                # Get payment date from request (if available) or use current date
+                from datetime import datetime
+                payment_date_str = data.get('payment_date')
+                payment_date = None
+                if payment_date_str:
+                    try:
+                        payment_date = datetime.fromisoformat(payment_date_str.replace('Z', '+00:00'))
+                    except:
+                        payment_date = datetime.now()
+                else:
+                    payment_date = datetime.now()
+                
+                send_upgrade_email(
+                    user.email, 
+                    old_tier, 
+                    new_tier, 
+                    amount=amount,
+                    payment_id=payment_id,
+                    payment_date=payment_date
+                )
             except Exception as e:
                 print(f"⚠️ Failed to send upgrade email: {e}")
                 # Don't fail the request if email fails

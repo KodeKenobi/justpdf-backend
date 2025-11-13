@@ -4,7 +4,10 @@ Uses Resend API to send emails (works on all Railway plans)
 """
 import os
 import requests
-from typing import Optional
+import base64
+import uuid
+from datetime import datetime
+from typing import Optional, Dict, Any
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 
@@ -18,7 +21,118 @@ RESEND_API_URL = 'https://api.resend.com/emails'
 FROM_EMAIL = os.getenv('FROM_EMAIL', 'Trevnoctilla <onboarding@resend.dev>')
 FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')
 
-def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None) -> bool:
+def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None) -> Optional[bytes]:
+    """
+    Generate PDF invoice from HTML template using html-to-pdf endpoint
+    
+    Args:
+        tier: Subscription tier (free, premium, enterprise)
+        amount: Invoice amount (0.0 for free tier)
+        user_email: User email address
+        payment_id: Payment/transaction ID (optional)
+        payment_date: Payment/start date (uses this for invoice date if provided)
+    
+    Returns:
+        PDF bytes if successful, None otherwise
+    """
+    try:
+        # Tier pricing
+        tier_pricing = {
+            'free': 0.00,
+            'premium': 29.00,
+            'enterprise': 49.00,
+            'client': 0.00  # Custom pricing
+        }
+        
+        tier_names = {
+            'free': 'Free Tier',
+            'premium': 'Production Plan',
+            'enterprise': 'Enterprise Plan',
+            'client': 'Client Plan'
+        }
+        
+        # Use provided amount or tier pricing
+        invoice_amount = amount if amount > 0 else tier_pricing.get(tier.lower(), 0.0)
+        
+        # Use payment date if provided, otherwise use current date
+        invoice_date_obj = payment_date if payment_date else datetime.now()
+        invoice_date_str = invoice_date_obj.strftime('%B %d, %Y')
+        
+        # Generate invoice number based on payment date
+        invoice_number = f"INV-{invoice_date_obj.strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
+        
+        # Generate invoice HTML with logo
+        invoice_template = env.get_template('invoice.html')
+        invoice_html = invoice_template.render(
+            invoice_number=invoice_number,
+            invoice_date=invoice_date_str,
+            user_email=user_email,
+            tier_name=tier_names.get(tier.lower(), tier),
+            item_description=f"{tier_names.get(tier.lower(), tier)} Subscription",
+            unit_price=f"{invoice_amount:.2f}",
+            total_amount=f"{invoice_amount:.2f}",
+            currency_symbol="$",
+            tax_amount=0.0,
+            tax_rate=0,
+            status="Paid" if invoice_amount > 0 else "Free",
+            status_class="status-paid" if invoice_amount > 0 else "status-free"
+        )
+        
+        # Save HTML to temp file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+            f.write(invoice_html)
+            html_path = f.name
+        
+        # Get backend API URL
+        backend_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
+        if not backend_url.startswith('http'):
+            backend_url = f'https://{backend_url}'
+        
+        # Convert HTML to PDF using backend endpoint
+        print(f"📄 [INVOICE] Converting HTML to PDF...")
+        with open(html_path, 'rb') as html_file:
+            files = {'html': ('invoice.html', html_file, 'text/html')}
+            response = requests.post(
+                f"{backend_url}/convert_html_to_pdf",
+                files=files,
+                timeout=30
+            )
+        
+        # Clean up temp HTML file
+        try:
+            os.unlink(html_path)
+        except:
+            pass
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success' and data.get('download_url'):
+                # Download the PDF
+                pdf_url = data['download_url']
+                if not pdf_url.startswith('http'):
+                    pdf_url = f"{backend_url}{pdf_url}"
+                
+                pdf_response = requests.get(pdf_url, timeout=30)
+                if pdf_response.status_code == 200:
+                    print(f"✅ [INVOICE] PDF generated successfully ({len(pdf_response.content)} bytes)")
+                    return pdf_response.content
+                else:
+                    print(f"❌ [INVOICE] Failed to download PDF: {pdf_response.status_code}")
+            else:
+                print(f"❌ [INVOICE] Conversion failed: {data.get('error', 'Unknown error')}")
+        else:
+            print(f"❌ [INVOICE] HTML to PDF conversion failed: {response.status_code} - {response.text[:200]}")
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ [INVOICE] Error generating invoice PDF: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None, attachments: Optional[list] = None) -> bool:
     """
     Send an email using Next.js API route (which uses Resend Node.js SDK)
     
@@ -48,6 +162,11 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         # Add text content if provided
         if text_content:
             payload['text'] = text_content
+        
+        # Add attachments if provided
+        # Format: [{ filename: "invoice.pdf", content: base64String, contentType: "application/pdf" }]
+        if attachments:
+            payload['attachments'] = attachments
         
         print(f"📤 [EMAIL] Sending email to {to_email} via Next.js API")
         print(f"📤 [EMAIL] API URL: {email_api_url}")
@@ -182,13 +301,15 @@ def get_upgrade_email_html(user_email: str, old_tier: str, new_tier: str) -> tup
     
     return html_content, text_content
 
-def send_welcome_email(user_email: str, tier: str = 'free') -> bool:
+def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0, payment_id: str = "", payment_date: Optional[datetime] = None) -> bool:
     """
-    Send welcome email to newly registered user
+    Send welcome email to newly registered user with invoice attachment
     
     Args:
         user_email: User's email address
         tier: Subscription tier
+        amount: Payment amount (0.0 for free tier)
+        payment_id: Payment/transaction ID (optional)
     
     Returns:
         True if email sent successfully
@@ -200,16 +321,39 @@ def send_welcome_email(user_email: str, tier: str = 'free') -> bool:
         'enterprise': {'name': 'Enterprise Plan'}
     }
     subject = f"Welcome to Trevnoctilla - {tier_info.get(tier.lower(), tier_info['free'])['name']} Activated! 🎉"
-    return send_email(user_email, subject, html_content, text_content)
+    
+    # Generate and attach invoice PDF
+    attachments = []
+    try:
+        invoice_pdf = generate_invoice_pdf(tier, amount, user_email, payment_id, payment_date)
+        if invoice_pdf:
+            # Convert PDF bytes to base64
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
+            date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+            attachments.append({
+                'filename': f'invoice_{tier}_{date_str}.pdf',
+                'content': pdf_base64,
+                'contentType': 'application/pdf'
+            })
+            print(f"✅ [WELCOME EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes)")
+        else:
+            print(f"⚠️ [WELCOME EMAIL] Failed to generate invoice PDF, sending email without attachment")
+    except Exception as e:
+        print(f"⚠️ [WELCOME EMAIL] Error generating invoice: {e}")
+        # Continue without attachment if invoice generation fails
+    
+    return send_email(user_email, subject, html_content, text_content, attachments if attachments else None)
 
-def send_upgrade_email(user_email: str, old_tier: str, new_tier: str) -> bool:
+def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: float = 0.0, payment_id: str = "", payment_date: Optional[datetime] = None) -> bool:
     """
-    Send upgrade confirmation email
+    Send upgrade confirmation email with invoice attachment
     
     Args:
         user_email: User's email address
         old_tier: Previous subscription tier
         new_tier: New subscription tier
+        amount: Payment amount
+        payment_id: Payment/transaction ID (optional)
     
     Returns:
         True if email sent successfully
@@ -221,5 +365,26 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str) -> bool:
         'enterprise': 'Enterprise Plan'
     }
     subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! 🚀"
-    return send_email(user_email, subject, html_content, text_content)
+    
+    # Generate and attach invoice PDF
+    attachments = []
+    try:
+        invoice_pdf = generate_invoice_pdf(new_tier, amount, user_email, payment_id, payment_date)
+        if invoice_pdf:
+            # Convert PDF bytes to base64
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
+            date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+            attachments.append({
+                'filename': f'invoice_upgrade_{new_tier}_{date_str}.pdf',
+                'content': pdf_base64,
+                'contentType': 'application/pdf'
+            })
+            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes)")
+        else:
+            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, sending email without attachment")
+    except Exception as e:
+        print(f"⚠️ [UPGRADE EMAIL] Error generating invoice: {e}")
+        # Continue without attachment if invoice generation fails
+    
+    return send_email(user_email, subject, html_content, text_content, attachments if attachments else None)
 
