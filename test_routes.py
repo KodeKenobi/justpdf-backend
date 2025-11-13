@@ -21,3 +21,38 @@ def debug():
             
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@test_bp.route('/send-welcome-email', methods=['POST'])
+def send_test_welcome_email():
+    """Test endpoint to send welcome email"""
+    try:
+        from email_service import send_welcome_email
+        
+        data = request.get_json() or {}
+        recipient = data.get('email', 'kodekenobi@gmail.com')
+        tier = data.get('tier', 'free')
+        
+        print(f"📧 Sending test welcome email to {recipient} (tier: {tier})")
+        
+        success = send_welcome_email(recipient, tier)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Welcome email sent successfully to {recipient}',
+                'recipient': recipient,
+                'tier': tier
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Failed to send welcome email to {recipient}',
+                'recipient': recipient,
+                'tier': tier
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error in send_test_welcome_email: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
