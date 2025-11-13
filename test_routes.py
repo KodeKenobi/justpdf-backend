@@ -119,9 +119,11 @@ def delete_user():
         
         # Delete user
         db.session.delete(user)
+        db.session.flush()  # Ensure deletion is processed
         db.session.commit()
         
         # Verify deletion
+        db.session.expire_all()  # Clear session cache
         verify_user = User.query.filter_by(email=email).first()
         if verify_user:
             print(f"❌ ERROR: User still exists after deletion!")
@@ -143,6 +145,107 @@ def delete_user():
         db.session.rollback()
         error_msg = str(e)
         print(f"❌ Error deleting user: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+
+@test_bp.route('/create-user', methods=['POST'])
+def create_user():
+    """Create a new user with email, password, role, and tier"""
+    try:
+        from database import db
+        from models import User
+        from auth import register_user, validate_password
+        from email_service import send_welcome_email
+        import os
+        
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        confirm_password = data.get('confirm_password', '')
+        role = data.get('role', 'user').lower()
+        subscription_tier = data.get('subscription_tier', 'free').lower()
+        
+        # Validate inputs
+        if not email or not password:
+            return jsonify({'success': False, 'error': 'Email and password are required'}), 400
+        
+        if password != confirm_password:
+            return jsonify({'success': False, 'error': 'Passwords do not match'}), 400
+        
+        # Validate password strength
+        is_valid, message = validate_password(password)
+        if not is_valid:
+            return jsonify({'success': False, 'error': message}), 400
+        
+        # Validate role
+        valid_roles = ['user', 'admin', 'super_admin']
+        if role not in valid_roles:
+            return jsonify({'success': False, 'error': f'Invalid role. Must be one of: {", ".join(valid_roles)}'}), 400
+        
+        # Validate subscription tier
+        valid_tiers = ['free', 'premium', 'enterprise', 'client']
+        if subscription_tier not in valid_tiers:
+            return jsonify({'success': False, 'error': f'Invalid tier. Must be one of: {", ".join(valid_tiers)}'}), 400
+        
+        # Check if user already exists
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            return jsonify({'success': False, 'error': 'User with this email already exists'}), 400
+        
+        # Create user
+        user, message = register_user(email, password, role=role)
+        
+        if not user:
+            return jsonify({'success': False, 'error': message}), 400
+        
+        # Set subscription tier and limits
+        tier_limits = {
+            'free': 5,
+            'premium': 5000,
+            'enterprise': -1,  # unlimited
+            'client': 10000
+        }
+        user.subscription_tier = subscription_tier
+        user.monthly_call_limit = tier_limits.get(subscription_tier, 5)
+        db.session.commit()
+        
+        print(f"✅ [ADMIN] Created user: {email} (role: {role}, tier: {subscription_tier})")
+        
+        # Send welcome email based on tier
+        try:
+            resend_key = os.getenv('RESEND_API_KEY')
+            if resend_key:
+                # Determine email tier (use subscription_tier, but map roles if needed)
+                email_tier = subscription_tier
+                if role in ['admin', 'super_admin']:
+                    # For admin roles, use enterprise tier for email content
+                    email_tier = 'enterprise'
+                
+                success = send_welcome_email(user.email, email_tier)
+                if success:
+                    print(f"✅ [ADMIN] Welcome email sent to {user.email} (tier: {email_tier})")
+                else:
+                    print(f"❌ [ADMIN] Failed to send welcome email to {user.email}")
+            else:
+                print(f"⚠️ [ADMIN] RESEND_API_KEY not set - email not sent")
+        except Exception as e:
+            print(f"❌ [ADMIN] Exception sending welcome email: {e}")
+            import traceback
+            traceback.print_exc()
+            # Don't fail user creation if email fails
+        
+        return jsonify({
+            'success': True,
+            'message': f'User created successfully',
+            'user': user.to_dict()
+        }), 201
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        error_msg = str(e)
+        print(f"❌ Error creating user: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
