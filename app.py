@@ -93,7 +93,7 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route("/send-email-now", methods=["POST"])
+@app.route("/test/send-welcome-email", methods=["POST"])
 def send_email_now():
     """Direct endpoint to send welcome email"""
     try:
