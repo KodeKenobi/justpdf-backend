@@ -13,7 +13,7 @@ template_dir = Path(__file__).parent / 'templates' / 'emails'
 env = Environment(loader=FileSystemLoader(str(template_dir)))
 
 # Resend API configuration
-RESEND_API_KEY = os.getenv('RESEND_API_KEY', 're_5yGT4cPu_HkYqbboXDhEy9Kmo2T8Ec2uC')
+RESEND_API_KEY = os.getenv('RESEND_API_KEY')
 RESEND_API_URL = 'https://api.resend.com/emails'
 FROM_EMAIL = os.getenv('FROM_EMAIL', 'Trevnoctilla <onboarding@resend.dev>')
 FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')

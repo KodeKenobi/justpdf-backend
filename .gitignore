@@ -39,6 +39,14 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Database instances
+instance/
+
 # Logs
 *.log
 
