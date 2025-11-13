@@ -141,3 +141,82 @@ def delete_user():
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+
+@test_bp.route('/view-database', methods=['GET'])
+def view_database():
+    """View database contents (read-only)"""
+    try:
+        from database import db
+        from models import User, APIKey, UsageLog, Notification
+        from sqlalchemy import inspect
+        
+        inspector = inspect(db.engine)
+        tables = inspector.get_table_names()
+        
+        result = {
+            'database_url': str(db.engine.url).split('@')[-1] if '@' in str(db.engine.url) else 'sqlite',
+            'tables': tables,
+            'users': [],
+            'api_keys': [],
+            'usage_logs': [],
+            'notifications': []
+        }
+        
+        # Get users
+        users = User.query.all()
+        for user in users:
+            result['users'].append({
+                'id': user.id,
+                'email': user.email,
+                'role': user.role,
+                'is_active': user.is_active,
+                'subscription_tier': user.subscription_tier,
+                'created_at': user.created_at.isoformat() if user.created_at else None
+            })
+        
+        # Get API keys (limited)
+        api_keys = APIKey.query.limit(50).all()
+        for key in api_keys:
+            result['api_keys'].append({
+                'id': key.id,
+                'user_id': key.user_id,
+                'key_prefix': key.key[:20] + '...' if key.key else None,
+                'created_at': key.created_at.isoformat() if key.created_at else None
+            })
+        
+        # Get usage logs (limited)
+        usage_logs = UsageLog.query.limit(50).all()
+        for log in usage_logs:
+            result['usage_logs'].append({
+                'id': log.id,
+                'user_id': log.user_id,
+                'endpoint': log.endpoint,
+                'created_at': log.created_at.isoformat() if log.created_at else None
+            })
+        
+        # Get notifications (limited)
+        notifications = Notification.query.limit(50).all()
+        for notif in notifications:
+            result['notifications'].append({
+                'id': notif.id,
+                'title': notif.title,
+                'type': notif.type,
+                'is_read': notif.is_read,
+                'created_at': notif.created_at.isoformat() if notif.created_at else None
+            })
+        
+        result['counts'] = {
+            'users': len(result['users']),
+            'api_keys': APIKey.query.count(),
+            'usage_logs': UsageLog.query.count(),
+            'notifications': Notification.query.count()
+        }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ Error viewing database: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
