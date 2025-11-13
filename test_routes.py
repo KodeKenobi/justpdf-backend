@@ -22,10 +22,18 @@ def debug():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@test_bp.route('/ping', methods=['GET'])
+def ping():
+    """Simple ping endpoint to test route accessibility"""
+    return jsonify({'status': 'ok', 'message': 'Test route is accessible'}), 200
+
 @test_bp.route('/send-welcome-email', methods=['POST'])
 def send_test_welcome_email():
     """Test endpoint to send welcome email"""
     try:
+        print(f"📧 Received request to send welcome email")
+        print(f"📧 Request data: {request.get_json()}")
+        
         from email_service import send_welcome_email
         
         data = request.get_json() or {}
@@ -35,6 +43,8 @@ def send_test_welcome_email():
         print(f"📧 Sending test welcome email to {recipient} (tier: {tier})")
         
         success = send_welcome_email(recipient, tier)
+        
+        print(f"📧 Email send result: {success}")
         
         if success:
             return jsonify({
@@ -51,8 +61,13 @@ def send_test_welcome_email():
                 'tier': tier
             }), 500
             
+    except ImportError as e:
+        print(f"❌ Import error in send_test_welcome_email: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Import error: {str(e)}'}), 500
     except Exception as e:
         print(f"❌ Error in send_test_welcome_email: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
