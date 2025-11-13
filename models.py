@@ -254,7 +254,7 @@ class Notification(db.Model):
     is_read = db.Column(db.Boolean, default=False, nullable=False)
     read_at = db.Column(db.DateTime)
     read_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Admin who read it
-    metadata = db.Column(db.JSON)  # Additional data (user_id, payment_id, etc.)
+    notification_metadata = db.Column(db.JSON)  # Additional data (user_id, payment_id, etc.)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     
     # Relationships
@@ -272,6 +272,6 @@ class Notification(db.Model):
             'read_at': self.read_at.isoformat() if self.read_at else None,
             'read_by': self.read_by,
             'read_by_email': self.read_by_user.email if self.read_by_user else None,
-            'metadata': self.metadata,
+            'metadata': self.notification_metadata,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }

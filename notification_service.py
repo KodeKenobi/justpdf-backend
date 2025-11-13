@@ -31,7 +31,7 @@ def create_notification(
             message=message,
             type=notification_type,
             category=category,
-            metadata=metadata or {}
+            notification_metadata=metadata or {}
         )
         
         db.session.add(notification)
