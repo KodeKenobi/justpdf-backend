@@ -62,12 +62,14 @@ def send_test_welcome_email():
             }), 500
             
     except ImportError as e:
+        error_msg = f'Import error: {str(e)}'
         print(f"❌ Import error in send_test_welcome_email: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f'Import error: {str(e)}'}), 500
+        return jsonify({'success': False, 'error': error_msg, 'message': error_msg}), 500
     except Exception as e:
+        error_msg = str(e)
         print(f"❌ Error in send_test_welcome_email: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
