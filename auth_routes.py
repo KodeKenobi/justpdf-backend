@@ -25,24 +25,16 @@ def register():
             # Send welcome email IMMEDIATELY (synchronous - wait for completion)
             try:
                 from email_service import send_welcome_email
-                import os
                 # Get subscription tier from user
                 tier = user.subscription_tier or 'free'
                 print(f"📧 [REGISTRATION] Attempting to send welcome email to {user.email} (tier: {tier})")
                 
-                # Check if RESEND_API_KEY is set
-                resend_key = os.getenv('RESEND_API_KEY')
-                if not resend_key:
-                    print(f"❌ [REGISTRATION] RESEND_API_KEY not set - email will not be sent")
-                    print(f"   Set RESEND_API_KEY environment variable to enable email sending")
+                success = send_welcome_email(user.email, tier)
+                if success:
+                    print(f"✅ [REGISTRATION] Welcome email sent successfully to {user.email}")
                 else:
-                    print(f"✅ [REGISTRATION] RESEND_API_KEY found: {resend_key[:10]}...")
-                    success = send_welcome_email(user.email, tier)
-                    if success:
-                        print(f"✅ [REGISTRATION] Welcome email sent successfully to {user.email}")
-                    else:
-                        print(f"❌ [REGISTRATION] Failed to send welcome email to {user.email}")
-                        print(f"   Check email_service.py logs for details")
+                    print(f"❌ [REGISTRATION] Failed to send welcome email to {user.email}")
+                    print(f"   Check email_service.py logs for details")
             except Exception as e:
                 print(f"❌ [REGISTRATION] Exception sending welcome email to {user.email}: {e}")
                 import traceback
