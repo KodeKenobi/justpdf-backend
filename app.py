@@ -3137,30 +3137,78 @@ def download_converted(filename):
 
 @app.route("/preview_html/<filename>")
 def preview_html(filename):
-    # Extract the original PDF filename from the converted HTML filename
-    # Format: originalname_converted.html -> originalname.pdf
-    original_filename = filename.replace('_converted.html', '.pdf')
-    
-    # Check if the original PDF exists in uploads folder
-    pdf_path = os.path.join(UPLOAD_FOLDER, original_filename)
-    if os.path.exists(pdf_path):
-        # Use the EXACT same conversion endpoint that works perfectly
-        return convert_pdf(original_filename)
+    # Serve the converted HTML file directly
+    html_filepath = os.path.join(HTML_FOLDER, filename)
+    if os.path.exists(html_filepath):
+        return send_file(html_filepath, mimetype='text/html')
     else:
-        # Fallback: try to find any PDF with similar name
-        base_name = filename.replace('_converted.html', '')
-        for ext in ['.pdf', '.PDF']:
-            test_path = os.path.join(UPLOAD_FOLDER, base_name + ext)
-            if os.path.exists(test_path):
-                return convert_pdf(base_name + ext)
-        
-        return "Original PDF file not found for preview", 404
+        return "HTML file not found", 404
 
 @app.route("/download_images/<filename>")
 def download_images(filename):
-    # This would return a zip file of all images
-    # For now, return a placeholder
-    return "Images download not implemented yet", 501
+    """Extract all images from PDF and return as zip file"""
+    try:
+        import zipfile
+        from urllib.parse import unquote
+        
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
+        # Find the PDF file
+        pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+        if not os.path.exists(pdf_path):
+            # Try with .pdf extension if not present
+            if not filename.endswith('.pdf'):
+                pdf_path = os.path.join(UPLOAD_FOLDER, filename + '.pdf')
+            if not os.path.exists(pdf_path):
+                return "PDF file not found", 404
+        
+        # Open PDF and extract images
+        doc = fitz.open(pdf_path)
+        
+        # Create zip file in memory
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            image_count = 0
+            
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                image_list = page.get_images()
+                
+                for img_index, img in enumerate(image_list):
+                    xref = img[0]
+                    pix = fitz.Pixmap(doc, xref)
+                    
+                    if pix.n - pix.alpha < 4:  # GRAY or RGB
+                        img_data = pix.tobytes("png")
+                        # Create filename: page_X_image_Y.png
+                        img_filename = f"page_{page_num + 1}_image_{img_index + 1}.png"
+                        zip_file.writestr(img_filename, img_data)
+                        image_count += 1
+                    
+                    pix = None
+        
+        doc.close()
+        
+        if image_count == 0:
+            return "No images found in PDF", 404
+        
+        # Prepare zip file for download
+        zip_buffer.seek(0)
+        base_name = os.path.splitext(filename)[0]
+        zip_filename = f"{base_name}_images.zip"
+        
+        return send_file(
+            zip_buffer,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=zip_filename
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Error creating zip file: {str(e)}", 500
 
 @app.route("/compress_pdf", methods=["POST"])
 def compress_pdf():
