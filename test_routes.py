@@ -160,16 +160,6 @@ def view_database():
         from database import db
         from models import User, APIKey, UsageLog, Notification
         from sqlalchemy import inspect
-        from flask import current_app
-        
-        # Ensure we're in an app context
-        if not hasattr(current_app, 'app_context'):
-            # We should already be in an app context from the route, but double-check
-            pass
-        
-        # Ensure database is initialized
-        if not hasattr(db, 'app') or db.app is None:
-            db.init_app(current_app)
         
         # Check if we can access the engine (this will fail if db not initialized)
         try:
@@ -183,6 +173,17 @@ def view_database():
                     'error': 'Database is not initialized. Please wait a moment and try again.',
                     'message': 'Database is still initializing. Please try again in a few seconds.'
                 }), 503
+            elif 'already been registered' in error_msg.lower():
+                # Database is already initialized, try to proceed
+                try:
+                    inspector = inspect(db.engine)
+                    tables = inspector.get_table_names()
+                except Exception as e2:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Database access error: {str(e2)}',
+                        'message': f'Database access error: {str(e2)}'
+                    }), 500
             else:
                 return jsonify({
                     'success': False,
@@ -263,6 +264,8 @@ def view_database():
         # Provide more helpful error messages
         if 'not registered' in error_msg.lower() or 'init_app' in error_msg.lower():
             error_msg = "Database is not initialized. Please wait a moment and try again."
+        elif 'already been registered' in error_msg.lower():
+            error_msg = "Database is already initialized. This should not happen - please contact support."
         elif 'no such table' in error_msg.lower():
             error_msg = "Database tables do not exist. Database may need to be initialized."
         
