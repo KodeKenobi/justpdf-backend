@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Upgrade Successful</title>
+    <title>Invoice - Trevnoctilla</title>
   </head>
   <body
     style="
@@ -84,7 +84,7 @@
                     text-align: center;
                   "
                 >
-                  Subscription Upgraded
+                  Invoice #{{ invoice_number }}
                 </h2>
 
                 <p
@@ -96,9 +96,8 @@
                     text-align: center;
                   "
                 >
-                  Your subscription has been successfully upgraded from
-                  <strong style="color: #a0a0a0">{{ old_tier_name }}</strong> to
-                  <strong style="color: #a0a0a0">{{ new_tier_name }}</strong>.
+                  Date: {{ invoice_date }}<br />
+                  Status: <strong style="color: #a0a0a0">{{ status }}</strong>
                 </p>
 
                 <div style="border-radius: 6px; padding: 24px; margin: 32px 0">
@@ -111,7 +110,7 @@
                       text-align: center;
                     "
                   >
-                    Your New Benefits
+                    Invoice Details
                   </h3>
                   <p
                     style="
@@ -122,10 +121,12 @@
                       text-align: center;
                     "
                   >
-                    You now have access to all features and benefits of the
-                    <strong style="color: #a0a0a0">{{ new_tier_name }}</strong>.
-                    Your new limits and features are now active in your
-                    dashboard.
+                    <strong style="color: #a0a0a0">Description:</strong> {{
+                    item_description }}<br />
+                    <strong style="color: #a0a0a0">Amount:</strong> {{
+                    currency_symbol }}{{ total_amount }}<br />
+                    <strong style="color: #a0a0a0">Subscription:</strong> {{
+                    tier_name }}
                   </p>
                 </div>
 
@@ -143,11 +144,11 @@
                     line-height: 1.6;
                   "
                 >
-                  Questions about your upgrade? Contact us at
+                  Questions about your invoice? Contact us at
                   <a
-                    href="mailto:info@trevnoctilla.com"
+                    href="mailto:support@trevnoctilla.com"
                     style="color: #8b5cf6; text-decoration: none"
-                    >info@trevnoctilla.com</a
+                    >support@trevnoctilla.com</a
                   >
                 </p>
 
@@ -160,7 +161,7 @@
                     line-height: 1.6;
                   "
                 >
-                  Best regards,<br />
+                  Thank you for your business!<br />
                   The Trevnoctilla Team<br />
                   <a
                     href="https://www.trevnoctilla.com"
