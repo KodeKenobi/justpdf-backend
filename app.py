@@ -1954,6 +1954,39 @@ def convert_html_to_pdf():
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         file.save(filepath)
         
+        # Validate HTML file was saved and has content
+        if not os.path.exists(filepath):
+            return jsonify({
+                "status": "error",
+                "message": "Failed to save HTML file",
+                "error": "HTML file was not saved to server"
+            }), 500
+        
+        html_size = os.path.getsize(filepath)
+        if html_size < 100:
+            return jsonify({
+                "status": "error",
+                "message": "HTML file is too small or empty",
+                "error": f"HTML file is only {html_size} bytes"
+            }), 400
+        
+        # Read and validate HTML content
+        with open(filepath, "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        if len(html_content.strip()) < 100:
+            return jsonify({
+                "status": "error",
+                "message": "HTML content is too short or empty",
+                "error": f"HTML content is only {len(html_content)} characters"
+            }), 400
+        
+        # Check if HTML has basic structure
+        if "<html" not in html_content.lower() and "<body" not in html_content.lower():
+            print("WARNING: HTML file may not have proper HTML structure")
+        
+        print(f"✅ HTML file validated: {html_size} bytes, {len(html_content)} characters")
+        
         # Generate output filename
         base_name = os.path.splitext(original_filename)[0]
         pdf_filename = f"{base_name}_converted.pdf"
@@ -2010,9 +2043,70 @@ def convert_html_to_pdf():
                 "error": "Could not convert HTML to PDF"
             }), 500
         
+        # Validate PDF was created and has content
+        if not os.path.exists(pdf_path):
+            return jsonify({
+                "status": "error",
+                "message": "PDF file was not created",
+                "error": "Conversion succeeded but PDF file not found"
+            }), 500
+        
+        pdf_size = os.path.getsize(pdf_path)
+        if pdf_size < 1000:  # PDF should be at least 1KB
+            return jsonify({
+                "status": "error",
+                "message": "PDF file is too small (likely empty)",
+                "error": f"PDF file is only {pdf_size} bytes, conversion likely failed"
+            }), 500
+        
+        # Verify PDF has pages with content
+        try:
+            pdf_doc = fitz.open(pdf_path)
+            page_count = len(pdf_doc)
+            if page_count == 0:
+                pdf_doc.close()
+                return jsonify({
+                    "status": "error",
+                    "message": "PDF has no pages",
+                    "error": "Conversion created empty PDF with no pages"
+                }), 500
+            
+            # Check if pages have content by checking text extraction
+            total_text = 0
+            for page_num in range(page_count):
+                page = pdf_doc[page_num]
+                text = page.get_text()
+                total_text += len(text.strip())
+            
+            pdf_doc.close()
+            
+            if total_text == 0:
+                # Check if there are images instead
+                pdf_doc = fitz.open(pdf_path)
+                has_images = False
+                for page_num in range(page_count):
+                    page = pdf_doc[page_num]
+                    image_list = page.get_images()
+                    if len(image_list) > 0:
+                        has_images = True
+                        break
+                pdf_doc.close()
+                
+                if not has_images:
+                    return jsonify({
+                        "status": "error",
+                        "message": "PDF has no content (no text or images)",
+                        "error": "Conversion created PDF with pages but no visible content"
+                    }), 500
+            
+            print(f"✅ PDF validation passed: {page_count} pages, {total_text} chars of text")
+            
+        except Exception as e:
+            print(f"WARNING: Could not validate PDF content: {e}")
+            # Continue anyway if validation fails
+        
         # Get file sizes
         original_size = os.path.getsize(filepath)
-        pdf_size = os.path.getsize(pdf_path)
         
         return jsonify({
             "status": "success",
@@ -2440,13 +2534,50 @@ def convert_html_to_pdf_pymupdf_step_by_step(html_path, output_path):
         doc.save(output_path)
         doc.close()
         
-        # Verify the PDF was created
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            print(f"Successfully converted HTML to PDF using step-by-step method: {output_path}")
-            print(f"PDF size: {os.path.getsize(output_path)} bytes")
+        # Verify the PDF was created and has content
+        if not os.path.exists(output_path):
+            print("Step-by-step conversion failed: PDF file not created")
+            return False
+        
+        pdf_size = os.path.getsize(output_path)
+        if pdf_size < 1000:  # PDF should be at least 1KB
+            print(f"Step-by-step conversion failed: PDF file is too small ({pdf_size} bytes)")
+            return False
+        
+        # Verify PDF has pages with content
+        try:
+            verify_doc = fitz.open(output_path)
+            page_count = len(verify_doc)
+            if page_count == 0:
+                verify_doc.close()
+                print("Step-by-step conversion failed: PDF has no pages")
+                return False
+            
+            # Check if pages have content
+            total_text = 0
+            total_images = 0
+            for page_num in range(page_count):
+                page = verify_doc[page_num]
+                text = page.get_text()
+                total_text += len(text.strip())
+                images = page.get_images()
+                total_images += len(images)
+            
+            verify_doc.close()
+            
+            if total_text == 0 and total_images == 0:
+                print(f"Step-by-step conversion failed: PDF has {page_count} pages but no content (no text or images)")
+                return False
+            
+            print(f"✅ Successfully converted HTML to PDF using step-by-step method: {output_path}")
+            print(f"PDF size: {pdf_size} bytes, {page_count} pages, {total_text} chars text, {total_images} images")
             return True
-        else:
-            print("Step-by-step conversion failed: PDF file not created or empty")
+        except Exception as e:
+            print(f"Error verifying PDF content: {e}")
+            # If verification fails, still return True if file exists and has size
+            if pdf_size > 1000:
+                print(f"PDF file exists and has size ({pdf_size} bytes), assuming success despite verification error")
+                return True
             return False
             
     except Exception as e:
@@ -2555,6 +2686,7 @@ def _add_elements_to_page(page_html, page, page_width, page_height):
                         render_mode=0,  # Fill text
                         fontfile=None
                     )
+                    elements_added += 1
                     # Apply font flags if needed
                     if font_flags:
                         # Note: PyMuPDF's insert_text doesn't directly support flags, 
@@ -2564,10 +2696,16 @@ def _add_elements_to_page(page_html, page, page_width, page_height):
                 except Exception as e:
                     print(f"Warning: Could not insert text with font {pdf_font}, trying default: {e}")
                     # Fallback to default font
-                    page.insert_text(point, text, fontsize=size, fontname='helv', render_mode=0)
+                    try:
+                        page.insert_text(point, text, fontsize=size, fontname='helv', render_mode=0)
+                        elements_added += 1
+                    except Exception as e2:
+                        print(f"Error inserting text even with default font: {e2}")
         except Exception as e:
             print(f"Error adding text span: {e}")
             continue
+    
+    print(f"Added {len(text_spans)} text spans to page, {elements_added} successfully inserted")
     
     # Extract all images with absolute positioning
     # Pattern: <img style="position: absolute; left: Xpt; top: Ypt; width: Wpt; height: Hpt;" src="data:image/png;base64,...">
@@ -2635,12 +2773,20 @@ def _add_elements_to_page(page_html, page, page_width, page_height):
             
             # Insert image - use stream parameter for base64 decoded data
             page.insert_image(rect, stream=image_data, keep_proportion=False)
+            elements_added += 1
             print(f"Inserted image at ({left}, {top}) with size {width}x{height}")
         except Exception as e:
             print(f"Error adding image at ({left_str}, {top_str}): {e}")
             import traceback
             traceback.print_exc()
             continue
+    
+    print(f"Total elements added to page: {elements_added} (text spans: {len(text_spans)}, images: {len(images)})")
+    
+    if elements_added == 0:
+        print(f"⚠️ WARNING: No elements were added to the page! Page HTML length: {len(page_html)}")
+        print(f"Page HTML preview (first 500 chars): {page_html[:500]}")
+        print(f"Text spans found: {len(text_spans)}, Images found: {len(images)}")
 
 def convert_html_to_pdf_pymupdf(html_path, output_path):
     """Convert HTML to PDF using PyMuPDF"""
