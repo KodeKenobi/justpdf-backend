@@ -2918,6 +2918,9 @@ def convert_with_pymupdf(pdf_path, output_path):
 """)
         
         # Convert each page with EXACT positioning
+        total_text_spans = 0
+        total_images = 0
+        
         for page_num in range(len(doc)):
             page = doc[page_num]
             rect = page.rect
@@ -3029,6 +3032,9 @@ def convert_with_pymupdf(pdf_path, output_path):
                 
                 html_parts.append(f'<span style="{style}">{text_escaped}</span>')
             
+            total_text_spans += len(text_spans)
+            total_images += len(images)
+            
             html_parts.append('</div>')
             html_parts.append('</div>')
         
@@ -3040,10 +3046,42 @@ def convert_with_pymupdf(pdf_path, output_path):
         
         # Write HTML file
         html_content = "\n".join(html_parts)
+        
+        # Validate that HTML has actual content (not just structure)
+        # Check if we have any pages with content
+        if len(doc) == 0:
+            print("ERROR: PDF has no pages")
+            doc.close()
+            return False
+        
+        # Check if we extracted any content
+        if total_text_spans == 0 and total_images == 0:
+            print(f"WARNING: No text or images extracted from PDF (pages: {len(doc)}, text spans: {total_text_spans}, images: {total_images})")
+            # Still create the HTML file with empty pages, but log a warning
+        
+        # Check if HTML has meaningful content (more than just the structure)
+        # The minimum HTML structure is about 500 chars, so if we have less than 1000, it's likely empty
+        if len(html_content) < 1000:
+            print(f"WARNING: Generated HTML is very short ({len(html_content)} chars), might be empty")
+            # Still write it, but log a warning
+        
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_content)
         
+        # Verify file was written and has content
+        if not os.path.exists(output_path):
+            print(f"ERROR: HTML file was not created at {output_path}")
+            doc.close()
+            return False
+        
+        file_size = os.path.getsize(output_path)
+        if file_size < 100:
+            print(f"ERROR: HTML file is too small ({file_size} bytes), conversion likely failed")
+            doc.close()
+            return False
+        
         doc.close()
+        print(f"✅ Successfully created HTML file: {output_path} ({file_size} bytes)")
         return True
         
     except Exception as e:
@@ -3137,12 +3175,47 @@ def download_converted(filename):
 
 @app.route("/preview_html/<filename>")
 def preview_html(filename):
-    # Serve the converted HTML file directly
-    html_filepath = os.path.join(HTML_FOLDER, filename)
-    if os.path.exists(html_filepath):
+    """Serve the converted HTML file for preview"""
+    try:
+        from urllib.parse import unquote
+        
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
+        # Serve the converted HTML file directly
+        html_filepath = os.path.join(HTML_FOLDER, filename)
+        
+        if not os.path.exists(html_filepath):
+            # Try to find the file with different encodings or variations
+            print(f"HTML file not found at: {html_filepath}")
+            print(f"HTML_FOLDER: {HTML_FOLDER}")
+            print(f"Looking for: {filename}")
+            
+            # List files in HTML_FOLDER for debugging
+            if os.path.exists(HTML_FOLDER):
+                files = os.listdir(HTML_FOLDER)
+                print(f"Files in HTML_FOLDER: {files[:10]}")  # Show first 10 files
+                # Try to find a matching file
+                for f in files:
+                    if filename.lower() in f.lower() or f.lower() in filename.lower():
+                        print(f"Found similar file: {f}")
+                        html_filepath = os.path.join(HTML_FOLDER, f)
+                        break
+            
+            if not os.path.exists(html_filepath):
+                return f"HTML file not found: {filename}", 404
+        
+        # Check file size
+        file_size = os.path.getsize(html_filepath)
+        if file_size < 100:
+            return f"HTML file is empty or too small ({file_size} bytes)", 500
+        
         return send_file(html_filepath, mimetype='text/html')
-    else:
-        return "HTML file not found", 404
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"Error serving HTML file: {str(e)}", 500
 
 @app.route("/download_images/<filename>")
 def download_images(filename):
