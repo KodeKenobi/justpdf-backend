@@ -160,9 +160,35 @@ def view_database():
         from database import db
         from models import User, APIKey, UsageLog, Notification
         from sqlalchemy import inspect
+        from flask import current_app
         
-        inspector = inspect(db.engine)
-        tables = inspector.get_table_names()
+        # Ensure we're in an app context
+        if not hasattr(current_app, 'app_context'):
+            # We should already be in an app context from the route, but double-check
+            pass
+        
+        # Ensure database is initialized
+        if not hasattr(db, 'app') or db.app is None:
+            db.init_app(current_app)
+        
+        # Check if we can access the engine (this will fail if db not initialized)
+        try:
+            inspector = inspect(db.engine)
+            tables = inspector.get_table_names()
+        except Exception as db_error:
+            error_msg = str(db_error)
+            if 'not registered' in error_msg.lower():
+                return jsonify({
+                    'success': False,
+                    'error': 'Database is not initialized. Please wait a moment and try again.',
+                    'message': 'Database is still initializing. Please try again in a few seconds.'
+                }), 503
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'Database error: {error_msg}',
+                    'message': f'Database error: {error_msg}'
+                }), 503
         
         result = {
             'database_url': str(db.engine.url).split('@')[-1] if '@' in str(db.engine.url) else 'sqlite',
@@ -202,6 +228,8 @@ def view_database():
                 'id': log.id,
                 'user_id': log.user_id,
                 'endpoint': log.endpoint,
+                'method': log.method if hasattr(log, 'method') else None,
+                'status_code': log.status_code if hasattr(log, 'status_code') else None,
                 'created_at': log.created_at.isoformat() if log.created_at else None
             })
         
@@ -227,7 +255,20 @@ def view_database():
         
     except Exception as e:
         error_msg = str(e)
+        error_type = type(e).__name__
         print(f"❌ Error viewing database: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+        
+        # Provide more helpful error messages
+        if 'not registered' in error_msg.lower() or 'init_app' in error_msg.lower():
+            error_msg = "Database is not initialized. Please wait a moment and try again."
+        elif 'no such table' in error_msg.lower():
+            error_msg = "Database tables do not exist. Database may need to be initialized."
+        
+        return jsonify({
+            'success': False, 
+            'error': error_msg, 
+            'type': error_type, 
+            'message': f'Error: {error_msg}'
+        }), 500

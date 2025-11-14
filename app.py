@@ -157,24 +157,16 @@ except Exception as e:
     print(f"⚠️ Failed to initialize JWT: {e}")
     # Continue anyway - health endpoint doesn't need JWT
 
-# Initialize database in background thread (non-blocking - allow app to start immediately)
-def init_db_background():
-    """Initialize database in background thread"""
-    import time
-    time.sleep(2)  # Give app time to start serving requests
-    try:
-        init_db(app)
-        print("✅ Database initialized successfully")
-    except Exception as e:
-        print(f"⚠️ Database initialization failed: {e}")
-        print("⚠️ App will continue to start, but database features may not work")
-        import traceback
-        traceback.print_exc()
-
-# Start database initialization in background
-db_init_thread = threading.Thread(target=init_db_background, daemon=True)
-db_init_thread.start()
-print("🔄 Database initialization started in background thread")
+# Initialize database synchronously (required for admin endpoints)
+try:
+    print("🔄 Initializing database...")
+    init_db(app)
+    print("✅ Database initialized successfully")
+except Exception as e:
+    print(f"⚠️ Database initialization failed: {e}")
+    print("⚠️ App will continue to start, but database features may not work")
+    import traceback
+    traceback.print_exc()
 
 CORS(app, origins=[
     "https://web-production-ef253.up.railway.app",
