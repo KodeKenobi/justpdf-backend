@@ -22,28 +22,38 @@ def register():
         user, message = register_user(email, password)
         
         if user:
-            # Send welcome email IMMEDIATELY (synchronous - wait for completion)
+            # Send welcome email asynchronously (non-blocking) to speed up registration
             try:
+                import threading
                 from email_service import send_welcome_email
                 from datetime import datetime
+                
                 # Get subscription tier from user
                 tier = user.subscription_tier or 'free'
-                print(f"📧 [REGISTRATION] Attempting to send welcome email to {user.email} (tier: {tier})")
-                
-                # Use registration date as payment date for invoice
                 registration_date = datetime.now()
                 
-                success = send_welcome_email(user.email, tier, amount=0.0, payment_id="", payment_date=registration_date)
-                if success:
-                    print(f"✅ [REGISTRATION] Welcome email sent successfully to {user.email}")
-                else:
-                    print(f"❌ [REGISTRATION] Failed to send welcome email to {user.email}")
-                    print(f"   Check email_service.py logs for details")
+                def send_email_async():
+                    """Send welcome email in background thread"""
+                    try:
+                        print(f"📧 [REGISTRATION] Background: Sending welcome email to {user.email} (tier: {tier})")
+                        success = send_welcome_email(user.email, tier, amount=0.0, payment_id="", payment_date=registration_date)
+                        if success:
+                            print(f"✅ [REGISTRATION] Background: Welcome email sent successfully to {user.email}")
+                        else:
+                            print(f"❌ [REGISTRATION] Background: Failed to send welcome email to {user.email}")
+                            print(f"   Check email_service.py logs for details")
+                    except Exception as e:
+                        print(f"❌ [REGISTRATION] Background: Exception sending welcome email to {user.email}: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # Start email sending in background thread (non-blocking)
+                email_thread = threading.Thread(target=send_email_async, daemon=True)
+                email_thread.start()
+                print(f"📧 [REGISTRATION] Welcome email queued for background sending to {user.email}")
             except Exception as e:
-                print(f"❌ [REGISTRATION] Exception sending welcome email to {user.email}: {e}")
-                import traceback
-                traceback.print_exc()
-                # Don't fail registration if email fails, but log it clearly
+                print(f"⚠️ [REGISTRATION] Failed to queue welcome email: {e}")
+                # Don't fail registration if email queueing fails
             
             return jsonify({
                 'message': message,

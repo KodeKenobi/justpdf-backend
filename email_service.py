@@ -18,7 +18,13 @@ env = Environment(loader=FileSystemLoader(str(template_dir)))
 # Resend API configuration
 RESEND_API_KEY = os.getenv('RESEND_API_KEY')
 RESEND_API_URL = 'https://api.resend.com/emails'
-FROM_EMAIL = os.getenv('FROM_EMAIL', 'Trevnoctilla <onboarding@resend.dev>')
+# FROM_EMAIL should be in format: "Name <email@domain.com>" for proper inbox display
+raw_from_email = os.getenv('FROM_EMAIL', 'noreply@trevnoctilla.com')
+if not raw_from_email or (not '<' in raw_from_email and not '>' in raw_from_email):
+    # If just email address, format it with name
+    FROM_EMAIL = f'Trevnoctilla <{raw_from_email}>'
+else:
+    FROM_EMAIL = raw_from_email
 FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')
 
 def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None) -> Optional[bytes]:
@@ -167,10 +173,14 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         # Format: [{ filename: "invoice.pdf", content: base64String, contentType: "application/pdf" }]
         if attachments:
             payload['attachments'] = attachments
+            print(f"📎 [EMAIL] Including {len(attachments)} attachment(s) in email payload")
+            for i, att in enumerate(attachments, 1):
+                print(f"   {i}. {att.get('filename', 'unknown')} ({len(att.get('content', ''))} base64 chars)")
         
         print(f"📤 [EMAIL] Sending email to {to_email} via Next.js API")
         print(f"📤 [EMAIL] API URL: {email_api_url}")
         print(f"📤 [EMAIL] Subject: {subject}")
+        print(f"📤 [EMAIL] Has attachments: {bool(attachments)}")
         
         # Send email via Next.js API route
         response = requests.post(email_api_url, json=payload, timeout=30)
@@ -325,21 +335,26 @@ def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0,
     # Generate and attach invoice PDF
     attachments = []
     try:
+        print(f"📄 [WELCOME EMAIL] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
         invoice_pdf = generate_invoice_pdf(tier, amount, user_email, payment_id, payment_date)
         if invoice_pdf:
             # Convert PDF bytes to base64
             pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
             date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+            filename = f'invoice_{tier}_{date_str}.pdf'
             attachments.append({
-                'filename': f'invoice_{tier}_{date_str}.pdf',
+                'filename': filename,
                 'content': pdf_base64,
                 'contentType': 'application/pdf'
             })
-            print(f"✅ [WELCOME EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes)")
+            print(f"✅ [WELCOME EMAIL] Invoice PDF generated and attached: {filename} ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
         else:
             print(f"⚠️ [WELCOME EMAIL] Failed to generate invoice PDF, sending email without attachment")
+            print(f"   Check generate_invoice_pdf() logs for details")
     except Exception as e:
         print(f"⚠️ [WELCOME EMAIL] Error generating invoice: {e}")
+        import traceback
+        traceback.print_exc()
         # Continue without attachment if invoice generation fails
     
     return send_email(user_email, subject, html_content, text_content, attachments if attachments else None)
