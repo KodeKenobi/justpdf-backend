@@ -224,7 +224,7 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
             data = response.json()
             if data.get('success'):
                 print(f"✅ [EMAIL] Email sent successfully to {to_email} (ID: {data.get('email_id', 'N/A')})")
-        return True
+                return True
             else:
                 print(f"❌ [EMAIL] Email send failed: {data.get('error', 'Unknown error')}")
                 return False
