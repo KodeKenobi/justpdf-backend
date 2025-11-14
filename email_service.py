@@ -67,7 +67,23 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         # Generate invoice number based on payment date
         invoice_number = f"INV-{invoice_date_obj.strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
         
-        # Generate invoice HTML with logo
+        # Download and embed logo as base64 for PDF compatibility
+        logo_base64 = None
+        try:
+            logo_url = "https://www.trevnoctilla.com/logo.png"
+            logo_response = requests.get(logo_url, timeout=10)
+            if logo_response.status_code == 200:
+                import base64
+                logo_base64 = base64.b64encode(logo_response.content).decode('utf-8')
+                logo_data_uri = f"data:image/png;base64,{logo_base64}"
+                print(f"✅ [INVOICE] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
+            else:
+                print(f"⚠️ [INVOICE] Failed to download logo: HTTP {logo_response.status_code}")
+        except Exception as e:
+            print(f"⚠️ [INVOICE] Error downloading logo: {e}")
+            # Continue without logo if download fails
+        
+        # Generate invoice HTML with embedded logo
         invoice_template = env.get_template('invoice.html')
         invoice_html = invoice_template.render(
             invoice_number=invoice_number,
@@ -81,7 +97,8 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
             tax_amount=0.0,
             tax_rate=0,
             status="Paid" if invoice_amount > 0 else "Free",
-            status_class="status-paid" if invoice_amount > 0 else "status-free"
+            status_class="status-paid" if invoice_amount > 0 else "status-free",
+            logo_url=logo_data_uri if logo_base64 else "https://www.trevnoctilla.com/logo.png"  # Fallback to URL if base64 failed
         )
         
         # Save HTML to temp file
@@ -90,13 +107,19 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
             f.write(invoice_html)
             html_path = f.name
         
+        # Debug: Log HTML size and preview
+        html_size = len(invoice_html)
+        print(f"📄 [INVOICE] Generated HTML ({html_size} chars)")
+        print(f"📄 [INVOICE] HTML preview (first 500 chars): {invoice_html[:500]}")
+        print(f"📄 [INVOICE] HTML saved to: {html_path}")
+        
         # Get backend API URL
         backend_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
         if not backend_url.startswith('http'):
             backend_url = f'https://{backend_url}'
         
         # Convert HTML to PDF using backend endpoint
-        print(f"📄 [INVOICE] Converting HTML to PDF...")
+        print(f"📄 [INVOICE] Converting HTML to PDF via {backend_url}/convert_html_to_pdf...")
         with open(html_path, 'rb') as html_file:
             files = {'html': ('invoice.html', html_file, 'text/html')}
             response = requests.post(
@@ -113,22 +136,31 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         
         if response.status_code == 200:
             data = response.json()
+            print(f"📄 [INVOICE] Conversion response: {data}")
             if data.get('status') == 'success' and data.get('download_url'):
                 # Download the PDF
                 pdf_url = data['download_url']
                 if not pdf_url.startswith('http'):
                     pdf_url = f"{backend_url}{pdf_url}"
                 
+                print(f"📄 [INVOICE] Downloading PDF from: {pdf_url}")
                 pdf_response = requests.get(pdf_url, timeout=30)
                 if pdf_response.status_code == 200:
-                    print(f"✅ [INVOICE] PDF generated successfully ({len(pdf_response.content)} bytes)")
+                    pdf_size = len(pdf_response.content)
+                    print(f"✅ [INVOICE] PDF generated successfully ({pdf_size} bytes)")
+                    if pdf_size < 1000:
+                        print(f"⚠️ [INVOICE] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
                     return pdf_response.content
                 else:
-                    print(f"❌ [INVOICE] Failed to download PDF: {pdf_response.status_code}")
+                    print(f"❌ [INVOICE] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
             else:
-                print(f"❌ [INVOICE] Conversion failed: {data.get('error', 'Unknown error')}")
+                error_msg = data.get('error', data.get('message', 'Unknown error'))
+                print(f"❌ [INVOICE] Conversion failed: {error_msg}")
+                print(f"   Full response: {data}")
         else:
-            print(f"❌ [INVOICE] HTML to PDF conversion failed: {response.status_code} - {response.text[:200]}")
+            error_text = response.text[:500] if response.text else "No error message"
+            print(f"❌ [INVOICE] HTML to PDF conversion failed: {response.status_code}")
+            print(f"   Error response: {error_text}")
         
         return None
         
@@ -192,7 +224,7 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
             data = response.json()
             if data.get('success'):
                 print(f"✅ [EMAIL] Email sent successfully to {to_email} (ID: {data.get('email_id', 'N/A')})")
-                return True
+        return True
             else:
                 print(f"❌ [EMAIL] Email send failed: {data.get('error', 'Unknown error')}")
                 return False

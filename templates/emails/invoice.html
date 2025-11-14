@@ -1,269 +1,276 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Invoice - Trevnoctilla</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            color: #1a1a1a;
-            background: #ffffff;
-            padding: 40px 20px;
-        }
-        .invoice-container {
-            max-width: 800px;
-            margin: 0 auto;
-            background: #ffffff;
-            border: 1px solid #e5e5e5;
-            border-radius: 8px;
-            padding: 40px;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 40px;
-            padding-bottom: 30px;
-            border-bottom: 2px solid #8b5cf6;
-        }
-        .logo-section {
-            flex: 1;
-        }
-        .logo {
-            width: 60px;
-            height: 60px;
-            margin-bottom: 10px;
-        }
-        .company-name {
-            font-size: 24px;
-            font-weight: bold;
-            color: #8b5cf6;
-            margin-bottom: 5px;
-        }
-        .company-details {
-            font-size: 12px;
-            color: #666;
-            line-height: 1.6;
-        }
-        .invoice-info {
-            text-align: right;
-        }
-        .invoice-title {
-            font-size: 32px;
-            font-weight: bold;
-            color: #1a1a1a;
-            margin-bottom: 10px;
-        }
-        .invoice-number {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 5px;
-        }
-        .invoice-date {
-            font-size: 14px;
-            color: #666;
-        }
-        .bill-to {
-            margin-bottom: 40px;
-        }
-        .section-title {
-            font-size: 12px;
-            font-weight: 600;
-            color: #8b5cf6;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-        }
-        .bill-to-details {
-            font-size: 14px;
-            color: #1a1a1a;
-            line-height: 1.8;
-        }
-        .items-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 30px;
-        }
-        .items-table thead {
-            background: #f8f9fa;
-        }
-        .items-table th {
-            padding: 15px;
-            text-align: left;
-            font-size: 12px;
-            font-weight: 600;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 2px solid #e5e5e5;
-        }
-        .items-table td {
-            padding: 15px;
-            font-size: 14px;
-            color: #1a1a1a;
-            border-bottom: 1px solid #f0f0f0;
-        }
-        .items-table tbody tr:last-child td {
-            border-bottom: none;
-        }
-        .item-description {
-            font-weight: 500;
-        }
-        .text-right {
-            text-align: right;
-        }
-        .totals {
-            margin-left: auto;
-            width: 300px;
-        }
-        .total-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            font-size: 14px;
-        }
-        .total-row.subtotal {
-            border-top: 2px solid #e5e5e5;
-            padding-top: 20px;
-            margin-top: 10px;
-        }
-        .total-row.total {
-            border-top: 2px solid #8b5cf6;
-            padding-top: 20px;
-            margin-top: 10px;
-            font-size: 20px;
-            font-weight: bold;
-            color: #8b5cf6;
-        }
-        .total-label {
-            color: #666;
-        }
-        .total-value {
-            font-weight: 600;
-            color: #1a1a1a;
-        }
-        .total-value.total {
-            color: #8b5cf6;
-            font-size: 24px;
-        }
-        .footer {
-            margin-top: 50px;
-            padding-top: 30px;
-            border-top: 1px solid #e5e5e5;
-            text-align: center;
-            font-size: 12px;
-            color: #666;
-        }
-        .footer-note {
-            margin-top: 20px;
-            font-size: 11px;
-            color: #999;
-            line-height: 1.6;
-        }
-        .status-badge {
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        .status-paid {
-            background: #10b981;
-            color: white;
-        }
-        .status-free {
-            background: #6b7280;
-            color: white;
-        }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        color: #1a1a1a;
+        background: #ffffff;
+        padding: 40px 20px;
+      }
+      .invoice-container {
+        max-width: 800px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #e5e5e5;
+        border-radius: 8px;
+        padding: 40px;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 40px;
+        padding-bottom: 30px;
+        border-bottom: 2px solid #8b5cf6;
+      }
+      .logo-section {
+        flex: 1;
+      }
+      .logo {
+        width: 60px;
+        height: 60px;
+        margin-bottom: 10px;
+      }
+      .company-name {
+        font-size: 24px;
+        font-weight: bold;
+        color: #8b5cf6;
+        margin-bottom: 5px;
+      }
+      .company-details {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.6;
+      }
+      .invoice-info {
+        text-align: right;
+      }
+      .invoice-title {
+        font-size: 32px;
+        font-weight: bold;
+        color: #1a1a1a;
+        margin-bottom: 10px;
+      }
+      .invoice-number {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 5px;
+      }
+      .invoice-date {
+        font-size: 14px;
+        color: #666;
+      }
+      .bill-to {
+        margin-bottom: 40px;
+      }
+      .section-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #8b5cf6;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 10px;
+      }
+      .bill-to-details {
+        font-size: 14px;
+        color: #1a1a1a;
+        line-height: 1.8;
+      }
+      .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 30px;
+      }
+      .items-table thead {
+        background: #f8f9fa;
+      }
+      .items-table th {
+        padding: 15px;
+        text-align: left;
+        font-size: 12px;
+        font-weight: 600;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid #e5e5e5;
+      }
+      .items-table td {
+        padding: 15px;
+        font-size: 14px;
+        color: #1a1a1a;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      .items-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .item-description {
+        font-weight: 500;
+      }
+      .text-right {
+        text-align: right;
+      }
+      .totals {
+        margin-left: auto;
+        width: 300px;
+      }
+      .total-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        font-size: 14px;
+      }
+      .total-row.subtotal {
+        border-top: 2px solid #e5e5e5;
+        padding-top: 20px;
+        margin-top: 10px;
+      }
+      .total-row.total {
+        border-top: 2px solid #8b5cf6;
+        padding-top: 20px;
+        margin-top: 10px;
+        font-size: 20px;
+        font-weight: bold;
+        color: #8b5cf6;
+      }
+      .total-label {
+        color: #666;
+      }
+      .total-value {
+        font-weight: 600;
+        color: #1a1a1a;
+      }
+      .total-value.total {
+        color: #8b5cf6;
+        font-size: 24px;
+      }
+      .footer {
+        margin-top: 50px;
+        padding-top: 30px;
+        border-top: 1px solid #e5e5e5;
+        text-align: center;
+        font-size: 12px;
+        color: #666;
+      }
+      .footer-note {
+        margin-top: 20px;
+        font-size: 11px;
+        color: #999;
+        line-height: 1.6;
+      }
+      .status-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .status-paid {
+        background: #10b981;
+        color: white;
+      }
+      .status-free {
+        background: #6b7280;
+        color: white;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="invoice-container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo-section">
-                <img src="https://www.trevnoctilla.com/logo.png" alt="Trevnoctilla Logo" class="logo">
-                <div class="company-name">Trevnoctilla</div>
-                <div class="company-details">
-                    API Services & File Processing<br>
-                    www.trevnoctilla.com<br>
-                    support@trevnoctilla.com
-                </div>
-            </div>
-            <div class="invoice-info">
-                <div class="invoice-title">INVOICE</div>
-                <div class="invoice-number">Invoice #{{ invoice_number }}</div>
-                <div class="invoice-date">Date: {{ invoice_date }}</div>
-                <div style="margin-top: 15px;">
-                    <span class="status-badge {{ status_class }}">{{ status }}</span>
-                </div>
-            </div>
+      <!-- Header -->
+      <div class="header">
+        <div class="logo-section">
+          <img src="{{ logo_url }}" alt="Trevnoctilla Logo" class="logo" />
+          <div class="company-name">Trevnoctilla</div>
+          <div class="company-details">
+            API Services & File Processing<br />
+            www.trevnoctilla.com<br />
+            support@trevnoctilla.com
+          </div>
         </div>
-
-        <!-- Bill To -->
-        <div class="bill-to">
-            <div class="section-title">Bill To</div>
-            <div class="bill-to-details">
-                {{ user_email }}<br>
-                {% if user_name %}{{ user_name }}<br>{% endif %}
-                Subscription: {{ tier_name }}
-            </div>
+        <div class="invoice-info">
+          <div class="invoice-title">INVOICE</div>
+          <div class="invoice-number">Invoice #{{ invoice_number }}</div>
+          <div class="invoice-date">Date: {{ invoice_date }}</div>
+          <div style="margin-top: 15px">
+            <span class="status-badge {{ status_class }}">{{ status }}</span>
+          </div>
         </div>
+      </div>
 
-        <!-- Items Table -->
-        <table class="items-table">
-            <thead>
-                <tr>
-                    <th>Description</th>
-                    <th class="text-right">Quantity</th>
-                    <th class="text-right">Unit Price</th>
-                    <th class="text-right">Amount</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td class="item-description">{{ item_description }}</td>
-                    <td class="text-right">1</td>
-                    <td class="text-right">{{ currency_symbol }}{{ unit_price }}</td>
-                    <td class="text-right"><strong>{{ currency_symbol }}{{ total_amount }}</strong></td>
-                </tr>
-            </tbody>
-        </table>
-
-        <!-- Totals -->
-        <div class="totals">
-            <div class="total-row subtotal">
-                <span class="total-label">Subtotal</span>
-                <span class="total-value">{{ currency_symbol }}{{ total_amount }}</span>
-            </div>
-            {% if tax_amount and tax_amount > 0 %}
-            <div class="total-row">
-                <span class="total-label">Tax ({{ tax_rate }}%)</span>
-                <span class="total-value">{{ currency_symbol }}{{ tax_amount }}</span>
-            </div>
-            {% endif %}
-            <div class="total-row total">
-                <span class="total-label">Total</span>
-                <span class="total-value total">{{ currency_symbol }}{{ total_amount }}</span>
-            </div>
+      <!-- Bill To -->
+      <div class="bill-to">
+        <div class="section-title">Bill To</div>
+        <div class="bill-to-details">
+          {{ user_email }}<br />
+          {% if user_name %}{{ user_name }}<br />{% endif %} Subscription: {{
+          tier_name }}
         </div>
+      </div>
 
-        <!-- Footer -->
-        <div class="footer">
-            <div><strong>Thank you for your business!</strong></div>
-            <div class="footer-note">
-                This is an automated invoice for your Trevnoctilla subscription.<br>
-                For questions or support, please contact us at support@trevnoctilla.com
-            </div>
+      <!-- Items Table -->
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th class="text-right">Quantity</th>
+            <th class="text-right">Unit Price</th>
+            <th class="text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="item-description">{{ item_description }}</td>
+            <td class="text-right">1</td>
+            <td class="text-right">{{ currency_symbol }}{{ unit_price }}</td>
+            <td class="text-right">
+              <strong>{{ currency_symbol }}{{ total_amount }}</strong>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Totals -->
+      <div class="totals">
+        <div class="total-row subtotal">
+          <span class="total-label">Subtotal</span>
+          <span class="total-value"
+            >{{ currency_symbol }}{{ total_amount }}</span
+          >
         </div>
+        {% if tax_amount and tax_amount > 0 %}
+        <div class="total-row">
+          <span class="total-label">Tax ({{ tax_rate }}%)</span>
+          <span class="total-value">{{ currency_symbol }}{{ tax_amount }}</span>
+        </div>
+        {% endif %}
+        <div class="total-row total">
+          <span class="total-label">Total</span>
+          <span class="total-value total"
+            >{{ currency_symbol }}{{ total_amount }}</span
+          >
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <div><strong>Thank you for your business!</strong></div>
+        <div class="footer-note">
+          This is an automated invoice for your Trevnoctilla subscription.<br />
+          For questions or support, please contact us at
+          support@trevnoctilla.com
+        </div>
+      </div>
     </div>
-</body>
+  </body>
 </html>
-
