@@ -97,21 +97,27 @@ def init_db(app):
                 db.create_all()
                 print("✅ Database tables created successfully")
             
-            # Create default admin user if none exists
+            # Create default admin user if none exists (with super_admin role)
             from models import User
             admin_user = User.query.filter_by(email='admin@trevnoctilla.com').first()
             if not admin_user:
                 admin_user = User(
                     email='admin@trevnoctilla.com',
-                    role='admin',
+                    role='super_admin',
                     is_active=True
                 )
                 admin_user.set_password('admin123')  # Default password
                 db.session.add(admin_user)
                 db.session.commit()
-                print("✅ Default admin user created (email: admin@trevnoctilla.com, password: admin123)")
+                print("✅ Default admin user created with super_admin role (email: admin@trevnoctilla.com, password: admin123)")
             else:
-                print("✅ Admin user already exists")
+                # Update existing admin user to super_admin if not already
+                if admin_user.role != 'super_admin':
+                    admin_user.role = 'super_admin'
+                    db.session.commit()
+                    print("✅ Existing admin user upgraded to super_admin role")
+                else:
+                    print("✅ Admin user already exists with super_admin role")
                 
         except Exception as e:
             print(f"❌ Error creating database tables: {e}")
