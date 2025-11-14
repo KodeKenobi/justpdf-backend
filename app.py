@@ -72,14 +72,8 @@ except ImportError as e:
     import traceback
     traceback.print_exc()
     raise
-from auth_routes import auth_bp
-from api.v1.routes import api_v1
-from api.admin.routes import admin_api
-from api.client.routes import client_api
-from api.payment.routes import payment_api
-from test_routes import test_bp
-from debug_routes import debug_bp
 
+# Create Flask app FIRST, before importing blueprints
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
@@ -93,6 +87,57 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Import blueprints with error handling (non-critical for health endpoint)
+print("📦 Importing blueprints...")
+try:
+    from auth_routes import auth_bp
+    print("✅ auth_bp imported")
+except Exception as e:
+    print(f"⚠️ Failed to import auth_bp: {e}")
+    auth_bp = None
+
+try:
+    from api.v1.routes import api_v1
+    print("✅ api_v1 imported")
+except Exception as e:
+    print(f"⚠️ Failed to import api_v1: {e}")
+    api_v1 = None
+
+try:
+    from api.admin.routes import admin_api
+    print("✅ admin_api imported")
+except Exception as e:
+    print(f"⚠️ Failed to import admin_api: {e}")
+    admin_api = None
+
+try:
+    from api.client.routes import client_api
+    print("✅ client_api imported")
+except Exception as e:
+    print(f"⚠️ Failed to import client_api: {e}")
+    client_api = None
+
+try:
+    from api.payment.routes import payment_api
+    print("✅ payment_api imported")
+except Exception as e:
+    print(f"⚠️ Failed to import payment_api: {e}")
+    payment_api = None
+
+try:
+    from test_routes import test_bp
+    print("✅ test_bp imported")
+except Exception as e:
+    print(f"⚠️ Failed to import test_bp: {e}")
+    test_bp = None
+
+try:
+    from debug_routes import debug_bp
+    print("✅ debug_bp imported")
+except Exception as e:
+    print(f"⚠️ Failed to import debug_bp: {e}")
+    debug_bp = None
+
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-change-in-production')
@@ -105,7 +150,12 @@ app.config['JWT_HEADER_NAME'] = 'Authorization'
 app.config['JWT_HEADER_TYPE'] = 'Bearer'
 
 # Initialize extensions
-jwt.init_app(app)
+try:
+    jwt.init_app(app)
+    print("✅ JWT extension initialized")
+except Exception as e:
+    print(f"⚠️ Failed to initialize JWT: {e}")
+    # Continue anyway - health endpoint doesn't need JWT
 
 # Initialize database in background thread (non-blocking - allow app to start immediately)
 def init_db_background():
@@ -4611,14 +4661,28 @@ def cleanup_abandoned_processes():
         except Exception as e:
             print(f"DEBUG: Error cleaning up abandoned process for {filename}: {e}")
 
-# Register API blueprints
-app.register_blueprint(auth_bp)
-app.register_blueprint(api_v1)
-app.register_blueprint(admin_api)
-app.register_blueprint(client_api)
-app.register_blueprint(payment_api)
-app.register_blueprint(test_bp)
-app.register_blueprint(debug_bp)
+# Register API blueprints (only if they were imported successfully)
+if auth_bp:
+    app.register_blueprint(auth_bp)
+    print("✅ auth_bp registered")
+if api_v1:
+    app.register_blueprint(api_v1)
+    print("✅ api_v1 registered")
+if admin_api:
+    app.register_blueprint(admin_api)
+    print("✅ admin_api registered")
+if client_api:
+    app.register_blueprint(client_api)
+    print("✅ client_api registered")
+if payment_api:
+    app.register_blueprint(payment_api)
+    print("✅ payment_api registered")
+if test_bp:
+    app.register_blueprint(test_bp)
+    print("✅ test_bp registered")
+if debug_bp:
+    app.register_blueprint(debug_bp)
+    print("✅ debug_bp registered")
 
 # Register cleanup on shutdown
 import atexit
