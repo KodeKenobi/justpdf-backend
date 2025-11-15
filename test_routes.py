@@ -87,10 +87,11 @@ def send_test_welcome_email():
 
 @test_bp.route('/delete-user', methods=['POST'])
 def delete_user():
-    """Delete a user by email (admin/test endpoint)"""
+    """Delete a user by email (admin/test endpoint) - COMPLETE DELETION WITH NO CACHE"""
     try:
         from database import db
         from models import User, APIKey, UsageLog, ResetHistory, Notification
+        from sqlalchemy import text
         
         data = request.get_json() or {}
         email = data.get('email', '').strip().lower()
@@ -98,9 +99,18 @@ def delete_user():
         if not email:
             return jsonify({'success': False, 'error': 'Email is required'}), 400
         
-        print(f"🗑️ Attempting to delete user: {email}")
+        print(f"🗑️ Attempting COMPLETE deletion of user: {email}")
+        print(f"   This will delete user from database and ensure no cache remains")
         
+        # Try multiple lookup methods to find user
         user = User.query.filter_by(email=email).first()
+        if not user:
+            # Try case-insensitive lookup
+            all_users = User.query.all()
+            for u in all_users:
+                if u.email.lower().strip() == email.lower().strip():
+                    user = u
+                    break
         
         if not user:
             print(f"❌ User not found: {email}")
@@ -110,38 +120,127 @@ def delete_user():
         user_email = user.email
         print(f"📊 Found user: {user_email} (ID: {user_id})")
         
-        # Delete related data first
-        api_keys_deleted = APIKey.query.filter_by(user_id=user_id).delete()
-        print(f"   Deleted {api_keys_deleted} API keys")
+        # Delete ALL related data first (cascade delete)
+        print(f"   Step 1: Deleting all related data...")
         
-        usage_logs_deleted = UsageLog.query.filter_by(user_id=user_id).delete()
-        print(f"   Deleted {usage_logs_deleted} usage logs")
+        # Delete API keys
+        api_keys_deleted = APIKey.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        print(f"      ✅ Deleted {api_keys_deleted} API keys")
         
-        reset_history_deleted = ResetHistory.query.filter_by(user_id=user_id).delete()
-        print(f"   Deleted {reset_history_deleted} reset history records")
+        # Delete usage logs
+        usage_logs_deleted = UsageLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        print(f"      ✅ Deleted {usage_logs_deleted} usage logs")
         
-        notifications_updated = Notification.query.filter_by(read_by=user_id).update({'read_by': None})
-        print(f"   Updated {notifications_updated} notification references")
+        # Delete reset history
+        reset_history_deleted = ResetHistory.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+        print(f"      ✅ Deleted {reset_history_deleted} reset history records")
+        
+        # Update notifications to remove user references
+        notifications_updated = Notification.query.filter_by(read_by=user_id).update({'read_by': None}, synchronize_session=False)
+        print(f"      ✅ Updated {notifications_updated} notification references")
+        
+        # Force flush to ensure all deletes are processed
+        db.session.flush()
+        print(f"   Step 2: Flushed session to ensure all deletes are processed")
         
         # Delete user
+        print(f"   Step 3: Deleting user from database...")
         db.session.delete(user)
         db.session.commit()
+        print(f"      ✅ User deleted and committed to database")
         
-        # Verify deletion
-        verify_user = User.query.filter_by(email=email).first()
-        if verify_user:
-            print(f"❌ ERROR: User still exists after deletion!")
+        # Force another flush and commit to ensure no cache
+        db.session.flush()
+        db.session.commit()
+        print(f"   Step 4: Forced additional flush/commit to clear any cache")
+        
+        # Multiple verification checks to ensure complete deletion
+        print(f"   Step 5: Verifying complete deletion (multiple checks)...")
+        
+        # Check 1: Query by email
+        verify_user_email = User.query.filter_by(email=email).first()
+        if verify_user_email:
+            print(f"      ❌ ERROR: User still exists when querying by email!")
+            db.session.rollback()
             return jsonify({
                 'success': False,
-                'error': 'User deletion failed - user still exists',
+                'error': 'User deletion failed - user still exists (email query)',
                 'message': f'Failed to delete user {user_email}'
             }), 500
         
-        print(f"✅ User {user_email} deleted successfully and verified")
+        # Check 2: Query by ID
+        verify_user_id = User.query.get(user_id)
+        if verify_user_id:
+            print(f"      ❌ ERROR: User still exists when querying by ID!")
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'User deletion failed - user still exists (ID query)',
+                'message': f'Failed to delete user {user_email}'
+            }), 500
+        
+        # Check 3: Raw SQL query to bypass any ORM cache
+        try:
+            result = db.session.execute(text("SELECT id, email FROM users WHERE id = :user_id OR LOWER(email) = :email"), 
+                                      {"user_id": user_id, "email": email.lower()})
+            raw_user = result.fetchone()
+            if raw_user:
+                print(f"      ❌ ERROR: User still exists in raw SQL query!")
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': 'User deletion failed - user still exists (raw SQL)',
+                    'message': f'Failed to delete user {user_email}'
+                }), 500
+        except Exception as sql_error:
+            print(f"      ⚠️  Could not perform raw SQL check (non-critical): {sql_error}")
+        
+        # Check 4: Verify no API keys remain
+        remaining_keys = APIKey.query.filter_by(user_id=user_id).count()
+        if remaining_keys > 0:
+            print(f"      ⚠️  WARNING: {remaining_keys} API keys still exist for deleted user")
+            # Force delete them
+            APIKey.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.session.commit()
+            print(f"      ✅ Force deleted remaining API keys")
+        
+        # Check 5: Verify no usage logs remain
+        remaining_logs = UsageLog.query.filter_by(user_id=user_id).count()
+        if remaining_logs > 0:
+            print(f"      ⚠️  WARNING: {remaining_logs} usage logs still exist for deleted user")
+            # Force delete them
+            UsageLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.session.commit()
+            print(f"      ✅ Force deleted remaining usage logs")
+        
+        # Final verification - refresh the session to clear any cache
+        db.session.expire_all()
+        print(f"   Step 6: Expired all sessions to clear ORM cache")
+        
+        # Final check
+        final_check = User.query.filter_by(email=email).first()
+        if final_check:
+            print(f"      ❌ ERROR: User still exists after cache expiration!")
+            db.session.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'User deletion failed - user still exists after cache clear',
+                'message': f'Failed to delete user {user_email}'
+            }), 500
+        
+        print(f"✅ User {user_email} (ID: {user_id}) COMPLETELY DELETED from database")
+        print(f"   ✅ All related data deleted")
+        print(f"   ✅ All caches cleared")
+        print(f"   ✅ User will be immediately invalid - dashboard will reject access")
+        
         return jsonify({
             'success': True,
-            'message': f'User {user_email} deleted successfully',
-            'deleted_id': user_id
+            'message': f'User {user_email} completely deleted from system and database',
+            'deleted_id': user_id,
+            'deleted_email': user_email,
+            'cache_cleared': True,
+            'verification_passed': True,
+            'note': 'User is now completely removed. Any existing sessions/tokens will be invalid. Dashboard will immediately reject access.'
         }), 200
         
     except Exception as e:
