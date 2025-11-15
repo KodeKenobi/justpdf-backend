@@ -17,14 +17,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt .
+# Handle both root-level and trevnoctilla-backend/ build contexts
+COPY trevnoctilla-backend/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright browsers (needed for HTML to PDF conversion)
 RUN playwright install chromium || true
 
 # Copy application code
-COPY . .
+COPY trevnoctilla-backend/ .
 
 # Create necessary directories
 RUN mkdir -p uploads edited saved_html converted_videos converted_audio
