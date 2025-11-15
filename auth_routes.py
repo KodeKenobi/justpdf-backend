@@ -309,18 +309,29 @@ def get_token_from_session():
         user = User.query.filter_by(email=email).first()
         
         if not user:
-            # Create user
-            user = User(email=email, role=role)
+            # Create user (preserve subscription_tier from NextAuth session if available)
+            subscription_tier = data.get('subscription_tier', 'free')
+            user = User(email=email, role=role, subscription_tier=subscription_tier)
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
+            print(f"✅ [AUTH] Created new user: {email} (tier: {subscription_tier})")
         else:
             # User exists - update password to match NextAuth
+            # CRITICAL: Preserve subscription_tier - do NOT reset it
+            old_tier = user.subscription_tier
             user.set_password(password)
             user.is_active = True
             if role and user.role != role:
                 user.role = role
+            # Only update subscription_tier if explicitly provided AND different
+            # This prevents accidental resets
+            if 'subscription_tier' in data and data.get('subscription_tier') != old_tier:
+                print(f"⚠️ [AUTH] Subscription tier change requested for {email}: {old_tier} -> {data.get('subscription_tier')}")
+                print(f"   This should only happen through payment webhooks, not session sync")
+                # Don't update - preserve existing tier
             db.session.commit()
+            print(f"✅ [AUTH] Updated existing user: {email} (preserved tier: {old_tier})")
         
         # Generate JWT token
         expires = timedelta(hours=24)
