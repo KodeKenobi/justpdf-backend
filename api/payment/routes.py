@@ -126,7 +126,8 @@ def upgrade_subscription():
                 else:
                     payment_date = datetime.now()
                 
-                send_upgrade_email(
+                print(f"📧 [UPGRADE] Attempting to send upgrade email to {user.email}...")
+                email_sent = send_upgrade_email(
                     user.email, 
                     old_tier, 
                     new_tier, 
@@ -134,8 +135,20 @@ def upgrade_subscription():
                     payment_id=payment_id,
                     payment_date=payment_date
                 )
+                
+                if email_sent:
+                    print(f"✅ [UPGRADE] Upgrade email sent successfully to {user.email}")
+                else:
+                    print(f"❌ [UPGRADE] Failed to send upgrade email to {user.email} - check logs above for details")
+                    # Log additional context for debugging
+                    print(f"   User: {user.email} (ID: {user.id})")
+                    print(f"   Tier change: {old_tier} -> {new_tier}")
+                    print(f"   Amount: {amount}")
+                    print(f"   Payment ID: {payment_id}")
             except Exception as e:
-                print(f"⚠️ Failed to send upgrade email: {e}")
+                print(f"❌ [UPGRADE] Exception while sending upgrade email: {e}")
+                import traceback
+                traceback.print_exc()
                 # Don't fail the request if email fails
         
         return jsonify({
