@@ -4,8 +4,10 @@ Payment webhook routes for handling subscription upgrades
 from flask import Blueprint, request, jsonify
 from database import db
 from models import User
-from email_service import send_upgrade_email
+from email_service import send_upgrade_email, generate_invoice_pdf, get_file_invoice_email_html
 from notification_service import create_subscription_notification
+import base64
+from datetime import datetime
 
 # Create Blueprint
 payment_api = Blueprint('payment_api', __name__, url_prefix='/api/payment')
@@ -180,5 +182,91 @@ def upgrade_subscription():
     except Exception as e:
         db.session.rollback()
         print(f"❌ Error updating subscription: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@payment_api.route('/generate-invoice-pdf', methods=['POST'])
+def generate_invoice_pdf_endpoint():
+    """
+    Generate invoice PDF and return as base64
+    Used for sending invoices via email
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        tier = data.get('tier', 'free')
+        amount = data.get('amount', 0.0)
+        user_email = data.get('user_email', '')
+        payment_id = data.get('payment_id', '')
+        payment_date_str = data.get('payment_date')
+        item_description = data.get('item_description', 'File Download')
+        
+        # Parse payment date
+        payment_date = None
+        if payment_date_str:
+            try:
+                payment_date = datetime.fromisoformat(payment_date_str.replace('Z', '+00:00'))
+            except:
+                payment_date = datetime.now()
+        else:
+            payment_date = datetime.now()
+        
+        print(f"📄 [INVOICE PDF] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
+        
+        # Use existing generate_invoice_pdf function
+        invoice_pdf = generate_invoice_pdf(tier, amount, user_email, payment_id, payment_date, item_description)
+        
+        if invoice_pdf:
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
+            print(f"✅ [INVOICE PDF] Invoice PDF generated ({len(invoice_pdf)} bytes)")
+            return jsonify({
+                'success': True,
+                'pdf_base64': pdf_base64,
+                'size': len(invoice_pdf)
+            }), 200
+        else:
+            print(f"❌ [INVOICE PDF] Failed to generate invoice PDF")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to generate invoice PDF'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ [INVOICE PDF] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@payment_api.route('/get-file-invoice-email-html', methods=['POST'])
+def get_file_invoice_email_html_endpoint():
+    """
+    Get file and invoice email HTML content from template
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        item_name = data.get('item_name', 'File Download')
+        amount = data.get('amount', 1.0)
+        payment_id = data.get('payment_id', '')
+        
+        print(f"📧 [FILE INVOICE EMAIL] Generating email HTML for {item_name} (amount: {amount})")
+        
+        # Use existing get_file_invoice_email_html function
+        html_content = get_file_invoice_email_html(item_name, amount, payment_id)
+        
+        return jsonify({
+            'success': True,
+            'html': html_content
+        }), 200
+            
+    except Exception as e:
+        print(f"❌ [FILE INVOICE EMAIL] Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 

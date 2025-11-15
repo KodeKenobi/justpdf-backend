@@ -175,7 +175,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         traceback.print_exc()
         return None
 
-def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None) -> Optional[bytes]:
+def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None, item_description: Optional[str] = None) -> Optional[bytes]:
     """
     Generate PDF invoice from HTML template using html-to-pdf endpoint
     
@@ -185,6 +185,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         user_email: User email address
         payment_id: Payment/transaction ID (optional)
         payment_date: Payment/start date (uses this for invoice date if provided)
+        item_description: Custom item description (optional, defaults to tier subscription)
     
     Returns:
         PDF bytes if successful, None otherwise
@@ -233,12 +234,14 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         
         # Generate invoice HTML with embedded logo
         invoice_template = env.get_template('invoice.html')
+        # Use provided item_description or default to tier subscription
+        final_item_description = item_description or f"{tier_names.get(tier.lower(), tier)} Subscription"
         invoice_html = invoice_template.render(
             invoice_number=invoice_number,
             invoice_date=invoice_date_str,
             user_email=user_email,
             tier_name=tier_names.get(tier.lower(), tier),
-            item_description=f"{tier_names.get(tier.lower(), tier)} Subscription",
+            item_description=final_item_description,
             unit_price=f"{invoice_amount:.2f}",
             total_amount=f"{invoice_amount:.2f}",
             currency_symbol="$",
@@ -491,6 +494,31 @@ def get_upgrade_email_html(user_email: str, old_tier: str, new_tier: str) -> tup
     
     return html_content, text_content
 
+def get_file_invoice_email_html(item_name: str, amount: float, payment_id: str = "") -> str:
+    """
+    Generate file and invoice email HTML content from template
+    
+    Args:
+        item_name: Name of the purchased item
+        amount: Payment amount
+        payment_id: Payment/transaction ID (optional)
+    
+    Returns:
+        HTML content string
+    """
+    # Format amount to 2 decimal places
+    amount_str = f"{amount:.2f}"
+    
+    # Load and render HTML template
+    html_template = env.get_template('file-invoice.html')
+    html_content = html_template.render(
+        item_name=item_name,
+        amount=amount_str,
+        payment_id=payment_id
+    )
+    
+    return html_content
+
 def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0, payment_id: str = "", payment_date: Optional[datetime] = None) -> bool:
     """
     Send welcome email to newly registered user with invoice attachment
@@ -541,7 +569,7 @@ def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0,
 
 def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: float = 0.0, payment_id: str = "", payment_date: Optional[datetime] = None) -> bool:
     """
-    Send upgrade confirmation email with invoice attachment
+    Send upgrade confirmation email with subscription PDF attachment
     
     Args:
         user_email: User's email address
@@ -549,6 +577,7 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
         new_tier: New subscription tier
         amount: Payment amount
         payment_id: Payment/transaction ID (optional)
+        payment_date: Payment date (optional)
     
     Returns:
         True if email sent successfully
@@ -561,26 +590,9 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
     }
     subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! 🚀"
     
-    # Generate and attach both invoice PDF and subscription PDF
+    # Generate and attach subscription PDF (shows new subscription details, next billing date, etc.)
     attachments = []
     try:
-        # Generate invoice PDF
-        print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
-        invoice_pdf = generate_invoice_pdf(new_tier, amount, user_email, payment_id, payment_date)
-        if invoice_pdf:
-            # Convert PDF bytes to base64
-            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
-            date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
-            attachments.append({
-                'filename': f'invoice_upgrade_{new_tier}_{date_str}.pdf',
-                'content': pdf_base64,
-                'contentType': 'application/pdf'
-            })
-            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
-        else:
-            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, continuing without invoice attachment")
-        
-        # Generate subscription PDF
         print(f"📄 [UPGRADE EMAIL] Generating subscription PDF for {user_email} (tier: {new_tier}, amount: {amount})")
         subscription_pdf = generate_subscription_pdf(
             tier=new_tier,
@@ -606,7 +618,7 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
             print(f"⚠️ [UPGRADE EMAIL] Failed to generate subscription PDF, continuing without subscription attachment")
             print(f"   Check generate_subscription_pdf() logs for details")
     except Exception as e:
-        print(f"⚠️ [UPGRADE EMAIL] Error generating PDFs: {e}")
+        print(f"⚠️ [UPGRADE EMAIL] Error generating subscription PDF: {e}")
         import traceback
         traceback.print_exc()
         # Continue without attachments if PDF generation fails
