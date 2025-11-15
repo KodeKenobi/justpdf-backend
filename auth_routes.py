@@ -305,21 +305,43 @@ def get_token_from_session():
         from flask_jwt_extended import create_access_token
         from datetime import timedelta
         
-        # Find or create user
+        # CRITICAL: Robust user lookup to prevent duplicate creation
+        # First try exact match (case-sensitive)
         user = User.query.filter_by(email=email).first()
         
+        # If not found, try case-insensitive lookup (defensive check)
         if not user:
+            # Check all users with case-insensitive email match
+            all_users = User.query.all()
+            for u in all_users:
+                if u.email.lower().strip() == email.lower().strip():
+                    print(f"⚠️ [AUTH] Found user with different email casing: '{u.email}' (requested: '{email}')")
+                    print(f"   Using existing user ID: {u.id}, tier: {u.subscription_tier}")
+                    user = u
+                    break
+        
+        # If still not found, check for any users with similar email (extra safety)
+        if not user:
+            # Log all existing users to help debug
+            existing_emails = [u.email for u in User.query.all()]
+            print(f"⚠️ [AUTH] USER NOT FOUND: {email}")
+            print(f"   Existing users in database: {existing_emails}")
+            print(f"   This will CREATE a new user - this should only happen on first registration")
+            print(f"   If this user should exist, check database for email mismatch or deletion")
+            
             # Create user (preserve subscription_tier from NextAuth session if available)
             subscription_tier = data.get('subscription_tier', 'free')
             user = User(email=email, role=role, subscription_tier=subscription_tier)
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
-            print(f"✅ [AUTH] Created new user: {email} (tier: {subscription_tier})")
+            print(f"✅ [AUTH] Created new user: {email} (tier: {subscription_tier}, ID: {user.id})")
+            print(f"   ⚠️  WARNING: This user was just created - subscription_tier is '{subscription_tier}'")
         else:
             # User exists - update password to match NextAuth
             # CRITICAL: Preserve subscription_tier - do NOT reset it
             old_tier = user.subscription_tier
+            old_id = user.id
             user.set_password(password)
             user.is_active = True
             if role and user.role != role:
@@ -329,9 +351,10 @@ def get_token_from_session():
             if 'subscription_tier' in data and data.get('subscription_tier') != old_tier:
                 print(f"⚠️ [AUTH] Subscription tier change requested for {email}: {old_tier} -> {data.get('subscription_tier')}")
                 print(f"   This should only happen through payment webhooks, not session sync")
+                print(f"   PRESERVING existing tier: {old_tier}")
                 # Don't update - preserve existing tier
             db.session.commit()
-            print(f"✅ [AUTH] Updated existing user: {email} (preserved tier: {old_tier})")
+            print(f"✅ [AUTH] Updated existing user: {email} (ID: {old_id}, preserved tier: {old_tier})")
         
         # Generate JWT token
         expires = timedelta(hours=24)

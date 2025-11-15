@@ -61,22 +61,41 @@ def upgrade_subscription():
         # Find user by ID or email (ID preferred for subscriptions, email as fallback)
         # CRITICAL: For subscriptions, user_id is more reliable than email
         # PayFast may not send email_address in subscription webhooks
+        # Use robust lookup to handle case sensitivity issues
         user = None
         if user_id:
             try:
                 user = User.query.filter_by(id=int(user_id)).first()
                 if user:
-                    print(f"✅ User found by ID: {user_id} ({user.email})")
+                    print(f"✅ [UPGRADE] User found by ID: {user_id} ({user.email}, tier: {user.subscription_tier})")
             except (ValueError, TypeError):
+                print(f"⚠️ [UPGRADE] Invalid user_id format: {user_id}")
                 pass
+        
+        # If not found by ID, try email (case-insensitive lookup)
         if not user and user_email:
+            # First try exact match
             user = User.query.filter_by(email=user_email).first()
             if user:
-                print(f"✅ User found by email: {user_email} (ID: {user.id})")
+                print(f"✅ [UPGRADE] User found by email (exact): {user_email} (ID: {user.id}, tier: {user.subscription_tier})")
+            else:
+                # Try case-insensitive lookup
+                all_users = User.query.all()
+                for u in all_users:
+                    if u.email.lower().strip() == user_email.lower().strip():
+                        print(f"⚠️ [UPGRADE] Found user with different email casing: '{u.email}' (requested: '{user_email}')")
+                        print(f"   Using existing user ID: {u.id}, tier: {u.subscription_tier}")
+                        user = u
+                        break
         
         if not user:
             identifier = user_email or f"ID {user_id}" or "unknown"
-            print(f"⚠️ User not found for: {identifier}")
+            print(f"❌ [UPGRADE] User not found for: {identifier}")
+            print(f"   Searched by user_id: {user_id}")
+            print(f"   Searched by email: {user_email}")
+            # Log all users for debugging
+            all_users = User.query.all()
+            print(f"   Existing users in database: {[(u.id, u.email) for u in all_users]}")
             return jsonify({'error': 'User not found'}), 404
         
         # Map plan_id to subscription tier
