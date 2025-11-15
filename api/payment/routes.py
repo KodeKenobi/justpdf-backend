@@ -58,15 +58,21 @@ def upgrade_subscription():
         if not plan_id:
             return jsonify({'error': 'plan_id is required'}), 400
         
-        # Find user by email or ID (email preferred, ID as fallback)
+        # Find user by ID or email (ID preferred for subscriptions, email as fallback)
+        # CRITICAL: For subscriptions, user_id is more reliable than email
+        # PayFast may not send email_address in subscription webhooks
         user = None
-        if user_email:
-            user = User.query.filter_by(email=user_email).first()
-        elif user_id:
+        if user_id:
             try:
                 user = User.query.filter_by(id=int(user_id)).first()
+                if user:
+                    print(f"✅ User found by ID: {user_id} ({user.email})")
             except (ValueError, TypeError):
                 pass
+        if not user and user_email:
+            user = User.query.filter_by(email=user_email).first()
+            if user:
+                print(f"✅ User found by email: {user_email} (ID: {user.id})")
         
         if not user:
             identifier = user_email or f"ID {user_id}" or "unknown"
