@@ -27,6 +27,154 @@ else:
     FROM_EMAIL = raw_from_email
 FROM_NAME = os.getenv('FROM_NAME', 'Trevnoctilla Team')
 
+def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = "", subscription_id: str = "", payment_id: str = "", payment_date: Optional[datetime] = None, billing_cycle: str = "Monthly", payment_method: str = "PayFast") -> Optional[bytes]:
+    """
+    Generate PDF subscription document from HTML template using html-to-pdf endpoint
+    
+    Args:
+        tier: Subscription tier (free, premium, enterprise)
+        amount: Subscription amount (0.0 for free tier)
+        user_email: User email address
+        subscription_id: Subscription ID (optional)
+        payment_id: Payment/transaction ID (optional)
+        payment_date: Payment/start date (uses this for subscription date if provided)
+        billing_cycle: Billing cycle (Monthly, Yearly, etc.)
+        payment_method: Payment method used
+    
+    Returns:
+        PDF bytes if successful, None otherwise
+    """
+    try:
+        tier_names = {
+            'free': 'Free Tier',
+            'premium': 'Production Plan',
+            'enterprise': 'Enterprise Plan',
+            'client': 'Client Plan'
+        }
+        
+        # Use payment date if provided, otherwise use current date
+        subscription_date_obj = payment_date if payment_date else datetime.now()
+        subscription_date_str = subscription_date_obj.strftime('%B %d, %Y')
+        
+        # Calculate next billing date (add 1 month for monthly, 1 year for yearly)
+        try:
+            from dateutil.relativedelta import relativedelta
+            if billing_cycle.lower() == "yearly":
+                next_billing_date_obj = subscription_date_obj + relativedelta(years=1)
+            else:
+                next_billing_date_obj = subscription_date_obj + relativedelta(months=1)
+        except ImportError:
+            # Fallback if dateutil not available - just add 30 days
+            from datetime import timedelta
+            if billing_cycle.lower() == "yearly":
+                next_billing_date_obj = subscription_date_obj + timedelta(days=365)
+            else:
+                next_billing_date_obj = subscription_date_obj + timedelta(days=30)
+        next_billing_date_str = next_billing_date_obj.strftime('%B %d, %Y')
+        
+        # Generate subscription ID if not provided
+        if not subscription_id:
+            subscription_id = f"SUB-{subscription_date_obj.strftime('%Y%m%d')}-{str(uuid.uuid4())[:8].upper()}"
+        
+        # Download and embed logo as base64 for PDF compatibility
+        logo_base64 = None
+        try:
+            logo_url = "https://www.trevnoctilla.com/logo.png"
+            logo_response = requests.get(logo_url, timeout=10)
+            if logo_response.status_code == 200:
+                import base64
+                logo_base64 = base64.b64encode(logo_response.content).decode('utf-8')
+                logo_data_uri = f"data:image/png;base64,{logo_base64}"
+                print(f"✅ [SUBSCRIPTION] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
+            else:
+                print(f"⚠️ [SUBSCRIPTION] Failed to download logo: HTTP {logo_response.status_code}")
+        except Exception as e:
+            print(f"⚠️ [SUBSCRIPTION] Error downloading logo: {e}")
+            # Continue without logo if download fails
+        
+        # Generate subscription HTML with embedded logo
+        subscription_template = env.get_template('subscription.html')
+        subscription_html = subscription_template.render(
+            subscription_id=subscription_id,
+            status="Active" if amount > 0 else "Free",
+            next_billing_date=next_billing_date_str,
+            tier_name=tier_names.get(tier.lower(), tier),
+            billing_cycle=billing_cycle,
+            currency_symbol="$",
+            amount=f"{amount:.2f}",
+            payment_method=payment_method,
+            logo_url=logo_data_uri if logo_base64 else "https://www.trevnoctilla.com/logo.png"  # Fallback to URL if base64 failed
+        )
+        
+        # Save HTML to temp file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+            f.write(subscription_html)
+            html_path = f.name
+        
+        # Debug: Log HTML size and preview
+        html_size = len(subscription_html)
+        print(f"📄 [SUBSCRIPTION] Generated HTML ({html_size} chars)")
+        print(f"📄 [SUBSCRIPTION] HTML preview (first 500 chars): {subscription_html[:500]}")
+        print(f"📄 [SUBSCRIPTION] HTML saved to: {html_path}")
+        
+        # Get backend API URL
+        backend_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
+        if not backend_url.startswith('http'):
+            backend_url = f'https://{backend_url}'
+        
+        # Convert HTML to PDF using backend endpoint
+        print(f"📄 [SUBSCRIPTION] Converting HTML to PDF via {backend_url}/convert_html_to_pdf...")
+        with open(html_path, 'rb') as html_file:
+            files = {'html': ('subscription.html', html_file, 'text/html')}
+            response = requests.post(
+                f"{backend_url}/convert_html_to_pdf",
+                files=files,
+                timeout=30
+            )
+        
+        # Clean up temp HTML file
+        try:
+            os.unlink(html_path)
+        except:
+            pass
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"📄 [SUBSCRIPTION] Conversion response: {data}")
+            if data.get('status') == 'success' and data.get('download_url'):
+                # Download the PDF
+                pdf_url = data['download_url']
+                if not pdf_url.startswith('http'):
+                    pdf_url = f"{backend_url}{pdf_url}"
+                
+                print(f"📄 [SUBSCRIPTION] Downloading PDF from: {pdf_url}")
+                pdf_response = requests.get(pdf_url, timeout=30)
+                if pdf_response.status_code == 200:
+                    pdf_size = len(pdf_response.content)
+                    print(f"✅ [SUBSCRIPTION] PDF generated successfully ({pdf_size} bytes)")
+                    if pdf_size < 1000:
+                        print(f"⚠️ [SUBSCRIPTION] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
+                    return pdf_response.content
+                else:
+                    print(f"❌ [SUBSCRIPTION] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
+            else:
+                error_msg = data.get('error', data.get('message', 'Unknown error'))
+                print(f"❌ [SUBSCRIPTION] Conversion failed: {error_msg}")
+                print(f"   Full response: {data}")
+        else:
+            error_text = response.text[:500] if response.text else "No error message"
+            print(f"❌ [SUBSCRIPTION] HTML to PDF conversion failed: {response.status_code}")
+            print(f"   Error response: {error_text}")
+        
+        return None
+        
+    except Exception as e:
+        print(f"❌ [SUBSCRIPTION] Error generating subscription PDF: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None) -> Optional[bytes]:
     """
     Generate PDF invoice from HTML template using html-to-pdf endpoint
@@ -413,9 +561,11 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
     }
     subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! 🚀"
     
-    # Generate and attach invoice PDF
+    # Generate and attach both invoice PDF and subscription PDF
     attachments = []
     try:
+        # Generate invoice PDF
+        print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
         invoice_pdf = generate_invoice_pdf(new_tier, amount, user_email, payment_id, payment_date)
         if invoice_pdf:
             # Convert PDF bytes to base64
@@ -426,12 +576,40 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
                 'content': pdf_base64,
                 'contentType': 'application/pdf'
             })
-            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes)")
+            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
         else:
-            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, sending email without attachment")
+            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, continuing without invoice attachment")
+        
+        # Generate subscription PDF
+        print(f"📄 [UPGRADE EMAIL] Generating subscription PDF for {user_email} (tier: {new_tier}, amount: {amount})")
+        subscription_pdf = generate_subscription_pdf(
+            tier=new_tier,
+            amount=amount,
+            user_email=user_email,
+            subscription_id=payment_id,  # Use payment_id as subscription_id if available
+            payment_id=payment_id,
+            payment_date=payment_date,
+            billing_cycle="Monthly",  # Default to monthly, can be made configurable
+            payment_method="PayFast"
+        )
+        if subscription_pdf:
+            # Convert PDF bytes to base64
+            pdf_base64 = base64.b64encode(subscription_pdf).decode('utf-8')
+            date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+            attachments.append({
+                'filename': f'subscription_{new_tier}_{date_str}.pdf',
+                'content': pdf_base64,
+                'contentType': 'application/pdf'
+            })
+            print(f"✅ [UPGRADE EMAIL] Subscription PDF attached ({len(subscription_pdf)} bytes, base64: {len(pdf_base64)} chars)")
+        else:
+            print(f"⚠️ [UPGRADE EMAIL] Failed to generate subscription PDF, continuing without subscription attachment")
+            print(f"   Check generate_subscription_pdf() logs for details")
     except Exception as e:
-        print(f"⚠️ [UPGRADE EMAIL] Error generating invoice: {e}")
-        # Continue without attachment if invoice generation fails
+        print(f"⚠️ [UPGRADE EMAIL] Error generating PDFs: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continue without attachments if PDF generation fails
     
     return send_email(user_email, subject, html_content, text_content, attachments if attachments else None)
 
