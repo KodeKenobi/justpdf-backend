@@ -125,6 +125,13 @@ except Exception as e:
     payment_api = None
 
 try:
+    from api.analytics.routes import analytics_api
+    print("✅ analytics_api imported")
+except Exception as e:
+    print(f"⚠️ Failed to import analytics_api: {e}")
+    analytics_api = None
+
+try:
     from test_routes import test_bp
     print("✅ test_bp imported")
 except Exception as e:
@@ -4936,6 +4943,9 @@ if client_api:
 if payment_api:
     app.register_blueprint(payment_api)
     print("✅ payment_api registered")
+if analytics_api:
+    app.register_blueprint(analytics_api)
+    print("✅ analytics_api registered")
 if test_bp:
     app.register_blueprint(test_bp)
     print("✅ test_bp registered")

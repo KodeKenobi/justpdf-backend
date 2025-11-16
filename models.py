@@ -275,3 +275,130 @@ class Notification(db.Model):
             'metadata': self.notification_metadata,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+class AnalyticsEvent(db.Model):
+    """Analytics events tracking"""
+    __tablename__ = 'analytics_events'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    event_name = db.Column(db.String(100), nullable=False, index=True)
+    properties = db.Column(db.JSON)  # Additional event properties
+    session_id = db.Column(db.String(100), nullable=False, index=True)
+    page_url = db.Column(db.Text, nullable=False)
+    page_title = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    user_agent = db.Column(db.Text)
+    device_type = db.Column(db.String(20))  # desktop, mobile, tablet
+    browser = db.Column(db.String(50))
+    os = db.Column(db.String(50))
+    referrer = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = db.relationship('User', backref='analytics_events')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'event_type': self.event_type,
+            'event_name': self.event_name,
+            'properties': self.properties,
+            'session_id': self.session_id,
+            'page_url': self.page_url,
+            'page_title': self.page_title,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'user_agent': self.user_agent,
+            'device_type': self.device_type,
+            'browser': self.browser,
+            'os': self.os,
+            'referrer': self.referrer,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+class PageView(db.Model):
+    """Page views tracking"""
+    __tablename__ = 'page_views'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    session_id = db.Column(db.String(100), nullable=False, index=True)
+    page_url = db.Column(db.Text, nullable=False, index=True)
+    page_title = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    duration = db.Column(db.Integer)  # Duration in seconds
+    referrer = db.Column(db.Text)
+    user_agent = db.Column(db.Text)
+    device_type = db.Column(db.String(20))
+    browser = db.Column(db.String(50))
+    os = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = db.relationship('User', backref='page_views')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'session_id': self.session_id,
+            'page_url': self.page_url,
+            'page_title': self.page_title,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'duration': self.duration,
+            'referrer': self.referrer,
+            'user_agent': self.user_agent,
+            'device_type': self.device_type,
+            'browser': self.browser,
+            'os': self.os,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+class UserSession(db.Model):
+    """User sessions tracking"""
+    __tablename__ = 'user_sessions'
+    
+    id = db.Column(db.String(100), primary_key=True)  # session_id
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    start_time = db.Column(db.DateTime, nullable=False, index=True)
+    last_activity = db.Column(db.DateTime, nullable=False)
+    page_views = db.Column(db.Integer, default=0)
+    events = db.Column(db.Integer, default=0)
+    device_type = db.Column(db.String(20))
+    browser = db.Column(db.String(50))
+    os = db.Column(db.String(50))
+    country = db.Column(db.String(50))
+    city = db.Column(db.String(50))
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.Text)
+    referrer = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = db.relationship('User', backref='user_sessions')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'last_activity': self.last_activity.isoformat() if self.last_activity else None,
+            'page_views': self.page_views,
+            'events': self.events,
+            'device_type': self.device_type,
+            'browser': self.browser,
+            'os': self.os,
+            'country': self.country,
+            'city': self.city,
+            'ip_address': self.ip_address,
+            'user_agent': self.user_agent,
+            'referrer': self.referrer,
+            'is_active': self.is_active,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
