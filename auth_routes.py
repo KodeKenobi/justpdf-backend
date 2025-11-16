@@ -320,23 +320,17 @@ def get_token_from_session():
                     user = u
                     break
         
-        # If still not found, check for any users with similar email (extra safety)
+        # If still not found, user has been deleted - DO NOT auto-create
+        # This prevents "resurrection" of deleted users
         if not user:
-            # Log all existing users to help debug
             existing_emails = [u.email for u in User.query.all()]
-            print(f"⚠️ [AUTH] USER NOT FOUND: {email}")
+            print(f"❌ [AUTH] USER NOT FOUND: {email}")
             print(f"   Existing users in database: {existing_emails}")
-            print(f"   This will CREATE a new user - this should only happen on first registration")
-            print(f"   If this user should exist, check database for email mismatch or deletion")
-            
-            # Create user (preserve subscription_tier from NextAuth session if available)
-            subscription_tier = data.get('subscription_tier', 'free')
-            user = User(email=email, role=role, subscription_tier=subscription_tier)
-            user.set_password(password)
-            db.session.add(user)
-            db.session.commit()
-            print(f"✅ [AUTH] Created new user: {email} (tier: {subscription_tier}, ID: {user.id})")
-            print(f"   ⚠️  WARNING: This user was just created - subscription_tier is '{subscription_tier}'")
+            print(f"   User may have been deleted - returning 404 to prevent resurrection")
+            return jsonify({
+                'error': 'User not found',
+                'code': 'USER_NOT_FOUND'
+            }), 404
         else:
             # User exists - update password to match NextAuth
             # CRITICAL: Preserve subscription_tier - do NOT reset it
