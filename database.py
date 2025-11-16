@@ -43,17 +43,26 @@ def init_db(app):
                 # Check if users table exists
                 tables = inspector.get_table_names()
                 
-                # Create notifications table if it doesn't exist
-                if 'notifications' not in tables:
-                    print("📦 Creating notifications table...")
-                    # Ensure Notification model is imported before creating tables
+                # Create missing tables (notifications, analytics tables, etc.)
+                missing_tables = []
+                required_tables = ['notifications', 'analytics_events', 'page_views', 'user_sessions']
+                
+                for table_name in required_tables:
+                    if table_name not in tables:
+                        missing_tables.append(table_name)
+                
+                if missing_tables:
+                    print(f"📦 Creating missing tables: {', '.join(missing_tables)}...")
+                    # Ensure all models are imported before creating tables
                     try:
-                        from models import Notification
+                        from models import Notification, AnalyticsEvent, PageView, UserSession
                         db.create_all()  # This will create all missing tables
-                        print("✅ Notifications table created")
+                        print(f"✅ Created missing tables: {', '.join(missing_tables)}")
                     except Exception as e:
-                        print(f"⚠️ Warning: Could not create notifications table: {e}")
-                        # Continue anyway - table might be created later
+                        print(f"⚠️ Warning: Could not create missing tables: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Continue anyway - tables might be created later
             finally:
                 # Cancel alarm if it was set
                 if hasattr(signal, 'SIGALRM'):
