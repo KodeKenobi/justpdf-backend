@@ -106,27 +106,41 @@ def init_db(app):
                 db.create_all()
                 print("✅ Database tables created successfully")
             
-            # Create default admin user if none exists (with super_admin role)
+            # Ensure super admin users exist and have correct role
             from models import User
-            admin_user = User.query.filter_by(email='admin@trevnoctilla.com').first()
-            if not admin_user:
-                admin_user = User(
-                    email='admin@trevnoctilla.com',
-                    role='super_admin',
-                    is_active=True
-                )
-                admin_user.set_password('admin123')  # Default password
-                db.session.add(admin_user)
-                db.session.commit()
-                print("✅ Default admin user created with super_admin role (email: admin@trevnoctilla.com, password: admin123)")
-            else:
-                # Update existing admin user to super_admin if not already
-                if admin_user.role != 'super_admin':
-                    admin_user.role = 'super_admin'
+            super_admin_emails = [
+                'admin@trevnoctilla.com',
+                'admin@gmail.com',
+                'kodekenobi@gmail.com'
+            ]
+            
+            for email in super_admin_emails:
+                user = User.query.filter_by(email=email).first()
+                if not user:
+                    # Create new super admin user
+                    user = User(
+                        email=email,
+                        role='super_admin',
+                        is_active=True
+                    )
+                    # Set default password only for admin@trevnoctilla.com
+                    if email == 'admin@trevnoctilla.com':
+                        user.set_password('admin123')  # Default password
+                    else:
+                        # For other emails, set a random password (user must reset via forgot password)
+                        import secrets
+                        user.set_password(secrets.token_urlsafe(32))
+                    db.session.add(user)
                     db.session.commit()
-                    print("✅ Existing admin user upgraded to super_admin role")
+                    print(f"✅ Created super_admin user: {email}")
                 else:
-                    print("✅ Admin user already exists with super_admin role")
+                    # Update existing user to super_admin if not already
+                    if user.role != 'super_admin':
+                        user.role = 'super_admin'
+                        db.session.commit()
+                        print(f"✅ Upgraded {email} to super_admin role")
+                    else:
+                        print(f"✅ {email} already has super_admin role")
                 
         except Exception as e:
             print(f"❌ Error creating database tables: {e}")
