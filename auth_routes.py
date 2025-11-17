@@ -22,6 +22,74 @@ def register():
         user, message = register_user(email, password)
         
         if user:
+            # Sync user to Supabase synchronously to ensure it completes
+            try:
+                import psycopg2
+                from psycopg2.extras import RealDictCursor
+                from datetime import datetime
+                
+                # Use hardcoded Supabase connection string
+                database_url = "postgresql://postgres:Kopenikus0218!@db.pqdxqvxyrahvongbhtdb.supabase.co:5432/postgres"
+                
+                # Convert to pooler format
+                if database_url and "db." in database_url and ".supabase.co" in database_url:
+                    import re
+                    match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+                    if match:
+                        user_part, password, project_ref, port, database = match.groups()
+                        database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+                
+                # Connect and sync
+                conn = psycopg2.connect(database_url, sslmode='require')
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                
+                # Check if user exists
+                cursor.execute("SELECT id FROM users WHERE email = %s", (user.email,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Update
+                    cursor.execute("""
+                        UPDATE users SET
+                            password_hash = %s, role = %s, is_active = %s,
+                            subscription_tier = %s, monthly_call_limit = %s,
+                            monthly_used = %s, monthly_reset_date = %s, last_login = %s
+                        WHERE email = %s
+                    """, (
+                        user.password_hash, user.role, user.is_active,
+                        user.subscription_tier or 'free', user.monthly_call_limit or 5,
+                        user.monthly_used or 0,
+                        user.monthly_reset_date if user.monthly_reset_date else datetime.utcnow(),
+                        user.last_login if user.last_login else None, user.email
+                    ))
+                    print(f"✅ [REGISTRATION] Updated user in Supabase: {user.email}")
+                else:
+                    # Insert
+                    cursor.execute("""
+                        INSERT INTO users (email, password_hash, role, is_active, subscription_tier,
+                                         monthly_call_limit, monthly_used, monthly_reset_date,
+                                         created_at, last_login)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        user.email, user.password_hash, user.role, user.is_active,
+                        user.subscription_tier or 'free', user.monthly_call_limit or 5,
+                        user.monthly_used or 0,
+                        user.monthly_reset_date if user.monthly_reset_date else datetime.utcnow(),
+                        user.created_at if user.created_at else datetime.utcnow(),
+                        user.last_login if user.last_login else None
+                    ))
+                    print(f"✅ [REGISTRATION] Added user to Supabase: {user.email}")
+                
+                conn.commit()
+                cursor.close()
+                conn.close()
+                
+            except Exception as e:
+                print(f"⚠️ [REGISTRATION] Failed to sync to Supabase: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail registration if sync fails
+            
             # Send welcome email asynchronously (non-blocking) to speed up registration
             try:
                 import threading
