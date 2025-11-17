@@ -455,25 +455,133 @@ def sync_all_to_supabase():
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
 
+def sync_user_sync_migration(user):
+    """Synchronously sync user to Supabase (for migration)"""
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from datetime import datetime
+        
+        # Use hardcoded Supabase connection string (pooler format)
+        database_url = "postgresql://postgres:Kopenikus0218!@db.pqdxqvxyrahvongbhtdb.supabase.co:5432/postgres"
+        
+        # Convert to pooler format
+        if database_url and "db." in database_url and ".supabase.co" in database_url:
+            import re
+            match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+            if match:
+                user_part, password, project_ref, port, database = match.groups()
+                database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+        
+        # Connect to Supabase
+        conn = psycopg2.connect(database_url, sslmode='require')
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if user already exists
+        cursor.execute("SELECT id FROM users WHERE email = %s", (user.email,))
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing user
+            cursor.execute("""
+                UPDATE users SET
+                    password_hash = %s,
+                    role = %s,
+                    is_active = %s,
+                    subscription_tier = %s,
+                    monthly_call_limit = %s,
+                    monthly_used = %s,
+                    monthly_reset_date = %s,
+                    last_login = %s
+                WHERE email = %s
+            """, (
+                user.password_hash,
+                user.role,
+                user.is_active,
+                user.subscription_tier or 'free',
+                user.monthly_call_limit or 5,
+                user.monthly_used or 0,
+                user.monthly_reset_date if user.monthly_reset_date else datetime.utcnow(),
+                user.last_login if user.last_login else None,
+                user.email
+            ))
+            print(f"   [OK] Updated in Supabase: {user.email}")
+        else:
+            # Insert new user
+            cursor.execute("""
+                INSERT INTO users (email, password_hash, role, is_active, subscription_tier, 
+                                 monthly_call_limit, monthly_used, monthly_reset_date, 
+                                 created_at, last_login)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                user.email,
+                user.password_hash,
+                user.role,
+                user.is_active,
+                user.subscription_tier or 'free',
+                user.monthly_call_limit or 5,
+                user.monthly_used or 0,
+                user.monthly_reset_date if user.monthly_reset_date else datetime.utcnow(),
+                user.created_at if user.created_at else datetime.utcnow(),
+                user.last_login if user.last_login else None
+            ))
+            print(f"   [OK] Added to Supabase: {user.email}")
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+        
+    except Exception as e:
+        print(f"   [ERROR] {e}")
+        return False
+
 @test_bp.route('/migrate-all-users', methods=['POST'])
 def migrate_all_users():
     """Run migration script to migrate all users from SQLite to Supabase"""
     try:
-        import sys
+        from database import db
+        from models import User
         import os
-        # Add current directory to path to find migrate_users_to_supabase
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        if current_dir not in sys.path:
-            sys.path.insert(0, current_dir)
         
-        from migrate_users_to_supabase import migrate_users
+        # Save original DATABASE_URL
+        original_db_url = os.environ.get('DATABASE_URL')
         
-        # Run migration (this will execute on Railway and access the SQLite database)
-        migrate_users()
+        # Remove DATABASE_URL to force SQLite for reading production data
+        os.environ.pop('DATABASE_URL', None)
+        
+        # Get all users from SQLite database
+        users = User.query.all()
+        
+        if not users:
+            return jsonify({
+                'success': True,
+                'message': 'No users to migrate',
+                'synced': 0,
+                'total': 0
+            }), 200
+        
+        # Sync each user synchronously to Supabase
+        success_count = 0
+        fail_count = 0
+        
+        for i, user in enumerate(users, 1):
+            print(f"[{i}/{len(users)}] Migrating: {user.email}")
+            if sync_user_sync_migration(user):
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        # Restore DATABASE_URL
+        if original_db_url:
+            os.environ['DATABASE_URL'] = original_db_url
         
         return jsonify({
             'success': True,
-            'message': 'Migration completed. Check server logs for details.'
+            'message': f'Migration completed: {success_count} succeeded, {fail_count} failed',
+            'synced': success_count,
+            'failed': fail_count,
+            'total': len(users)
         }), 200
         
     except Exception as e:
