@@ -200,6 +200,14 @@
           onkeyup="filterTable()"
         />
         <button class="btn btn-primary" onclick="loadData()">🔄 Refresh</button>
+        <button
+          class="btn btn-primary"
+          id="sync-all-btn"
+          onclick="syncAllToSupabase()"
+          style="background: #10b981"
+        >
+          🔄 Sync All to Supabase
+        </button>
       </div>
 
       <div id="users" class="tab-content active">
@@ -211,13 +219,14 @@
               <th>Role</th>
               <th>Status</th>
               <th>Tier</th>
+              <th>Supabase</th>
               <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="users-tbody">
             <tr>
-              <td colspan="7" class="loading">Loading...</td>
+              <td colspan="8" class="loading">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -337,7 +346,7 @@
           // Show error in UI
           document.getElementById(
             "users-tbody"
-          ).innerHTML = `<tr><td colspan="7" style="text-align: center; color: #dc2626;">Error: ${errorMessage}</td></tr>`;
+          ).innerHTML = `<tr><td colspan="8" style="text-align: center; color: #dc2626;">Error: ${errorMessage}</td></tr>`;
           document.getElementById(
             "api-keys-tbody"
           ).innerHTML = `<tr><td colspan="5" style="text-align: center; color: #dc2626;">Error: ${errorMessage}</td></tr>`;
@@ -354,7 +363,7 @@
         const tbody = document.getElementById("users-tbody");
         if (users.length === 0) {
           tbody.innerHTML =
-            '<tr><td colspan="7" style="text-align: center; color: #a0a0a0;">No users found</td></tr>';
+            '<tr><td colspan="8" style="text-align: center; color: #a0a0a0;">No users found</td></tr>';
           return;
         }
         tbody.innerHTML = users
@@ -370,6 +379,11 @@
                     <td><span class="badge badge-info">${
                       user.subscription_tier
                     }</span></td>
+                    <td><span class="badge ${
+                      user.synced_to_supabase ? "badge-success" : "badge-danger"
+                    }">${
+              user.synced_to_supabase ? "✅ Synced" : "❌ Not Synced"
+            }</span></td>
                     <td>${new Date(user.created_at).toLocaleString()}</td>
                     <td>
                         <button class="btn btn-danger" onclick="deleteUser('${
@@ -493,6 +507,46 @@
           return;
         // TODO: Add delete notification endpoint
         alert("Delete notification endpoint not implemented yet");
+      }
+
+      async function syncAllToSupabase() {
+        const btn = document.getElementById("sync-all-btn");
+        const originalText = btn.textContent;
+
+        // Disable button and show loading
+        btn.disabled = true;
+        btn.textContent = "⏳ Syncing...";
+        btn.style.background = "#6b7280";
+
+        try {
+          const response = await fetch(
+            `${API_BASE}/test/sync-all-to-supabase`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+          const data = await response.json();
+
+          if (data.success) {
+            alert(
+              `Success! ${data.message}\nSynced: ${data.synced}/${data.total} users`
+            );
+            // Reload data after a short delay to show updated sync status
+            setTimeout(() => {
+              loadData();
+            }, 2000);
+          } else {
+            alert("Error: " + (data.error || data.message));
+          }
+        } catch (error) {
+          alert("Failed to sync users: " + error.message);
+        } finally {
+          // Re-enable button
+          btn.disabled = false;
+          btn.textContent = originalText;
+          btn.style.background = "#10b981";
+        }
       }
 
       function filterTable() {
