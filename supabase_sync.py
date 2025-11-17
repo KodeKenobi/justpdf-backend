@@ -101,8 +101,8 @@ def sync_user_to_supabase(user):
             import traceback
             traceback.print_exc()
     
-    # Start sync in background thread (non-blocking)
-    sync_thread = threading.Thread(target=sync_async, daemon=True)
+    # Start sync in background thread (non-daemon so it completes even if main thread ends)
+    sync_thread = threading.Thread(target=sync_async, daemon=False)
     sync_thread.start()
-    print(f"🔄 [SUPABASE SYNC] Queued sync for user: {user.email}")
+    print(f"🔄 [SUPABASE SYNC] Started sync thread for user: {user.email}")
 
