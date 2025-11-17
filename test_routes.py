@@ -540,37 +540,48 @@ def sync_user_sync_migration(user):
 def migrate_all_users():
     """Run migration script to migrate all users from SQLite to Supabase"""
     try:
-        from database import db
+        from flask import Flask
+        from database import db, init_db
         from models import User
         import os
         
         # Save original DATABASE_URL
         original_db_url = os.environ.get('DATABASE_URL')
         
-        # Remove DATABASE_URL to force SQLite for reading production data
+        # Create a new Flask app context with SQLite
+        temp_app = Flask(__name__)
+        
+        # Remove DATABASE_URL to force SQLite
         os.environ.pop('DATABASE_URL', None)
         
+        # Initialize database with SQLite
+        init_db(temp_app)
+        
         # Get all users from SQLite database
-        users = User.query.all()
+        with temp_app.app_context():
+            users = User.query.all()
         
-        if not users:
-            return jsonify({
-                'success': True,
-                'message': 'No users to migrate',
-                'synced': 0,
-                'total': 0
-            }), 200
-        
-        # Sync each user synchronously to Supabase
-        success_count = 0
-        fail_count = 0
-        
-        for i, user in enumerate(users, 1):
-            print(f"[{i}/{len(users)}] Migrating: {user.email}")
-            if sync_user_sync_migration(user):
-                success_count += 1
-            else:
-                fail_count += 1
+            if not users:
+                # Restore DATABASE_URL
+                if original_db_url:
+                    os.environ['DATABASE_URL'] = original_db_url
+                return jsonify({
+                    'success': True,
+                    'message': 'No users to migrate',
+                    'synced': 0,
+                    'total': 0
+                }), 200
+            
+            # Sync each user synchronously to Supabase
+            success_count = 0
+            fail_count = 0
+            
+            for i, user in enumerate(users, 1):
+                print(f"[{i}/{len(users)}] Migrating: {user.email}")
+                if sync_user_sync_migration(user):
+                    success_count += 1
+                else:
+                    fail_count += 1
         
         # Restore DATABASE_URL
         if original_db_url:
