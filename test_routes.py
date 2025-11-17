@@ -252,6 +252,42 @@ def delete_user():
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
 
+def check_user_in_supabase(email):
+    """Check if a user exists in Supabase"""
+    try:
+        import os
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        
+        # Use hardcoded Supabase connection string (pooler format)
+        # This ensures we always check Supabase regardless of DATABASE_URL setting
+        database_url = "postgresql://postgres:Kopenikus0218!@db.pqdxqvxyrahvongbhtdb.supabase.co:5432/postgres"
+        
+        # Convert to pooler format (works better from local machines and Railway)
+        if database_url and "db." in database_url and ".supabase.co" in database_url:
+            import re
+            match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+            if match:
+                user_part, password, project_ref, port, database = match.groups()
+                # Use pooler format without query parameters (psycopg2 doesn't support pgbouncer param)
+                database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+        
+        # Connect to Supabase
+        conn = psycopg2.connect(database_url, sslmode='require')
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Check if user exists
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+        existing = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        return existing is not None
+    except Exception as e:
+        print(f"Error checking Supabase for {email}: {e}")
+        return False
+
 @test_bp.route('/view-database', methods=['GET'])
 def view_database():
     """View database contents (read-only)"""
@@ -299,16 +335,18 @@ def view_database():
             'notifications': []
         }
         
-        # Get users
+        # Get users with Supabase sync status
         users = User.query.all()
         for user in users:
+            synced_to_supabase = check_user_in_supabase(user.email)
             result['users'].append({
                 'id': user.id,
                 'email': user.email,
                 'role': user.role,
                 'is_active': user.is_active,
                 'subscription_tier': user.subscription_tier,
-                'created_at': user.created_at.isoformat() if user.created_at else None
+                'created_at': user.created_at.isoformat() if user.created_at else None,
+                'synced_to_supabase': synced_to_supabase
             })
         
         # Get API keys (limited)
@@ -374,3 +412,66 @@ def view_database():
             'type': error_type, 
             'message': f'Error: {error_msg}'
         }), 500
+
+@test_bp.route('/sync-all-to-supabase', methods=['POST'])
+def sync_all_to_supabase():
+    """Sync all users to Supabase"""
+    try:
+        from database import db
+        from models import User
+        from supabase_sync import sync_user_to_supabase
+        
+        # Get all users
+        users = User.query.all()
+        
+        if not users:
+            return jsonify({
+                'success': True,
+                'message': 'No users to sync',
+                'synced': 0,
+                'total': 0
+            }), 200
+        
+        # Sync each user (non-blocking, in background threads)
+        synced_count = 0
+        for user in users:
+            try:
+                sync_user_to_supabase(user)
+                synced_count += 1
+            except Exception as e:
+                print(f"Error syncing user {user.email}: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Queued {synced_count} users for sync to Supabase',
+            'synced': synced_count,
+            'total': len(users)
+        }), 200
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error syncing all users to Supabase: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
+
+@test_bp.route('/migrate-all-users', methods=['POST'])
+def migrate_all_users():
+    """Run migration script to migrate all users from SQLite to Supabase"""
+    try:
+        from migrate_users_to_supabase import migrate_users
+        
+        # Run migration (this will execute on Railway and access the SQLite database)
+        migrate_users()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Migration completed. Check server logs for details.'
+        }), 200
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"Error running migration: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
