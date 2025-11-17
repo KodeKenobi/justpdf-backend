@@ -459,6 +459,13 @@ def sync_all_to_supabase():
 def migrate_all_users():
     """Run migration script to migrate all users from SQLite to Supabase"""
     try:
+        import sys
+        import os
+        # Add current directory to path to find migrate_users_to_supabase
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+        
         from migrate_users_to_supabase import migrate_users
         
         # Run migration (this will execute on Railway and access the SQLite database)
