@@ -8,7 +8,15 @@ migrate = Migrate()
 def init_db(app):
     """Initialize database with the Flask app"""
     # Database configuration
-    database_url = os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')
+    # Use Railway volume (/data) for persistent storage, or default location
+    if os.getenv('RAILWAY_ENVIRONMENT'):
+        # On Railway, use persistent volume at /data
+        db_path = '/data/trevnoctilla_api.db'
+        os.makedirs('/data', exist_ok=True)
+        database_url = os.getenv('DATABASE_URL', f'sqlite:///{db_path}')
+    else:
+        # Local development
+        database_url = os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')
     
     # Handle PostgreSQL URL format for SQLAlchemy
     if database_url.startswith('postgres://'):
