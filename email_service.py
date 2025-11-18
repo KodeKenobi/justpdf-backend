@@ -644,7 +644,7 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
         traceback.print_exc()
         # Continue without attachments if PDF generation fails
     
-    # Generate and attach invoice PDF (for upgrade payments)
+    # Generate and attach invoice PDF (for upgrade payments) using subscription-invoice.html template
     try:
         print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
         invoice_pdf = generate_invoice_pdf(
