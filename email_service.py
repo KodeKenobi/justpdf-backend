@@ -175,7 +175,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         traceback.print_exc()
         return None
 
-def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None, item_description: Optional[str] = None) -> Optional[bytes]:
+def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", payment_id: str = "", payment_date: Optional[datetime] = None, item_description: Optional[str] = None, template_name: str = 'emails/invoice.html') -> Optional[bytes]:
     """
     Generate PDF invoice from HTML template using html-to-pdf endpoint
     
@@ -186,6 +186,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         payment_id: Payment/transaction ID (optional)
         payment_date: Payment/start date (uses this for invoice date if provided)
         item_description: Custom item description (optional, defaults to tier subscription)
+        template_name: HTML template to use ('emails/invoice.html' for welcome, 'subscription-invoice.html' for upgrades)
     
     Returns:
         PDF bytes if successful, None otherwise
@@ -233,24 +234,44 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
             # Continue without logo if download fails
         
         # Generate invoice HTML with embedded logo
-        invoice_template = env.get_template('invoice.html')
+        invoice_template = env.get_template(template_name)
         # Use provided item_description or default to tier subscription
         final_item_description = item_description or f"{tier_names.get(tier.lower(), tier)} Subscription"
-        invoice_html = invoice_template.render(
-            invoice_number=invoice_number,
-            invoice_date=invoice_date_str,
-            user_email=user_email,
-            tier_name=tier_names.get(tier.lower(), tier),
-            item_description=final_item_description,
-            unit_price=f"{invoice_amount:.2f}",
-            total_amount=f"{invoice_amount:.2f}",
-            currency_symbol="$",
-            tax_amount=0.0,
-            tax_rate=0,
-            status="Paid" if invoice_amount > 0 else "Free",
-            status_class="status-paid" if invoice_amount > 0 else "status-free",
-            logo_url=logo_data_uri if logo_base64 else "https://www.trevnoctilla.com/logo.png"  # Fallback to URL if base64 failed
-        )
+        
+        # Render template with appropriate variables based on template type
+        if template_name == 'subscription-invoice.html':
+            # subscription-invoice.html uses different variable structure
+            invoice_html = invoice_template.render(
+                invoice_number=invoice_number,
+                invoice_date=invoice_date_str,
+                user_email=user_email,
+                tier_name=tier_names.get(tier.lower(), tier),
+                item_description=final_item_description,
+                unit_price=f"{invoice_amount:.2f}",
+                total_amount=f"{invoice_amount:.2f}",
+                amount=f"{invoice_amount:.2f}",
+                currency_symbol="$",
+                tax_amount=0.0,
+                tax_rate=0,
+                status="Paid" if invoice_amount > 0 else "Free"
+            )
+        else:
+            # emails/invoice.html (default for welcome emails)
+            invoice_html = invoice_template.render(
+                invoice_number=invoice_number,
+                invoice_date=invoice_date_str,
+                user_email=user_email,
+                tier_name=tier_names.get(tier.lower(), tier),
+                item_description=final_item_description,
+                unit_price=f"{invoice_amount:.2f}",
+                total_amount=f"{invoice_amount:.2f}",
+                currency_symbol="$",
+                tax_amount=0.0,
+                tax_rate=0,
+                status="Paid" if invoice_amount > 0 else "Free",
+                status_class="status-paid" if invoice_amount > 0 else "status-free",
+                logo_url=logo_data_uri if logo_base64 else "https://www.trevnoctilla.com/logo.png"  # Fallback to URL if base64 failed
+            )
         
         # Save HTML to temp file
         import tempfile
@@ -622,6 +643,37 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
         import traceback
         traceback.print_exc()
         # Continue without attachments if PDF generation fails
+    
+    # Generate and attach invoice PDF (for upgrade payments)
+    try:
+        print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
+        invoice_pdf = generate_invoice_pdf(
+            tier=new_tier,
+            amount=amount,
+            user_email=user_email,
+            payment_id=payment_id,
+            payment_date=payment_date,
+            item_description=f"{tier_names.get(new_tier.lower(), new_tier)} Plan - Monthly Subscription",
+            template_name='subscription-invoice.html'  # Use subscription invoice template for upgrades
+        )
+        if invoice_pdf:
+            # Convert PDF bytes to base64
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
+            date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+            attachments.append({
+                'filename': f'invoice_{new_tier}_{date_str}.pdf',
+                'content': pdf_base64,
+                'contentType': 'application/pdf'
+            })
+            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
+        else:
+            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, continuing without invoice attachment")
+            print(f"   Check generate_invoice_pdf() logs for details")
+    except Exception as e:
+        print(f"⚠️ [UPGRADE EMAIL] Error generating invoice PDF: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continue without invoice attachment if PDF generation fails
     
     return send_email(user_email, subject, html_content, text_content, attachments if attachments else None)
 
