@@ -112,7 +112,7 @@ All API endpoints (except auth endpoints) require authentication using an API ke
 
 ```bash
 curl -H "X-API-Key: your-api-key-here" \
-     https://api.trevnoctilla.com/api/v1/convert/video
+     https://www.trevnoctilla.com/api/v1/convert/video
 ```
 
 ## Rate Limiting
@@ -136,7 +136,7 @@ Example:
 
 ```bash
 # Start conversion
-curl -X POST "https://api.trevnoctilla.com/api/v1/convert/video" \
+curl -X POST "https://www.trevnoctilla.com/api/v1/convert/video" \
   -H "X-API-Key: your-key" \
   -F "file=@video.mp4" \
   -F "async=true"
@@ -144,11 +144,11 @@ curl -X POST "https://api.trevnoctilla.com/api/v1/convert/video" \
 # Response: {"job_id": "123...", "status": "processing"}
 
 # Check status
-curl "https://api.trevnoctilla.com/api/v1/jobs/123.../status" \
+curl "https://www.trevnoctilla.com/api/v1/jobs/123.../status" \
   -H "X-API-Key: your-key"
 
 # Download result
-curl "https://api.trevnoctilla.com/api/v1/jobs/123.../download" \
+curl "https://www.trevnoctilla.com/api/v1/jobs/123.../download" \
   -H "X-API-Key: your-key" -o result.mp4
 ```
 
@@ -157,7 +157,7 @@ curl "https://api.trevnoctilla.com/api/v1/jobs/123.../download" \
 Configure webhooks to receive notifications when jobs complete:
 
 ```bash
-curl -X POST "https://api.trevnoctilla.com/api/client/webhooks" \
+curl -X POST "https://www.trevnoctilla.com/api/client/webhooks" \
   -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -193,14 +193,14 @@ Error responses include details:
 ### Health Check
 
 ```bash
-curl https://api.trevnoctilla.com/health
+curl https://www.trevnoctilla.com/health
 ```
 
 ### System Metrics
 
 ```bash
 curl -H "X-API-Key: admin-key" \
-     https://api.trevnoctilla.com/api/admin/system/health
+     https://www.trevnoctilla.com/api/admin/system/health
 ```
 
 ## Configuration
@@ -213,7 +213,7 @@ curl -H "X-API-Key: admin-key" \
 | `REDIS_URL`          | Redis connection string    | `redis://localhost:6379/0`      |
 | `SECRET_KEY`         | Flask secret key           | Required                        |
 | `JWT_SECRET_KEY`     | JWT signing key            | Required                        |
-| `API_BASE_URL`       | Base URL for API           | `https://api.trevnoctilla.com`  |
+| `API_BASE_URL`       | Base URL for API           | `https://www.trevnoctilla.com`  |
 | `FRONTEND_URL`       | Frontend URL               | `https://trevnoctilla.com`      |
 | `MAX_FILE_SIZE`      | Maximum file size          | `100MB`                         |
 | `DEFAULT_RATE_LIMIT` | Default rate limit         | `1000`                          |
