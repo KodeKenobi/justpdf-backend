@@ -3,9 +3,9 @@ Payment webhook routes for handling subscription upgrades
 """
 from flask import Blueprint, request, jsonify
 from database import db
-from models import User
+from models import User, Notification
 from email_service import send_upgrade_email, generate_invoice_pdf, get_file_invoice_email_html
-from notification_service import create_subscription_notification
+from notification_service import create_subscription_notification, create_payment_notification
 import base64
 from datetime import datetime
 
@@ -174,6 +174,17 @@ def upgrade_subscription():
                 new_tier=new_tier,
                 notification_type='success'
             )
+            # Also create payment notification for billing history
+            if amount > 0:
+                create_payment_notification(
+                    title=f"Payment Received: {plan_name}",
+                    message=f"Payment of ${amount:.2f} received for {plan_name}. User upgraded from {old_tier} to {new_tier}.",
+                    payment_id=payment_id,
+                    user_id=user.id,
+                    user_email=user.email,
+                    amount=amount,
+                    notification_type='payment'
+                )
         except Exception as e:
             print(f"⚠️ Failed to create notification: {e}")
         
@@ -311,6 +322,155 @@ def get_file_invoice_email_html_endpoint():
             
     except Exception as e:
         print(f"❌ [FILE INVOICE EMAIL] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@payment_api.route('/billing-history', methods=['GET'])
+def get_billing_history():
+    """
+    Get user's billing history from payment/subscription notifications
+    Requires authentication via Authorization header
+    """
+    try:
+        # Get auth token from header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Authorization required'}), 401
+        
+        token = auth_header.replace('Bearer ', '')
+        
+        # Get user from token (simplified - you may need to verify token properly)
+        # For now, we'll get user_id from request args or token
+        user_id = request.args.get('user_id')
+        user_email = request.args.get('user_email')
+        
+        if not user_id and not user_email:
+            return jsonify({'error': 'user_id or user_email required'}), 400
+        
+        # Query notifications for this user with payment/subscription category
+        # SQLite stores JSON as text, so we'll filter in Python
+        all_notifications = Notification.query.filter(
+            db.or_(
+                Notification.category == 'payment',
+                Notification.category == 'subscription'
+            )
+        ).order_by(Notification.created_at.desc()).all()
+        
+        # Filter by user_id or user_email in Python (SQLite JSON handling)
+        notifications = []
+        for notif in all_notifications:
+            metadata = notif.notification_metadata or {}
+            notif_user_id = metadata.get('user_id')
+            notif_user_email = metadata.get('user_email')
+            
+            # Check if this notification belongs to the requested user
+            if user_id and (notif_user_id == int(user_id) or str(notif_user_id) == str(user_id)):
+                notifications.append(notif)
+            elif user_email and (notif_user_email == user_email or notif_user_email == str(user_email)):
+                notifications.append(notif)
+        
+        # Transform notifications to billing history format
+        billing_history = []
+        for notif in notifications:
+            metadata = notif.notification_metadata or {}
+            amount = metadata.get('amount', 0.0)
+            payment_id = metadata.get('payment_id', '')
+            tier = metadata.get('new_tier') or metadata.get('tier', 'free')
+            plan_name = notif.title.replace('Payment Received: ', '').replace('Subscription Upgraded: ', '')
+            
+            billing_history.append({
+                'id': str(notif.id),
+                'invoice': plan_name or f"Invoice #{payment_id[:8] if payment_id else notif.id}",
+                'amount': float(amount),
+                'date': notif.created_at.isoformat() if notif.created_at else datetime.now().isoformat(),
+                'status': 'Paid' if amount > 0 else 'Free',
+                'payment_id': payment_id,
+                'tier': tier,
+                'notification_id': notif.id,
+                'metadata': metadata
+            })
+        
+        return jsonify({
+            'success': True,
+            'billing_history': billing_history
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ [BILLING HISTORY] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@payment_api.route('/download-invoice', methods=['POST'])
+def download_invoice():
+    """
+    Regenerate and return invoice PDF for download
+    Requires authentication via Authorization header
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Get auth token from header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Authorization required'}), 401
+        
+        # Extract invoice details from request
+        payment_id = data.get('payment_id', '')
+        user_email = data.get('user_email', '')
+        amount = data.get('amount', 0.0)
+        tier = data.get('tier', 'free')
+        payment_date_str = data.get('payment_date')
+        item_description = data.get('item_description', f"{tier.title()} Plan - Monthly Subscription")
+        
+        # Parse payment date
+        payment_date = None
+        if payment_date_str:
+            try:
+                payment_date = datetime.fromisoformat(payment_date_str.replace('Z', '+00:00'))
+            except:
+                payment_date = datetime.now()
+        else:
+            payment_date = datetime.now()
+        
+        print(f"📄 [DOWNLOAD INVOICE] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
+        
+        # Determine which template to use based on tier
+        template_name = 'subscription-invoice.html' if tier in ['premium', 'production', 'enterprise', 'client'] else 'emails/invoice.html'
+        
+        # Generate invoice PDF
+        invoice_pdf = generate_invoice_pdf(
+            tier=tier,
+            amount=amount,
+            user_email=user_email,
+            payment_id=payment_id,
+            payment_date=payment_date,
+            item_description=item_description,
+            template_name=template_name
+        )
+        
+        if invoice_pdf:
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
+            print(f"✅ [DOWNLOAD INVOICE] Invoice PDF generated ({len(invoice_pdf)} bytes)")
+            return jsonify({
+                'success': True,
+                'pdf_base64': pdf_base64,
+                'size': len(invoice_pdf),
+                'filename': f'invoice_{tier}_{payment_date.strftime("%Y%m%d")}.pdf'
+            }), 200
+        else:
+            print(f"❌ [DOWNLOAD INVOICE] Failed to generate invoice PDF")
+            return jsonify({
+                'success': False,
+                'error': 'Failed to generate invoice PDF'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ [DOWNLOAD INVOICE] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
