@@ -113,17 +113,25 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         print(f"📄 [SUBSCRIPTION] HTML preview (first 500 chars): {subscription_html[:500]}")
         print(f"📄 [SUBSCRIPTION] HTML saved to: {html_path}")
         
-        # Get backend API URL
-        backend_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
-        if not backend_url.startswith('http'):
-            backend_url = f'https://{backend_url}'
+        # Get API URL for PDF conversion
+        # Use frontend domain if available (Next.js rewrites proxy to backend)
+        # Otherwise fall back to direct backend URL
+        frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
+        if frontend_url and frontend_url.startswith('http'):
+            api_url = frontend_url
+            print(f"📄 [SUBSCRIPTION] Using frontend domain for PDF conversion: {api_url}")
+        else:
+            api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
+            if not api_url.startswith('http'):
+                api_url = f'https://{api_url}'
+            print(f"📄 [SUBSCRIPTION] Using direct backend URL for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
-        print(f"📄 [SUBSCRIPTION] Converting HTML to PDF via {backend_url}/convert_html_to_pdf...")
+        print(f"📄 [SUBSCRIPTION] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
         with open(html_path, 'rb') as html_file:
             files = {'html': ('subscription.html', html_file, 'text/html')}
             response = requests.post(
-                f"{backend_url}/convert_html_to_pdf",
+                f"{api_url}/convert_html_to_pdf",
                 files=files,
                 timeout=30
             )
@@ -141,7 +149,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
                 # Download the PDF
                 pdf_url = data['download_url']
                 if not pdf_url.startswith('http'):
-                    pdf_url = f"{backend_url}{pdf_url}"
+                    pdf_url = f"{api_url}{pdf_url}"
                 
                 print(f"📄 [SUBSCRIPTION] Downloading PDF from: {pdf_url}")
                 pdf_response = requests.get(pdf_url, timeout=30)
@@ -282,17 +290,25 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         print(f"📄 [INVOICE] HTML preview (first 500 chars): {invoice_html[:500]}")
         print(f"📄 [INVOICE] HTML saved to: {html_path}")
         
-        # Get backend API URL
-        backend_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
-        if not backend_url.startswith('http'):
-            backend_url = f'https://{backend_url}'
+        # Get API URL for PDF conversion
+        # Use frontend domain if available (Next.js rewrites proxy to backend)
+        # Otherwise fall back to direct backend URL
+        frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
+        if frontend_url and frontend_url.startswith('http'):
+            api_url = frontend_url
+            print(f"📄 [INVOICE] Using frontend domain for PDF conversion: {api_url}")
+        else:
+            api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
+            if not api_url.startswith('http'):
+                api_url = f'https://{api_url}'
+            print(f"📄 [INVOICE] Using direct backend URL for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
-        print(f"📄 [INVOICE] Converting HTML to PDF via {backend_url}/convert_html_to_pdf...")
+        print(f"📄 [INVOICE] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
         with open(html_path, 'rb') as html_file:
             files = {'html': ('invoice.html', html_file, 'text/html')}
             response = requests.post(
-                f"{backend_url}/convert_html_to_pdf",
+                f"{api_url}/convert_html_to_pdf",
                 files=files,
                 timeout=30
             )
@@ -310,7 +326,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
                 # Download the PDF
                 pdf_url = data['download_url']
                 if not pdf_url.startswith('http'):
-                    pdf_url = f"{backend_url}{pdf_url}"
+                    pdf_url = f"{api_url}{pdf_url}"
                 
                 print(f"📄 [INVOICE] Downloading PDF from: {pdf_url}")
                 pdf_response = requests.get(pdf_url, timeout=30)
