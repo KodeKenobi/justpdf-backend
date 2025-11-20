@@ -348,6 +348,17 @@ def get_billing_history():
         if not user_id and not user_email:
             return jsonify({'error': 'user_id or user_email required'}), 400
         
+        # Get user to check their subscription tier and created date
+        from models import User
+        user = None
+        if user_id:
+            try:
+                user = User.query.get(int(user_id))
+            except:
+                pass
+        if not user and user_email:
+            user = User.query.filter_by(email=user_email).first()
+        
         # Query notifications for this user with payment/subscription category
         # SQLite stores JSON as text, so we'll filter in Python
         all_notifications = Notification.query.filter(
@@ -390,6 +401,33 @@ def get_billing_history():
                 'notification_id': notif.id,
                 'metadata': metadata
             })
+        
+        # If user exists but has no billing history, add initial free tier subscription
+        if user and len(billing_history) == 0:
+            tier_name = {'free': 'Free Tier', 'premium': 'Production Plan', 'enterprise': 'Enterprise Plan'}
+            current_tier = user.subscription_tier or 'free'
+            plan_name = tier_name.get(current_tier.lower(), current_tier)
+            
+            # Use user's created_at date for initial subscription
+            subscription_date = user.created_at if user.created_at else datetime.now()
+            
+            billing_history.append({
+                'id': f"initial_{user.id}",
+                'invoice': f"{plan_name} - Initial Subscription",
+                'amount': 0.0,
+                'date': subscription_date.isoformat(),
+                'status': 'Free',
+                'payment_id': '',
+                'tier': current_tier,
+                'notification_id': None,
+                'metadata': {
+                    'user_id': user.id,
+                    'user_email': user.email,
+                    'tier': current_tier,
+                    'is_initial': True
+                }
+            })
+            print(f"✅ [BILLING HISTORY] Added initial subscription for user {user.email} (tier: {current_tier})")
         
         return jsonify({
             'success': True,
