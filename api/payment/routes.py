@@ -402,32 +402,58 @@ def get_billing_history():
                 'metadata': metadata
             })
         
-        # If user exists but has no billing history, add initial free tier subscription
+        # If user exists but has no billing history, add initial subscription
+        # Only add initial if user is on free tier (they started with free)
+        # If user is on premium/enterprise, they should have upgrade notifications
         if user and len(billing_history) == 0:
             tier_name = {'free': 'Free Tier', 'premium': 'Production Plan', 'enterprise': 'Enterprise Plan'}
             current_tier = user.subscription_tier or 'free'
-            plan_name = tier_name.get(current_tier.lower(), current_tier)
             
-            # Use user's created_at date for initial subscription
-            subscription_date = user.created_at if user.created_at else datetime.now()
-            
-            billing_history.append({
-                'id': f"initial_{user.id}",
-                'invoice': f"{plan_name} - Initial Subscription",
-                'amount': 0.0,
-                'date': subscription_date.isoformat(),
-                'status': 'Free',
-                'payment_id': '',
-                'tier': current_tier,
-                'notification_id': None,
-                'metadata': {
-                    'user_id': user.id,
-                    'user_email': user.email,
+            # Only show initial subscription if user is still on free tier
+            # If they're on premium/enterprise, they should have upgrade notifications
+            if current_tier.lower() in ['free', 'testing']:
+                plan_name = tier_name.get(current_tier.lower(), 'Free Tier')
+                
+                # Use user's created_at date for initial subscription
+                subscription_date = user.created_at if user.created_at else datetime.now()
+                
+                billing_history.append({
+                    'id': f"initial_{user.id}",
+                    'invoice': f"{plan_name} - Initial Subscription",
+                    'amount': 0.0,
+                    'date': subscription_date.isoformat(),
+                    'status': 'Free',
+                    'payment_id': '',
                     'tier': current_tier,
-                    'is_initial': True
-                }
-            })
-            print(f"✅ [BILLING HISTORY] Added initial subscription for user {user.email} (tier: {current_tier})")
+                    'notification_id': None,
+                    'metadata': {
+                        'user_id': user.id,
+                        'user_email': user.email,
+                        'tier': current_tier,
+                        'is_initial': True
+                    }
+                })
+                print(f"✅ [BILLING HISTORY] Added initial free tier subscription for user {user.email}")
+            else:
+                # User is on premium/enterprise but no notifications found
+                # This shouldn't happen - log a warning
+                print(f"⚠️ [BILLING HISTORY] User {user.email} is on {current_tier} tier but has no billing history notifications!")
+                print(f"   This suggests upgrade notifications weren't created. Checking for any notifications...")
+                
+                # Check if there are ANY notifications for this user (regardless of category)
+                all_user_notifications = Notification.query.all()
+                user_notifs = []
+                for notif in all_user_notifications:
+                    metadata = notif.notification_metadata or {}
+                    notif_user_id = metadata.get('user_id')
+                    notif_user_email = metadata.get('user_email')
+                    if (user_id and (notif_user_id == int(user_id) or str(notif_user_id) == str(user_id))) or \
+                       (user_email and (notif_user_email == user_email or notif_user_email == str(user_email))):
+                        user_notifs.append(notif)
+                
+                print(f"   Found {len(user_notifs)} total notifications for this user")
+                for notif in user_notifs[:5]:  # Show first 5
+                    print(f"   - {notif.category}: {notif.title} (metadata: {notif.notification_metadata})")
         
         return jsonify({
             'success': True,
