@@ -1,18 +1,135 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import os
+from datetime import datetime
 
 db = SQLAlchemy()
 migrate = Migrate()
 
+def restore_users_from_supabase(db_session):
+    """
+    Restore users from Supabase to primary database if primary DB is empty.
+    This is a safety net to prevent data loss when Railway database gets wiped.
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+    except ImportError:
+        print("⚠️ [RESTORE] psycopg2 not installed, cannot restore from Supabase")
+        return
+    
+    # Get Supabase connection string
+    supabase_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+    
+    try:
+        # Connect to Supabase
+        conn = psycopg2.connect(supabase_url, sslmode='require')
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Get all users from Supabase
+        cursor.execute("""
+            SELECT email, password_hash, role, is_active, subscription_tier,
+                   monthly_call_limit, monthly_used, monthly_reset_date,
+                   created_at, last_login
+            FROM users
+            ORDER BY created_at ASC
+        """)
+        supabase_users = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        if not supabase_users:
+            print("ℹ️ [RESTORE] No users found in Supabase to restore")
+            return
+        
+        print(f"📥 [RESTORE] Found {len(supabase_users)} users in Supabase - restoring to primary database...")
+        
+        from models import User
+        restored_count = 0
+        skipped_count = 0
+        
+        for supabase_user in supabase_users:
+            email = supabase_user['email']
+            
+            # Check if user already exists in primary DB (shouldn't happen if count was 0, but double-check)
+            existing = User.query.filter_by(email=email).first()
+            if existing:
+                skipped_count += 1
+                continue
+            
+            # Create user in primary database
+            user = User(
+                email=email,
+                password_hash=supabase_user['password_hash'],
+                role=supabase_user.get('role', 'user'),
+                is_active=supabase_user.get('is_active', True),
+                subscription_tier=supabase_user.get('subscription_tier', 'free'),
+                monthly_call_limit=supabase_user.get('monthly_call_limit', 5),
+                monthly_used=supabase_user.get('monthly_used', 0),
+                monthly_reset_date=supabase_user.get('monthly_reset_date') or datetime.utcnow(),
+                created_at=supabase_user.get('created_at') or datetime.utcnow(),
+                last_login=supabase_user.get('last_login')
+            )
+            
+            db_session.add(user)
+            restored_count += 1
+        
+        db_session.commit()
+        print(f"✅ [RESTORE] Successfully restored {restored_count} users from Supabase")
+        if skipped_count > 0:
+            print(f"   (Skipped {skipped_count} users that already existed)")
+        
+    except Exception as e:
+        print(f"❌ [RESTORE] Error restoring users from Supabase: {e}")
+        import traceback
+        traceback.print_exc()
+        db_session.rollback()
+        raise
+
 def init_db(app):
     """Initialize database with the Flask app"""
     # Database configuration
-    # Use DATABASE_URL if set (PostgreSQL/Supabase), otherwise fallback to SQLite
+    # CRITICAL: Prefer Supabase connection string to prevent Railway auto-provisioned DB override
     database_url = os.getenv('DATABASE_URL')
+    
+    # Check if Railway is auto-provisioning a database (Railway's DB URLs contain 'railway.app' or 'railway.internal')
+    is_railway_db = database_url and ('railway.app' in database_url or 'railway.internal' in database_url or 'containers-us-west' in database_url)
+    
+    # If Railway DB detected, prefer explicit Supabase URL from environment
+    if is_railway_db:
+        print("⚠️ [DATABASE] Railway auto-provisioned database detected!")
+        print(f"   Railway DB URL: {database_url[:50]}...")
+        # Check for explicit Supabase URL in environment (Railway might set both)
+        supabase_url = os.getenv('SUPABASE_DATABASE_URL') or os.getenv('SUPABASE_URL')
+        if supabase_url:
+            print("✅ [DATABASE] Using explicit Supabase URL from SUPABASE_DATABASE_URL")
+            database_url = supabase_url
+        else:
+            # Use hardcoded Supabase connection as fallback
+            print("⚠️ [DATABASE] No explicit Supabase URL found, using hardcoded Supabase connection")
+            database_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+    
     if not database_url:
         # Fallback to SQLite for local development
         database_url = 'sqlite:///trevnoctilla_api.db'
+        print("⚠️ [DATABASE] DATABASE_URL not set - using SQLite fallback")
+    
+    # Detect Supabase connection
+    is_supabase = 'supabase.com' in database_url or 'supabase.co' in database_url
+    is_sqlite = database_url.startswith('sqlite')
+    
+    # Log database type
+    if is_supabase:
+        # Mask password in logs
+        masked_url = database_url.split('@')[1] if '@' in database_url else database_url
+        print(f"✅ [DATABASE] Using Supabase PostgreSQL: ...@{masked_url}")
+    elif is_sqlite:
+        print(f"⚠️ [DATABASE] Using SQLite: {database_url}")
+    else:
+        # Mask password in logs
+        masked_url = database_url.split('@')[1] if '@' in database_url else database_url
+        print(f"📊 [DATABASE] Using PostgreSQL: ...@{masked_url}")
     
     # Handle PostgreSQL URL format for SQLAlchemy
     if database_url.startswith('postgres://'):
@@ -110,8 +227,22 @@ def init_db(app):
                 db.create_all()
                 print("✅ Database tables created successfully")
             
-            # Ensure super admin users exist and have correct role
+            # CRITICAL: Startup sync - restore users from Supabase if primary DB is empty
+            # This prevents data loss when Railway database gets wiped on redeploy
             from models import User
+            user_count = User.query.count()
+            
+            if user_count == 0:
+                print("⚠️ [DATABASE] Primary database is empty - checking Supabase for users to restore...")
+                try:
+                    restore_users_from_supabase(db.session)
+                except Exception as e:
+                    print(f"⚠️ [DATABASE] Failed to restore users from Supabase: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Continue anyway - users can still register fresh
+            
+            # Ensure super admin users exist and have correct role
             super_admin_emails = [
                 'admin@trevnoctilla.com',
                 'admin@gmail.com',
