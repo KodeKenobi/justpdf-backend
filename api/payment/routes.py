@@ -402,36 +402,82 @@ def get_billing_history():
                 'metadata': metadata
             })
         
-        # If user exists but has no billing history, add their current subscription
-        if user and len(billing_history) == 0:
-            tier_name = {'free': 'Free Tier', 'premium': 'Production Plan', 'enterprise': 'Enterprise Plan', 'production': 'Production Plan'}
+        print(f"📊 [BILLING HISTORY] Found {len(notifications)} notifications, created {len(billing_history)} billing history entries")
+        
+        # Always add initial free tier subscription (from signup) if user exists
+        # This shows when they first signed up, regardless of current tier
+        if user:
+            # Check if we already have an initial subscription in the history
+            has_initial = any(
+                item.get('metadata', {}).get('is_initial') or 
+                (item.get('amount', 0) == 0 and item.get('tier', '').lower() == 'free' and item.get('notification_id') is None)
+                for item in billing_history
+            )
+            
+            if not has_initial:
+                subscription_date = user.created_at if user.created_at else datetime.now()
+                billing_history.insert(0, {
+                    'id': f"initial_{user.id}",
+                    'invoice': 'Free Tier - Initial Subscription',
+                    'amount': 0.0,
+                    'date': subscription_date.isoformat(),
+                    'status': 'Free',
+                    'payment_id': '',
+                    'tier': 'free',
+                    'notification_id': None,
+                    'metadata': {
+                        'user_id': user.id,
+                        'user_email': user.email,
+                        'tier': 'free',
+                        'is_initial': True
+                    }
+                })
+                print(f"✅ [BILLING HISTORY] Added initial free tier subscription for user {user.email} (signup: {subscription_date})")
+        
+        # If user is on premium/enterprise but has no payment notifications, add current subscription
+        # This handles cases where upgrade notifications weren't created
+        if user:
             current_tier = user.subscription_tier or 'free'
-            plan_name = tier_name.get(current_tier.lower(), current_tier)
+            has_payment_notification = any(
+                item.get('amount', 0) > 0 and item.get('status') == 'Paid'
+                for item in billing_history
+            )
             
-            # Determine amount based on tier
-            tier_amounts = {'free': 0.0, 'premium': 29.0, 'production': 29.0, 'enterprise': 49.0}
-            subscription_amount = tier_amounts.get(current_tier.lower(), 0.0)
-            
-            # Use user's created_at date for initial subscription
-            subscription_date = user.created_at if user.created_at else datetime.now()
-            
-            billing_history.append({
-                'id': f"current_{user.id}",
-                'invoice': f"{plan_name} - Current Subscription",
-                'amount': subscription_amount,
-                'date': subscription_date.isoformat(),
-                'status': 'Paid' if subscription_amount > 0 else 'Free',
-                'payment_id': '',
-                'tier': current_tier,
-                'notification_id': None,
-                'metadata': {
-                    'user_id': user.id,
-                    'user_email': user.email,
+            # Only add current subscription if user is on paid tier but has no payment notifications
+            if current_tier.lower() in ['premium', 'production', 'enterprise'] and not has_payment_notification:
+                tier_name = {'free': 'Free Tier', 'premium': 'Production Plan', 'enterprise': 'Enterprise Plan', 'production': 'Production Plan'}
+                plan_name = tier_name.get(current_tier.lower(), current_tier)
+                
+                # Determine amount based on tier
+                tier_amounts = {'free': 0.0, 'premium': 29.0, 'production': 29.0, 'enterprise': 49.0}
+                subscription_amount = tier_amounts.get(current_tier.lower(), 0.0)
+                
+                # Use most recent notification date or user created_at
+                latest_notification_date = None
+                if notifications:
+                    latest_notification_date = max((n.created_at for n in notifications if n.created_at), default=None)
+                subscription_date = latest_notification_date or user.created_at or datetime.now()
+                
+                billing_history.append({
+                    'id': f"current_{user.id}",
+                    'invoice': f"{plan_name} - Subscription",
+                    'amount': subscription_amount,
+                    'date': subscription_date.isoformat(),
+                    'status': 'Paid' if subscription_amount > 0 else 'Free',
+                    'payment_id': '',
                     'tier': current_tier,
-                    'is_current': True
-                }
-            })
-            print(f"✅ [BILLING HISTORY] Added current subscription for user {user.email} (tier: {current_tier}, amount: ${subscription_amount})")
+                    'notification_id': None,
+                    'metadata': {
+                        'user_id': user.id,
+                        'user_email': user.email,
+                        'tier': current_tier,
+                        'is_current': True
+                    }
+                })
+                print(f"✅ [BILLING HISTORY] Added current {current_tier} subscription for user {user.email} (amount: ${subscription_amount})")
+        
+        # Sort by date (oldest first)
+        billing_history.sort(key=lambda x: x['date'])
         
         return jsonify({
             'success': True,
