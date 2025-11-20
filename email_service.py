@@ -229,12 +229,14 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
             # Continue without logo if download fails
         
         # Generate invoice HTML with embedded logo
-        invoice_template = env.get_template(template_name)
+        # Handle both 'emails/invoice.html' and 'invoice.html' template names
+        template_to_load = template_name.replace('emails/', '') if 'emails/' in template_name else template_name
+        invoice_template = env.get_template(template_to_load)
         # Use provided item_description or default to tier subscription
         final_item_description = item_description or f"{tier_names.get(tier.lower(), tier)} Subscription"
         
         # Render template with appropriate variables based on template type
-        if template_name == 'subscription-invoice.html':
+        if template_to_load == 'subscription-invoice.html':
             # subscription-invoice.html uses different variable structure
             invoice_html = invoice_template.render(
                 invoice_number=invoice_number,
