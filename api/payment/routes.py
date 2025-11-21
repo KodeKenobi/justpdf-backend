@@ -359,6 +359,14 @@ def get_billing_history():
         if not user and user_email:
             user = User.query.filter_by(email=user_email).first()
         
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # CRITICAL: Only show invoices for the CURRENT user account
+        # Filter by user ID (not just email) to prevent old invoices from deleted accounts
+        # Also only show invoices created AFTER the user's account was created
+        user_account_created_at = user.created_at if user.created_at else datetime.now()
+        
         # Query notifications for this user with payment/subscription category
         # SQLite stores JSON as text, so we'll filter in Python
         all_notifications = Notification.query.filter(
@@ -368,18 +376,22 @@ def get_billing_history():
             )
         ).order_by(Notification.created_at.desc()).all()
         
-        # Filter by user_id or user_email in Python (SQLite JSON handling)
+        # Filter by user_id AND ensure notification was created after user account creation
+        # This prevents old invoices from deleted accounts from appearing
         notifications = []
         for notif in all_notifications:
             metadata = notif.notification_metadata or {}
             notif_user_id = metadata.get('user_id')
-            notif_user_email = metadata.get('user_email')
             
-            # Check if this notification belongs to the requested user
-            if user_id and (notif_user_id == int(user_id) or str(notif_user_id) == str(user_id)):
-                notifications.append(notif)
-            elif user_email and (notif_user_email == user_email or notif_user_email == str(user_email)):
-                notifications.append(notif)
+            # CRITICAL: Only include notifications that:
+            # 1. Belong to the current user (by ID, not email)
+            # 2. Were created AFTER the user's account was created
+            if notif_user_id and (notif_user_id == user.id or str(notif_user_id) == str(user.id)):
+                # Check if notification was created after user account creation
+                if notif.created_at and notif.created_at >= user_account_created_at:
+                    notifications.append(notif)
+                else:
+                    print(f"⚠️ [BILLING HISTORY] Skipping notification {notif.id} - created before user account ({notif.created_at} < {user_account_created_at})")
         
         # Transform notifications to billing history format
         billing_history = []
@@ -402,41 +414,39 @@ def get_billing_history():
                 'metadata': metadata
             })
         
-        print(f"📊 [BILLING HISTORY] Found {len(notifications)} notifications, created {len(billing_history)} billing history entries")
+        print(f"📊 [BILLING HISTORY] Found {len(notifications)} notifications for user {user.id} (account created: {user_account_created_at}), created {len(billing_history)} billing history entries")
         
-        # Always add initial free tier subscription (from signup) if user exists
+        # Always add initial free tier subscription (from signup)
         # This shows when they first signed up, regardless of current tier
-        if user:
-            # Check if we already have an initial subscription in the history
-            has_initial = any(
-                item.get('metadata', {}).get('is_initial') or 
-                (item.get('amount', 0) == 0 and item.get('tier', '').lower() == 'free' and item.get('notification_id') is None)
-                for item in billing_history
-            )
-            
-            if not has_initial:
-                subscription_date = user.created_at if user.created_at else datetime.now()
-                billing_history.insert(0, {
-                    'id': f"initial_{user.id}",
-                    'invoice': 'Free Tier - Initial Subscription',
-                    'amount': 0.0,
-                    'date': subscription_date.isoformat(),
-                    'status': 'Free',
-                    'payment_id': '',
+        # Check if we already have an initial subscription in the history
+        has_initial = any(
+            item.get('metadata', {}).get('is_initial') or 
+            (item.get('amount', 0) == 0 and item.get('tier', '').lower() == 'free' and item.get('notification_id') is None)
+            for item in billing_history
+        )
+        
+        if not has_initial:
+            subscription_date = user.created_at if user.created_at else datetime.now()
+            billing_history.insert(0, {
+                'id': f"initial_{user.id}",
+                'invoice': 'Free Tier - Initial Subscription',
+                'amount': 0.0,
+                'date': subscription_date.isoformat(),
+                'status': 'Free',
+                'payment_id': '',
+                'tier': 'free',
+                'notification_id': None,
+                'metadata': {
+                    'user_id': user.id,
+                    'user_email': user.email,
                     'tier': 'free',
-                    'notification_id': None,
-                    'metadata': {
-                        'user_id': user.id,
-                        'user_email': user.email,
-                        'tier': 'free',
-                        'is_initial': True
-                    }
-                })
-                print(f"✅ [BILLING HISTORY] Added initial free tier subscription for user {user.email} (signup: {subscription_date})")
+                    'is_initial': True
+                }
+            })
+            print(f"✅ [BILLING HISTORY] Added initial free tier subscription for user {user.email} (signup: {subscription_date})")
         
         # If user is on premium/enterprise but has no payment notifications, add current subscription
         # This handles cases where upgrade notifications weren't created
-        if user:
             current_tier = user.subscription_tier or 'free'
             has_payment_notification = any(
                 item.get('amount', 0) > 0 and item.get('status') == 'Paid'
