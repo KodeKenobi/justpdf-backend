@@ -128,13 +128,31 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         
         # Convert HTML to PDF using backend endpoint
         print(f"📄 [SUBSCRIPTION] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
+        response = None
         with open(html_path, 'rb') as html_file:
             files = {'html': ('subscription.html', html_file, 'text/html')}
-            response = requests.post(
-                f"{api_url}/convert_html_to_pdf",
-                files=files,
-                timeout=30
-            )
+            try:
+                response = requests.post(
+                    f"{api_url}/convert_html_to_pdf",
+                    files=files,
+                    timeout=60  # Increased timeout for PDF generation
+                )
+            except requests.exceptions.Timeout:
+                print(f"❌ [SUBSCRIPTION] PDF conversion timed out after 60 seconds")
+                # Clean up temp HTML file
+                try:
+                    os.unlink(html_path)
+                except:
+                    pass
+                return None
+            except requests.exceptions.RequestException as e:
+                print(f"❌ [SUBSCRIPTION] PDF conversion request failed: {e}")
+                # Clean up temp HTML file
+                try:
+                    os.unlink(html_path)
+                except:
+                    pass
+                return None
         
         # Clean up temp HTML file
         try:
@@ -142,7 +160,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         except:
             pass
         
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             data = response.json()
             print(f"📄 [SUBSCRIPTION] Conversion response: {data}")
             if data.get('status') == 'success' and data.get('download_url'):
@@ -305,13 +323,31 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         
         # Convert HTML to PDF using backend endpoint
         print(f"📄 [INVOICE] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
+        response = None
         with open(html_path, 'rb') as html_file:
             files = {'html': ('invoice.html', html_file, 'text/html')}
-            response = requests.post(
-                f"{api_url}/convert_html_to_pdf",
-                files=files,
-                timeout=30
-            )
+            try:
+                response = requests.post(
+                    f"{api_url}/convert_html_to_pdf",
+                    files=files,
+                    timeout=60  # Increased timeout for PDF generation
+                )
+            except requests.exceptions.Timeout:
+                print(f"❌ [INVOICE] PDF conversion timed out after 60 seconds")
+                # Clean up temp HTML file
+                try:
+                    os.unlink(html_path)
+                except:
+                    pass
+                return None
+            except requests.exceptions.RequestException as e:
+                print(f"❌ [INVOICE] PDF conversion request failed: {e}")
+                # Clean up temp HTML file
+                try:
+                    os.unlink(html_path)
+                except:
+                    pass
+                return None
         
         # Clean up temp HTML file
         try:
@@ -319,7 +355,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         except:
             pass
         
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             data = response.json()
             print(f"📄 [INVOICE] Conversion response: {data}")
             if data.get('status') == 'success' and data.get('download_url'):
@@ -624,36 +660,62 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
     }
     subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! 🚀"
     
-    # Generate and attach subscription PDF (shows new subscription details, next billing date, etc.)
+    # Generate and attach invoice PDF (more reliable than subscription PDF)
+    # Use invoice PDF generation which is tested and working
     attachments = []
     try:
-        print(f"📄 [UPGRADE EMAIL] Generating subscription PDF for {user_email} (tier: {new_tier}, amount: {amount})")
-        subscription_pdf = generate_subscription_pdf(
+        print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
+        
+        # Use invoice PDF generation instead of subscription PDF (more reliable)
+        invoice_pdf = generate_invoice_pdf(
             tier=new_tier,
             amount=amount,
             user_email=user_email,
-            subscription_id=payment_id,  # Use payment_id as subscription_id if available
             payment_id=payment_id,
             payment_date=payment_date,
-            billing_cycle="Monthly",  # Default to monthly, can be made configurable
-            payment_method="PayFast",
-            old_tier=old_tier
+            item_description=f"{tier_names.get(new_tier.lower(), new_tier)} - Monthly Subscription",
+            template_name='emails/invoice.html'
         )
-        if subscription_pdf:
+        
+        if invoice_pdf:
             # Convert PDF bytes to base64
-            pdf_base64 = base64.b64encode(subscription_pdf).decode('utf-8')
+            import base64
+            pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
             date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
             attachments.append({
                 'filename': f'subscription_{new_tier}_{date_str}.pdf',
                 'content': pdf_base64,
                 'contentType': 'application/pdf'
             })
-            print(f"✅ [UPGRADE EMAIL] Subscription PDF attached ({len(subscription_pdf)} bytes, base64: {len(pdf_base64)} chars)")
+            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
         else:
-            print(f"⚠️ [UPGRADE EMAIL] Failed to generate subscription PDF, continuing without subscription attachment")
-            print(f"   Check generate_subscription_pdf() logs for details")
+            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, trying subscription PDF as fallback...")
+            # Fallback to subscription PDF if invoice fails
+            subscription_pdf = generate_subscription_pdf(
+                tier=new_tier,
+                amount=amount,
+                user_email=user_email,
+                subscription_id=payment_id,
+                payment_id=payment_id,
+                payment_date=payment_date,
+                billing_cycle="Monthly",
+                payment_method="PayFast",
+                old_tier=old_tier
+            )
+            if subscription_pdf:
+                pdf_base64 = base64.b64encode(subscription_pdf).decode('utf-8')
+                date_str = payment_date.strftime("%Y%m%d") if payment_date else datetime.now().strftime("%Y%m%d")
+                attachments.append({
+                    'filename': f'subscription_{new_tier}_{date_str}.pdf',
+                    'content': pdf_base64,
+                    'contentType': 'application/pdf'
+                })
+                print(f"✅ [UPGRADE EMAIL] Subscription PDF attached as fallback ({len(subscription_pdf)} bytes)")
+            else:
+                print(f"⚠️ [UPGRADE EMAIL] Both invoice and subscription PDF generation failed, continuing without attachment")
+                print(f"   Check generate_invoice_pdf() and generate_subscription_pdf() logs for details")
     except Exception as e:
-        print(f"⚠️ [UPGRADE EMAIL] Error generating subscription PDF: {e}")
+        print(f"❌ [UPGRADE EMAIL] Error generating PDF attachment: {e}")
         import traceback
         traceback.print_exc()
         # Continue without attachments if PDF generation fails
