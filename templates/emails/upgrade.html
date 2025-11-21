@@ -97,8 +97,13 @@
                   "
                 >
                   Your subscription has been successfully upgraded from
-                  <strong style="color: #a0a0a0">{{ old_tier_name }}</strong> to
-                  <strong style="color: #a0a0a0">{{ new_tier_name }}</strong>.
+                  <strong style="color: #a0a0a0"
+                    >{{ old_tier_name|default('Free Tier') }}</strong
+                  >
+                  to
+                  <strong style="color: #a0a0a0"
+                    >{{ new_tier_name|default('Production Plan') }}</strong
+                  >.
                 </p>
 
                 <div style="border-radius: 6px; padding: 24px; margin: 32px 0">
@@ -123,8 +128,9 @@
                     "
                   >
                     You now have access to all features and benefits of the
-                    <strong style="color: #a0a0a0">{{ new_tier_name }}</strong>.
-                    Your new limits and features are now active in your
+                    <strong style="color: #a0a0a0"
+                      >{{ new_tier_name|default('Production Plan') }}</strong
+                    >. Your new limits and features are now active in your
                     dashboard.
                   </p>
                 </div>
