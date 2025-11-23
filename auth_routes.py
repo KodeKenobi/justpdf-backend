@@ -257,9 +257,14 @@ def get_profile():
             from models import User
             user = User.query.get(user_id)
             if not user:
+                print(f"[PROFILE] User not found for ID: {user_id}")
                 return jsonify({'error': 'User not found'}), 404
             
-            return jsonify(user.to_dict())
+            user_dict = user.to_dict()
+            print(f"[PROFILE] Returning profile for user {user_id} ({user.email})")
+            print(f"[PROFILE] Subscription tier: {user_dict.get('subscription_tier', 'NOT FOUND')}")
+            print(f"[PROFILE] Full user data: {user_dict}")
+            return jsonify(user_dict)
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Token expired'}), 401
         except jwt.InvalidTokenError:
@@ -344,6 +349,42 @@ def admin_update_password():
         
         db.session.commit()
         
+        # Sync password update to Supabase to ensure persistence
+        try:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            
+            # Use hardcoded Supabase connection string
+            database_url = "postgresql://postgres:Kopenikus0218!@db.pqdxqvxyrahvongbhtdb.supabase.co:5432/postgres"
+            
+            # Convert to pooler format
+            if database_url and "db." in database_url and ".supabase.co" in database_url:
+                import re
+                match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+                if match:
+                    user_part, password, project_ref, port, database = match.groups()
+                    database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+            
+            # Connect and sync
+            conn = psycopg2.connect(database_url, sslmode='require')
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Update password in Supabase
+            cursor.execute("""
+                UPDATE users SET
+                    password_hash = %s
+                WHERE email = %s
+            """, (user.password_hash, user.email))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            print(f"✅ [ADMIN] Synced password update to Supabase: {email}")
+        except Exception as sync_error:
+            print(f"⚠️ [ADMIN] Failed to sync password to Supabase: {sync_error}")
+            # Don't fail the request if Supabase sync fails
+        
         return jsonify({
             'message': f'User updated successfully for {email}',
             'user': user.to_dict()
@@ -400,11 +441,20 @@ def get_token_from_session():
                 'code': 'USER_NOT_FOUND'
             }), 404
         else:
-            # User exists - update password to match NextAuth
+            # User exists - verify password but DON'T overwrite it
             # CRITICAL: Preserve subscription_tier - do NOT reset it
+            # CRITICAL: Don't overwrite password_hash - it should already be correct
             old_tier = user.subscription_tier
             old_id = user.id
-            user.set_password(password)
+            
+            # Verify password is correct before proceeding
+            if not user.check_password(password):
+                return jsonify({
+                    'error': 'Invalid credentials',
+                    'code': 'INVALID_CREDENTIALS'
+                }), 401
+            
+            # Only update if needed (don't overwrite password)
             user.is_active = True
             if role and user.role != role:
                 user.role = role
