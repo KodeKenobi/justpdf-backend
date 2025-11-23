@@ -126,6 +126,24 @@ def track_pageview():
         print(f"Error tracking pageview: {e}")
         return jsonify({'error': str(e)}), 500
 
+def get_location_from_ip(ip_address):
+    """Get country and city from IP address using free IP geolocation API"""
+    if not ip_address or ip_address == 'unknown' or ip_address.startswith('127.') or ip_address.startswith('::1'):
+        return None, None
+    
+    try:
+        import requests
+        # Use ip-api.com (free, no API key required, 45 requests/minute limit)
+        response = requests.get(f'http://ip-api.com/json/{ip_address}?fields=status,country,city', timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('status') == 'success':
+                return data.get('country'), data.get('city')
+    except Exception as e:
+        print(f"Error getting location from IP {ip_address}: {e}")
+    
+    return None, None
+
 @analytics_api.route('/session', methods=['POST'])
 def track_session():
     """Track user sessions"""
@@ -144,6 +162,17 @@ def track_session():
         if hasattr(g, 'current_user') and g.current_user:
             user_id = g.current_user.id
         
+        # Get IP address from request or data
+        ip_address = data.get('ip_address') or request.headers.get('X-Forwarded-For', '').split(',')[0].strip() or request.remote_addr
+        
+        # Resolve location from IP if not provided
+        country = data.get('country')
+        city = data.get('city')
+        if not country or not city:
+            resolved_country, resolved_city = get_location_from_ip(ip_address)
+            country = country or resolved_country
+            city = city or resolved_city
+        
         # Check if session exists
         existing_session = UserSession.query.get(session_id)
         
@@ -153,6 +182,13 @@ def track_session():
             existing_session.page_views = data.get('page_views', existing_session.page_views)
             existing_session.events = data.get('events', existing_session.events)
             existing_session.is_active = data.get('is_active', True)
+            # Update location if not set
+            if not existing_session.country and country:
+                existing_session.country = country
+            if not existing_session.city and city:
+                existing_session.city = city
+            if not existing_session.ip_address and ip_address:
+                existing_session.ip_address = ip_address
         else:
             # Create new session
             new_session = UserSession(
@@ -165,9 +201,9 @@ def track_session():
                 device_type=data.get('device_type'),
                 browser=data.get('browser'),
                 os=data.get('os'),
-                country=data.get('country'),
-                city=data.get('city'),
-                ip_address=data.get('ip_address'),
+                country=country,
+                city=city,
+                ip_address=ip_address,
                 user_agent=data.get('user_agent'),
                 referrer=data.get('referrer'),
                 is_active=data.get('is_active', True)
@@ -320,6 +356,33 @@ def get_dashboard():
         
         os_breakdown = [{'os': os_name or 'unknown', 'count': count} for os_name, count in os_breakdown_query]
         
+        # Country/Region breakdown
+        country_breakdown_query = db.session.query(
+            UserSession.country,
+            func.count(func.distinct(UserSession.id)).label('count')
+        ).filter(
+            and_(
+                UserSession.start_time >= start_time,
+                UserSession.country.isnot(None)
+            )
+        ).group_by(UserSession.country).order_by(desc('count')).limit(20).all()
+        
+        country_breakdown = [{'country': country or 'Unknown', 'count': count} for country, count in country_breakdown_query]
+        
+        # City breakdown (top cities)
+        city_breakdown_query = db.session.query(
+            UserSession.city,
+            UserSession.country,
+            func.count(func.distinct(UserSession.id)).label('count')
+        ).filter(
+            and_(
+                UserSession.start_time >= start_time,
+                UserSession.city.isnot(None)
+            )
+        ).group_by(UserSession.city, UserSession.country).order_by(desc('count')).limit(20).all()
+        
+        city_breakdown = [{'city': city or 'Unknown', 'country': country or 'Unknown', 'count': count} for city, country, count in city_breakdown_query]
+        
         # Recent activity (last 20 events)
         recent_events = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
@@ -371,6 +434,8 @@ def get_dashboard():
             'deviceBreakdown': device_breakdown,
             'browserBreakdown': browser_breakdown,
             'osBreakdown': os_breakdown,
+            'countryBreakdown': country_breakdown,
+            'cityBreakdown': city_breakdown,
             'recentActivity': recent_activity,
             'conversionRate': round(conversion_rate, 2),
             'errorRate': round(error_rate, 2)
