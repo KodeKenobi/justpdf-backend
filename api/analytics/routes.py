@@ -127,22 +127,28 @@ def track_pageview():
         return jsonify({'error': str(e)}), 500
 
 def get_location_from_ip(ip_address):
-    """Get country and city from IP address using free IP geolocation API"""
+    """Get detailed location from IP address using free IP geolocation API"""
     if not ip_address or ip_address == 'unknown' or ip_address.startswith('127.') or ip_address.startswith('::1'):
-        return None, None
+        return None, None, None, None
     
     try:
         import requests
         # Use ip-api.com (free, no API key required, 45 requests/minute limit)
-        response = requests.get(f'http://ip-api.com/json/{ip_address}?fields=status,country,city', timeout=2)
+        # Get more fields: country, city, regionName (state/province), timezone
+        response = requests.get(f'http://ip-api.com/json/{ip_address}?fields=status,country,countryCode,city,regionName,timezone,lat,lon', timeout=3)
         if response.status_code == 200:
             data = response.json()
             if data.get('status') == 'success':
-                return data.get('country'), data.get('city')
+                country = data.get('country')
+                city = data.get('city')
+                region = data.get('regionName')  # State/Province
+                timezone = data.get('timezone')
+                # Format: "City, Region, Country" for better precision
+                return country, city, region, timezone
     except Exception as e:
         print(f"Error getting location from IP {ip_address}: {e}")
     
-    return None, None
+    return None, None, None, None
 
 @analytics_api.route('/session', methods=['POST'])
 def track_session():
@@ -168,10 +174,15 @@ def track_session():
         # Resolve location from IP if not provided
         country = data.get('country')
         city = data.get('city')
+        region = data.get('region')  # State/Province
         if not country or not city:
-            resolved_country, resolved_city = get_location_from_ip(ip_address)
+            resolved_country, resolved_city, resolved_region, timezone = get_location_from_ip(ip_address)
             country = country or resolved_country
             city = city or resolved_city
+            region = region or resolved_region
+            # Store region in city field if we have it for better precision
+            if city and region and region not in city:
+                city = f"{city}, {region}"
         
         # Check if session exists
         existing_session = UserSession.query.get(session_id)
@@ -383,20 +394,128 @@ def get_dashboard():
         
         city_breakdown = [{'city': city or 'Unknown', 'country': country or 'Unknown', 'count': count} for city, country, count in city_breakdown_query]
         
-        # Recent activity (last 20 events)
+        # Recent activity (last 20 events) with detailed descriptions
         recent_events = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
         ).order_by(desc(AnalyticsEvent.timestamp)).limit(20).all()
         
         recent_activity = []
         for event in recent_events:
-            description = f"{event.event_name}"
-            if event.page_title:
-                description += f" on {event.page_title}"
+            properties = event.properties or {}
+            description = ""
+            details = []
+            
+            # Build detailed description based on event type
+            if event.event_name == "api_call":
+                url = properties.get('url', '')
+                method = properties.get('method', 'GET')
+                status = properties.get('status', '')
+                # Extract endpoint from URL
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    endpoint = parsed.path
+                    if endpoint.startswith('/api/'):
+                        endpoint = endpoint.replace('/api/', '')
+                    description = f"API Call: {method} {endpoint}"
+                    if status:
+                        description += f" ({status})"
+                except:
+                    description = f"API Call: {method} {url[:50]}"
+                    if status:
+                        description += f" ({status})"
+                if properties.get('duration'):
+                    details.append(f"Duration: {properties.get('duration')}ms")
+                    
+            elif event.event_name == "page_load" or event.event_name == "pageview":
+                page_url = event.page_url or properties.get('page', '')
+                page_title = event.page_title or properties.get('title', '')
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(page_url)
+                    path = parsed.path or "/"
+                    description = f"Page Load: {path}"
+                    if page_title:
+                        details.append(f"Title: {page_title}")
+                except:
+                    description = f"Page Load: {page_url[:50]}"
+                    
+            elif event.event_name == "navigation_click" or event.event_name == "click":
+                element = properties.get('element', '')
+                location = properties.get('location', '')
+                from_page = properties.get('from', '')
+                to_page = properties.get('to', '')
+                if from_page and to_page:
+                    try:
+                        from urllib.parse import urlparse
+                        from_path = urlparse(from_page).path if from_page else ""
+                        to_path = urlparse(to_page).path if to_page else ""
+                        description = f"Navigation: {from_path} → {to_path}"
+                    except:
+                        description = f"Navigation: {from_page} → {to_page}"
+                elif element:
+                    description = f"Click: {element}"
+                    if location:
+                        details.append(f"Location: {location}")
+                else:
+                    description = f"Click on {event.page_url or 'page'}"
+                    
+            elif event.event_name == "user_interaction":
+                interaction_type = properties.get('type', '')
+                element = properties.get('element', '')
+                if interaction_type and element:
+                    description = f"Interaction: {interaction_type} on {element}"
+                elif element:
+                    description = f"Interaction: {element}"
+                else:
+                    description = f"User Interaction: {interaction_type or 'unknown'}"
+                if properties.get('value'):
+                    details.append(f"Value: {properties.get('value')}")
+                    
+            elif event.event_name == "api_error":
+                url = properties.get('url', '')
+                error = properties.get('error', 'Unknown error')
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url)
+                    endpoint = parsed.path
+                    description = f"API Error: {endpoint}"
+                except:
+                    description = f"API Error: {url[:50]}"
+                details.append(f"Error: {error[:100]}")
+                
+            else:
+                # Generic event - use event name and extract key properties
+                description = event.event_name.replace('_', ' ').title()
+                if properties:
+                    # Add relevant properties as details
+                    for key in ['url', 'method', 'element', 'location', 'from', 'to', 'page']:
+                        if key in properties and properties[key]:
+                            details.append(f"{key.title()}: {str(properties[key])[:50]}")
+            
+            # Add page context if available
+            if event.page_url and event.event_name not in ["page_load", "pageview"]:
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(event.page_url)
+                    page_path = parsed.path or "/"
+                    if page_path not in description:
+                        details.append(f"Page: {page_path}")
+                except:
+                    pass
+            
+            # Build final description with details
+            if details:
+                description += " • " + " • ".join(details[:3])  # Limit to 3 details
+            
             recent_activity.append({
                 'id': str(event.id),
                 'type': event.event_type,
                 'description': description,
+                'event_name': event.event_name,
+                'properties': properties,
+                'page_url': event.page_url,
+                'page_title': event.page_title,
                 'timestamp': int(event.timestamp.timestamp() * 1000) if event.timestamp else int(datetime.utcnow().timestamp() * 1000)
             })
         
