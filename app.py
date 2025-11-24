@@ -4866,7 +4866,25 @@ def download_file(filename):
         
         if os.path.exists(converted_images_path):
             print(f"DEBUG: Sending file: {converted_images_path}")
-            return send_file(converted_images_path, as_attachment=True, download_name=filename)
+            # Determine MIME type based on file extension
+            mimetype = None
+            if filename.lower().endswith('.pdf'):
+                mimetype = 'application/pdf'
+            elif filename.lower().endswith(('.jpg', '.jpeg')):
+                mimetype = 'image/jpeg'
+            elif filename.lower().endswith('.png'):
+                mimetype = 'image/png'
+            elif filename.lower().endswith('.webp'):
+                mimetype = 'image/webp'
+            elif filename.lower().endswith('.gif'):
+                mimetype = 'image/gif'
+            
+            return send_file(
+                converted_images_path, 
+                as_attachment=True, 
+                download_name=filename,
+                mimetype=mimetype
+            )
         
         # Check in other directories if needed
         converted_videos_path = os.path.abspath(os.path.join('converted_videos', filename))
