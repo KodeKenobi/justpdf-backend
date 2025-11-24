@@ -4541,7 +4541,94 @@ def convert_image():
         # Get original file size
         original_size = os.path.getsize(temp_path)
         
-        # Build FFmpeg command for image conversion
+        # Handle PDF conversion separately
+        if output_format == 'pdf':
+            try:
+                from PIL import Image
+                import fitz  # PyMuPDF
+                
+                # Open image with PIL
+                img = Image.open(temp_path)
+                
+                # Convert image to RGB if necessary (PDF doesn't support RGBA directly)
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    # Create a white background
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    rgb_img.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                    img = rgb_img
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Get image dimensions
+                img_width, img_height = img.size
+                
+                # Create PDF with PyMuPDF
+                pdf_doc = fitz.open()
+                # Convert pixels to points (assuming 72 DPI: 1 point = 1/72 inch)
+                # For better quality, we can use the actual image DPI if available
+                # Default to 72 DPI if not specified
+                dpi = 72
+                page_width = img_width * 72 / dpi  # Convert pixels to points
+                page_height = img_height * 72 / dpi
+                
+                # Use A4 size if image is too large, otherwise use image size
+                # A4 size in points: 595 x 842
+                if page_width > 595 or page_height > 842:
+                    # Scale to fit A4 while maintaining aspect ratio
+                    scale = min(595 / page_width, 842 / page_height)
+                    page_width = page_width * scale
+                    page_height = page_height * scale
+                
+                page = pdf_doc.new_page(width=page_width, height=page_height)
+                
+                # Convert PIL image to bytes
+                import io
+                img_bytes = io.BytesIO()
+                img.save(img_bytes, format='PNG')
+                img_bytes.seek(0)
+                
+                # Insert image into PDF page
+                img_rect = fitz.Rect(0, 0, page_width, page_height)
+                page.insert_image(img_rect, stream=img_bytes.getvalue())
+                
+                # Save PDF
+                pdf_doc.save(filepath)
+                pdf_doc.close()
+                
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                
+                # Get converted file size
+                converted_size = os.path.getsize(filepath)
+                compression_ratio = ((original_size - converted_size) / original_size) * 100
+                
+                # Create download URL
+                download_url = f"/download/{filename}"
+                
+                return jsonify({
+                    'success': True,
+                    'downloadUrl': download_url,
+                    'originalSize': original_size,
+                    'convertedSize': converted_size,
+                    'compressionRatio': compression_ratio,
+                    'message': 'Image converted to PDF successfully'
+                })
+            except Exception as e:
+                print(f"DEBUG: PDF conversion error: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                return jsonify({
+                    'success': False,
+                    'error': f'PDF conversion failed: {str(e)}'
+                }), 500
+        
+        # Build FFmpeg command for image conversion (non-PDF formats)
         ffmpeg_cmd = ['ffmpeg', '-i', temp_path]
         
         # Add resize parameters if requested
