@@ -4597,6 +4597,13 @@ def convert_image():
                 pdf_doc.save(filepath)
                 pdf_doc.close()
                 
+                # Verify PDF file was created
+                if not os.path.exists(filepath):
+                    raise Exception(f"PDF file was not created at {filepath}")
+                
+                print(f"DEBUG: PDF file created successfully at: {filepath}")
+                print(f"DEBUG: PDF file size: {os.path.getsize(filepath)} bytes")
+                
                 # Clean up temp file
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
@@ -4607,6 +4614,9 @@ def convert_image():
                 
                 # Create download URL
                 download_url = f"/download/{filename}"
+                
+                print(f"DEBUG: Download URL: {download_url}")
+                print(f"DEBUG: Full filepath for download: {os.path.abspath(filepath)}")
                 
                 return jsonify({
                     'success': True,
@@ -4851,18 +4861,30 @@ def download_file(filename):
         converted_images_path = os.path.abspath(os.path.join('converted_images', filename))
         print(f"DEBUG: Looking for file at: {converted_images_path}")
         print(f"DEBUG: File exists: {os.path.exists(converted_images_path)}")
+        print(f"DEBUG: Current working directory: {os.getcwd()}")
+        print(f"DEBUG: Absolute path: {converted_images_path}")
         
         if os.path.exists(converted_images_path):
-            return send_file(converted_images_path, as_attachment=True)
+            print(f"DEBUG: Sending file: {converted_images_path}")
+            return send_file(converted_images_path, as_attachment=True, download_name=filename)
         
         # Check in other directories if needed
         converted_videos_path = os.path.abspath(os.path.join('converted_videos', filename))
         if os.path.exists(converted_videos_path):
-            return send_file(converted_videos_path, as_attachment=True)
+            print(f"DEBUG: Sending file from videos: {converted_videos_path}")
+            return send_file(converted_videos_path, as_attachment=True, download_name=filename)
+        
+        # List files in converted_images directory for debugging
+        converted_images_dir = os.path.abspath('converted_images')
+        if os.path.exists(converted_images_dir):
+            files_in_dir = os.listdir(converted_images_dir)
+            print(f"DEBUG: Files in converted_images directory: {files_in_dir}")
             
         return jsonify({'error': f'File not found: {filename}'}), 404
     except Exception as e:
         print(f"DEBUG: Download error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/convert-audio', methods=['POST'])
