@@ -115,7 +115,11 @@ def upgrade_subscription():
         
         db.session.commit()
         
+        # Verify the update by re-fetching the user
+        db.session.refresh(user)
         print(f"✅ Subscription updated for {user_email}: {old_tier} -> {new_tier}")
+        print(f"[UPGRADE] Verified - User {user.id} ({user.email}) now has tier: {user.subscription_tier}")
+        print(f"[UPGRADE] User monthly_call_limit: {user.monthly_call_limit}")
         
         # Sync tier update to Supabase (synchronously to ensure it completes)
         try:

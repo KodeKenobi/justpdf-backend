@@ -241,6 +241,105 @@ def require_admin(f):
         return f(*args, **kwargs)
     return decorated_function
 
+@analytics_api.route('/events/list', methods=['GET'])
+@require_admin
+def get_events_list():
+    """Get paginated list of all events with full details"""
+    try:
+        range_param = request.args.get('range', '24h')
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        event_type = request.args.get('event_type')  # Filter by event type
+        
+        # Calculate time range
+        now = datetime.utcnow()
+        if range_param == '1h':
+            start_time = now - timedelta(hours=1)
+        elif range_param == '24h':
+            start_time = now - timedelta(hours=24)
+        elif range_param == '7d':
+            start_time = now - timedelta(days=7)
+        elif range_param == '30d':
+            start_time = now - timedelta(days=30)
+        elif range_param == '90d':
+            start_time = now - timedelta(days=90)
+        else:
+            start_time = now - timedelta(hours=24)
+        
+        # Build query
+        query = AnalyticsEvent.query.filter(
+            AnalyticsEvent.timestamp >= start_time
+        )
+        
+        # Filter by event type if specified
+        if event_type:
+            query = query.filter(AnalyticsEvent.event_name == event_type)
+        
+        # Get total count
+        total_count = query.count()
+        
+        # Get paginated events
+        events = query.order_by(desc(AnalyticsEvent.timestamp)).offset(
+            (page - 1) * per_page
+        ).limit(per_page).all()
+        
+        # Format events with full details
+        events_list = []
+        for event in events:
+            properties = event.properties or {}
+            
+            # Get page path from URL
+            page_path = ""
+            if event.page_url:
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(event.page_url)
+                    page_path = parsed.path or "/"
+                except:
+                    page_path = event.page_url[:50]
+            
+            events_list.append({
+                'id': str(event.id),
+                'event_name': event.event_name,
+                'event_type': event.event_type,
+                'page_url': event.page_url,
+                'page_path': page_path,
+                'page_title': event.page_title,
+                'properties': properties,
+                'device_type': event.device_type,
+                'browser': event.browser,
+                'os': event.os,
+                'timestamp': event.timestamp.isoformat() if event.timestamp else None,
+                'timestamp_ms': int(event.timestamp.timestamp() * 1000) if event.timestamp else None,
+                'user_id': event.user_id,
+                'session_id': event.session_id,
+            })
+        
+        # Get unique event types for filtering
+        event_types = db.session.query(
+            AnalyticsEvent.event_name,
+            func.count(AnalyticsEvent.id).label('count')
+        ).filter(
+            AnalyticsEvent.timestamp >= start_time
+        ).group_by(AnalyticsEvent.event_name).order_by(desc('count')).all()
+        
+        return jsonify({
+            'events': events_list,
+            'total': total_count,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total_count + per_page - 1) // per_page,
+            'event_types': [{'name': name, 'count': count} for name, count in event_types],
+            'time_range': range_param,
+            'start_time': start_time.isoformat(),
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting events list: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @analytics_api.route('/dashboard', methods=['GET'])
 @require_admin
 def get_dashboard():
@@ -394,10 +493,10 @@ def get_dashboard():
         
         city_breakdown = [{'city': city or 'Unknown', 'country': country or 'Unknown', 'count': count} for city, country, count in city_breakdown_query]
         
-        # Recent activity (last 20 events) with detailed descriptions
+        # Recent activity (last 100 events) with detailed descriptions
         recent_events = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
-        ).order_by(desc(AnalyticsEvent.timestamp)).limit(20).all()
+        ).order_by(desc(AnalyticsEvent.timestamp)).limit(100).all()
         
         recent_activity = []
         for event in recent_events:

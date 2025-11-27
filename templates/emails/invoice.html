@@ -39,12 +39,9 @@
               overflow: hidden;
             "
           >
-            <!-- Header with Logo and Invoice Title -->
+            <!-- Header with Logo -->
             <tr>
-              <td style="padding: 40px 40px 30px">
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                  <tr>
-                    <td style="text-align: left; vertical-align: top">
+              <td style="padding: 40px 40px 30px; text-align: center">
                 <img
                   src="https://www.trevnoctilla.com/logo.png"
                   alt="Trevnoctilla Logo"
@@ -64,385 +61,115 @@
                     margin: 0 0 0 12px;
                     font-size: 24px;
                     font-weight: 600;
-                          color: #1a1a1a;
+                    color: #a0a0a0;
                     vertical-align: middle;
+                    text-align: center;
                   "
                 >
                   Trevnoctilla
                 </h1>
-                      <p
-                        style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 8px 0 0 60px;
-                          line-height: 1.5;
-                        "
-                      >
-                        support@trevnoctilla.com<br />
-                        www.trevnoctilla.com
-                      </p>
-                    </td>
-                    <td style="text-align: right; vertical-align: top">
-                      <h2
-                        style="
-                          font-size: 32px;
-                          font-weight: 700;
-                          color: #1a1a1a;
-                          margin: 0 0 8px;
-                          line-height: 1.2;
-                        "
-                      >
-                        INVOICE
-                      </h2>
-                      <p
-                        style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 0 0 4px;
-                          line-height: 1.5;
-                        "
-                      >
-                        <strong style="color: #1a1a1a">Invoice #:</strong> {{ invoice_number|default('N/A') }}
-                      </p>
-                      <p
-                        style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 0 0 4px;
-                          line-height: 1.5;
-                        "
-                      >
-                        <strong style="color: #1a1a1a">Date:</strong> {{ invoice_date|default('N/A') }}
-                      </p>
-                      <p
-                        style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 0;
-                          line-height: 1.5;
-                        "
-                      >
-                        <strong style="color: #1a1a1a">Status:</strong> 
-                        {% if (status|default('Free')) == 'Paid' %}
-                        <span style="color: #10b981">
-                          {{ status|default('Paid') }}
-                        </span>
-                        {% else %}
-                        <span style="color: #ef4444">
-                          {{ status|default('Free') }}
-                        </span>
-                        {% endif %}
-                      </p>
-                    </td>
-                  </tr>
-                </table>
               </td>
             </tr>
 
-            <!-- Billing Information -->
+            <!-- Main Content -->
             <tr>
-              <td style="padding: 0 40px 30px">
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                  <tr>
-                    <td style="text-align: left; vertical-align: top; width: 50%">
-                      <h3
+              <td style="padding: 0 40px 40px">
+                <h2
                   style="
-                          font-size: 16px;
+                    font-size: 28px;
                     font-weight: 600;
-                          color: #1a1a1a;
-                          margin: 0 0 12px;
-                          text-transform: uppercase;
-                          letter-spacing: 0.5px;
-                        "
-                      >
-                        Bill To:
-                      </h3>
-                <p
-                  style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 0 0 4px;
-                    line-height: 1.6;
+                    color: #a0a0a0;
+                    margin: 0 0 20px;
+                    line-height: 1.2;
+                    text-align: center;
                   "
                 >
-                        {{ user_email|default('N/A') }}
+                  Invoice #{{ invoice_number }}
+                </h2>
+
+                <p
+                  style="
+                    font-size: 16px;
+                    color: #a0a0a0;
+                    margin: 0 0 24px;
+                    line-height: 1.6;
+                    text-align: center;
+                  "
+                >
+                  Date: {{ invoice_date }}<br />
+                  Status: <strong style="color: #a0a0a0">{{ status }}</strong>
                 </p>
-                    </td>
-                    <td style="text-align: right; vertical-align: top; width: 50%">
+
+                <div style="border-radius: 6px; padding: 24px; margin: 32px 0">
                   <h3
                     style="
-                          font-size: 16px;
+                      font-size: 18px;
                       font-weight: 600;
-                          color: #1a1a1a;
+                      color: #a0a0a0;
                       margin: 0 0 12px;
-                          text-transform: uppercase;
-                          letter-spacing: 0.5px;
+                      text-align: center;
                     "
                   >
-                        Subscription Details:
+                    Invoice Details
                   </h3>
                   <p
                     style="
-                          font-size: 14px;
-                          color: #666666;
-                          margin: 0 0 4px;
+                      font-size: 15px;
+                      color: #a0a0a0;
+                      margin: 0;
                       line-height: 1.6;
-                        "
-                      >
-                        <strong style="color: #1a1a1a">Plan:</strong> {{ tier_name|default('Free Tier') }}
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <!-- Invoice Items Table -->
-            <tr>
-              <td style="padding: 0 40px 30px">
-                <table
-                  role="presentation"
-                  cellspacing="0"
-                  cellpadding="0"
-                  border="0"
-                  width="100%"
-                  style="border-collapse: collapse"
-                >
-                  <thead>
-                    <tr style="background-color: #f9fafb; border-bottom: 2px solid #e5e7eb">
-                      <th
-                        style="
-                          padding: 12px;
-                          text-align: left;
-                          font-size: 12px;
-                          font-weight: 600;
-                          color: #6b7280;
-                          text-transform: uppercase;
-                          letter-spacing: 0.5px;
-                        "
-                      >
-                        Description
-                      </th>
-                      <th
-                        style="
-                          padding: 12px;
-                          text-align: right;
-                          font-size: 12px;
-                          font-weight: 600;
-                          color: #6b7280;
-                          text-transform: uppercase;
-                          letter-spacing: 0.5px;
-                        "
-                      >
-                        Unit Price
-                      </th>
-                      <th
-                        style="
-                          padding: 12px;
-                          text-align: right;
-                          font-size: 12px;
-                          font-weight: 600;
-                          color: #6b7280;
-                          text-transform: uppercase;
-                          letter-spacing: 0.5px;
-                        "
-                      >
-                        Amount
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr style="border-bottom: 1px solid #e5e7eb">
-                      <td
-                        style="
-                          padding: 16px 12px;
-                          font-size: 14px;
-                          color: #1a1a1a;
-                          line-height: 1.5;
-                        "
-                      >
-                        {{ item_description|default('Subscription') }}
-                      </td>
-                      <td
-                        style="
-                          padding: 16px 12px;
-                          font-size: 14px;
-                          color: #666666;
-                          text-align: right;
-                        "
-                      >
-                        {{ currency_symbol|default('$') }}{{ unit_price|default('0.00') }}
-                      </td>
-                      <td
-                        style="
-                          padding: 16px 12px;
-                          font-size: 14px;
-                          color: #1a1a1a;
-                          font-weight: 600;
-                          text-align: right;
-                        "
-                      >
-                        {{ currency_symbol|default('$') }}{{ total_amount|default('0.00') }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-
-            <!-- Totals Section -->
-            <tr>
-              <td style="padding: 0 40px 30px">
-                <table
-                  role="presentation"
-                  cellspacing="0"
-                  cellpadding="0"
-                  border="0"
-                  width="100%"
-                >
-                  <tr>
-                    <td style="text-align: right; width: 100%">
-                      <table
-                        role="presentation"
-                        cellspacing="0"
-                        cellpadding="0"
-                        border="0"
-                        style="margin-left: auto; width: 300px"
-                      >
-                        {% if tax_amount > 0 %}
-                        <tr>
-                          <td
-                            style="
-                              padding: 8px 12px;
-                              font-size: 14px;
-                              color: #666666;
-                              text-align: right;
-                            "
-                          >
-                            Subtotal:
-                          </td>
-                          <td
-                            style="
-                              padding: 8px 12px;
-                              font-size: 14px;
-                              color: #1a1a1a;
-                              text-align: right;
-                              width: 120px;
-                            "
-                          >
-                            {{ currency_symbol|default('$') }}{{ "%.2f"|format((total_amount|default(0)|float) - (tax_amount|default(0)|float)) }}
-                          </td>
-                        </tr>
-                        <tr>
-                          <td
-                            style="
-                              padding: 8px 12px;
-                              font-size: 14px;
-                              color: #666666;
-                              text-align: right;
-                            "
-                          >
-                            Tax ({{ tax_rate|default(0) }}%):
-                          </td>
-                          <td
-                            style="
-                              padding: 8px 12px;
-                              font-size: 14px;
-                              color: #1a1a1a;
-                              text-align: right;
-                            "
-                          >
-                            {{ currency_symbol|default('$') }}{{ "%.2f"|format(tax_amount|default(0)|float) }}
-                          </td>
-                        </tr>
-                        {% endif %}
-                        <tr style="border-top: 2px solid #1a1a1a">
-                          <td
-                            style="
-                              padding: 16px 12px;
-                              font-size: 18px;
-                              font-weight: 700;
-                              color: #1a1a1a;
-                              text-align: right;
-                            "
-                          >
-                            Total:
-                          </td>
-                          <td
-                            style="
-                              padding: 16px 12px;
-                              font-size: 18px;
-                              font-weight: 700;
-                              color: #1a1a1a;
-                              text-align: right;
-                            "
-                          >
-                            {{ currency_symbol|default('$') }}{{ total_amount|default('0.00') }}
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
+                      text-align: center;
+                    "
+                  >
+                    <strong style="color: #a0a0a0">Description:</strong> {{
+                    item_description }}<br />
+                    <strong style="color: #a0a0a0">Amount:</strong> {{
+                    currency_symbol }}{{ total_amount }}<br />
+                    <strong style="color: #a0a0a0">Subscription:</strong> {{
+                    tier_name }}
+                  </p>
+                </div>
 
                 <!-- Divider -->
                 <div
-                  style="border-top: 1px solid #e5e7eb; margin: 40px 0 30px"
+                  style="border-top: 1px solid #2a2a2a; margin: 32px 0"
                 ></div>
 
                 <!-- Footer -->
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                  <tr>
-                    <td style="text-align: left; vertical-align: top; width: 50%">
-                      <p
-                        style="
-                          font-size: 13px;
-                          color: #666666;
-                          margin: 0 0 8px;
-                          line-height: 1.6;
-                        "
-                      >
-                        <strong style="color: #1a1a1a">Payment Terms:</strong><br />
-                        Payment due upon receipt
-                      </p>
-                    </td>
-                    <td style="text-align: right; vertical-align: top; width: 50%">
-                      <p
-                        style="
-                          font-size: 13px;
-                          color: #666666;
-                          margin: 0 0 8px;
-                          line-height: 1.6;
-                        "
-                      >
-                        Questions about your invoice?<br />
-                        <a
-                          href="mailto:support@trevnoctilla.com"
-                          style="color: #8b5cf6; text-decoration: none"
-                          >support@trevnoctilla.com</a
-                        >
-                      </p>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td colspan="2" style="padding-top: 20px">
-                      <p
-                        style="
-                          font-size: 12px;
-                          color: #9ca3af;
-                          margin: 0;
-                          line-height: 1.6;
-                          text-align: center;
-                        "
-                      >
-                        Thank you for your business!<br />
-                        The Trevnoctilla Team
-                      </p>
-                    </td>
-                  </tr>
-                </table>
+                <p
+                  style="
+                    font-size: 14px;
+                    color: #808080;
+                    margin: 0 0 8px;
+                    line-height: 1.6;
+                    text-align: center;
+                  "
+                >
+                  Questions about your invoice? Contact us at
+                  <a
+                    href="mailto:support@trevnoctilla.com"
+                    style="color: #8b5cf6; text-decoration: none"
+                    >support@trevnoctilla.com</a
+                  >
+                </p>
+
+                <p
+                  style="
+                    font-size: 13px;
+                    color: #666666;
+                    margin: 24px 0 0;
+                    text-align: center;
+                    line-height: 1.6;
+                  "
+                >
+                  Thank you for your business!<br />
+                  The Trevnoctilla Team<br />
+                  <a
+                    href="https://www.trevnoctilla.com"
+                    style="color: #8b5cf6; text-decoration: none"
+                    >www.trevnoctilla.com</a
+                  >
+                </p>
               </td>
             </tr>
           </table>
