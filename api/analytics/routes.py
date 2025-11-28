@@ -665,3 +665,160 @@ def get_dashboard():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@analytics_api.route('/details', methods=['GET'])
+@require_admin
+def get_detailed_metrics():
+    """Get detailed metrics filtered by device, browser, or OS"""
+    try:
+        filter_type = request.args.get('type')  # 'device', 'browser', or 'os'
+        filter_value = request.args.get('value')  # e.g., 'desktop', 'Chrome', 'Windows'
+        range_param = request.args.get('range', '24h')
+        start_time_param = request.args.get('start_time')
+        
+        if not filter_type or not filter_value:
+            return jsonify({'error': 'type and value parameters are required'}), 400
+        
+        # Calculate time range
+        now = datetime.utcnow()
+        if start_time_param:
+            try:
+                start_time = datetime.fromisoformat(start_time_param.replace('Z', '+00:00'))
+            except:
+                start_time = now - timedelta(hours=24)
+        else:
+            if range_param == '1h':
+                start_time = now - timedelta(hours=1)
+            elif range_param == '24h':
+                start_time = now - timedelta(hours=24)
+            elif range_param == '7d':
+                start_time = now - timedelta(days=7)
+            elif range_param == '30d':
+                start_time = now - timedelta(days=30)
+            elif range_param == '90d':
+                start_time = now - timedelta(days=90)
+            else:
+                start_time = now - timedelta(hours=24)
+        
+        # Build filter condition
+        filter_condition = UserSession.start_time >= start_time
+        if filter_type == 'device':
+            filter_condition = and_(filter_condition, UserSession.device_type == filter_value)
+        elif filter_type == 'browser':
+            filter_condition = and_(filter_condition, UserSession.browser == filter_value)
+        elif filter_type == 'os':
+            filter_condition = and_(filter_condition, UserSession.os == filter_value)
+        else:
+            return jsonify({'error': 'Invalid filter type. Must be device, browser, or os'}), 400
+        
+        # Get sessions matching the filter
+        sessions = UserSession.query.filter(filter_condition).order_by(desc(UserSession.start_time)).all()
+        
+        # Get session IDs
+        session_ids = [s.id for s in sessions]
+        
+        # Get page views for these sessions
+        page_views = PageView.query.filter(
+            and_(
+                PageView.timestamp >= start_time,
+                PageView.session_id.in_(session_ids)
+            )
+        ).order_by(desc(PageView.timestamp)).all()
+        
+        # Get events for these sessions
+        events = AnalyticsEvent.query.filter(
+            and_(
+                AnalyticsEvent.timestamp >= start_time,
+                AnalyticsEvent.session_id.in_(session_ids)
+            )
+        ).order_by(desc(AnalyticsEvent.timestamp)).all()
+        
+        # Build detailed data
+        sessions_data = []
+        for session in sessions:
+            session_page_views = [pv for pv in page_views if pv.session_id == session.id]
+            session_events = [e for e in events if e.session_id == session.id]
+            
+            duration = 0
+            if session.last_activity and session.start_time:
+                duration = int((session.last_activity - session.start_time).total_seconds())
+            
+            sessions_data.append({
+                'session_id': session.id,
+                'start_time': session.start_time.isoformat() if session.start_time else None,
+                'last_activity': session.last_activity.isoformat() if session.last_activity else None,
+                'duration': duration,
+                'page_views': len(session_page_views),
+                'events': len(session_events),
+                'country': session.country or 'Unknown',
+                'city': session.city or 'Unknown',
+                'device_type': session.device_type or 'Unknown',
+                'browser': session.browser or 'Unknown',
+                'os': session.os or 'Unknown',
+                'ip_address': session.ip_address or 'Unknown',
+                'pages_visited': [
+                    {
+                        'url': pv.page_url,
+                        'title': pv.page_title,
+                        'timestamp': pv.timestamp.isoformat() if pv.timestamp else None,
+                        'duration': pv.duration
+                    }
+                    for pv in session_page_views[:20]  # Limit to 20 most recent
+                ],
+                'events_list': [
+                    {
+                        'event_name': e.event_name,
+                        'event_type': e.event_type,
+                        'page_url': e.page_url,
+                        'page_title': e.page_title,
+                        'timestamp': e.timestamp.isoformat() if e.timestamp else None,
+                        'properties': e.properties or {}
+                    }
+                    for e in session_events[:20]  # Limit to 20 most recent
+                ]
+            })
+        
+        # Aggregate statistics
+        total_sessions = len(sessions)
+        total_page_views = len(page_views)
+        total_events = len(events)
+        
+        # Location breakdown
+        location_breakdown = {}
+        for session in sessions:
+            location_key = f"{session.city or 'Unknown'}, {session.country or 'Unknown'}"
+            location_breakdown[location_key] = location_breakdown.get(location_key, 0) + 1
+        
+        # Pages visited breakdown
+        pages_breakdown = {}
+        for pv in page_views:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(pv.page_url)
+                page_path = parsed.path or '/'
+            except:
+                page_path = pv.page_url[:50] if pv.page_url else '/'
+            pages_breakdown[page_path] = pages_breakdown.get(page_path, 0) + 1
+        
+        # Events breakdown
+        events_breakdown = {}
+        for event in events:
+            events_breakdown[event.event_name] = events_breakdown.get(event.event_name, 0) + 1
+        
+        return jsonify({
+            'filter_type': filter_type,
+            'filter_value': filter_value,
+            'total_sessions': total_sessions,
+            'total_page_views': total_page_views,
+            'total_events': total_events,
+            'sessions': sessions_data,
+            'location_breakdown': location_breakdown,
+            'pages_breakdown': pages_breakdown,
+            'events_breakdown': events_breakdown
+        }), 200
+        
+    except Exception as e:
+        print(f"Error getting detailed metrics: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
