@@ -707,8 +707,63 @@ def get_detailed_metrics():
             filter_condition = and_(filter_condition, UserSession.browser == filter_value)
         elif filter_type == 'os':
             filter_condition = and_(filter_condition, UserSession.os == filter_value)
+        elif filter_type == 'country':
+            filter_condition = and_(filter_condition, UserSession.country == filter_value)
+        elif filter_type == 'city':
+            # For city, we need to handle the format "city, country" or just "city"
+            # Check if value contains a comma (city, country format)
+            if ',' in filter_value:
+                parts = [p.strip() for p in filter_value.split(',', 1)]
+                city_name = parts[0]
+                country_name = parts[1] if len(parts) > 1 else None
+                if country_name:
+                    filter_condition = and_(
+                        filter_condition,
+                        UserSession.city == city_name,
+                        UserSession.country == country_name
+                    )
+                else:
+                    filter_condition = and_(filter_condition, UserSession.city == city_name)
+            else:
+                filter_condition = and_(filter_condition, UserSession.city == filter_value)
+        elif filter_type == 'page':
+            # For page filtering, we need to filter sessions that have page views matching the URL
+            # First get session IDs that have this page URL
+            matching_page_views = PageView.query.filter(
+                and_(
+                    PageView.timestamp >= start_time,
+                    PageView.page_url == filter_value
+                )
+            ).all()
+            session_ids_from_pages = [pv.session_id for pv in matching_page_views]
+            if session_ids_from_pages:
+                filter_condition = and_(
+                    filter_condition,
+                    UserSession.id.in_(session_ids_from_pages)
+                )
+            else:
+                # No sessions found for this page, return empty result
+                filter_condition = and_(filter_condition, UserSession.id == None)  # This will return no results
+        elif filter_type == 'event':
+            # For event filtering, we need to filter sessions that have events matching the event name
+            # First get session IDs that have this event name
+            matching_events = AnalyticsEvent.query.filter(
+                and_(
+                    AnalyticsEvent.timestamp >= start_time,
+                    AnalyticsEvent.event_name == filter_value
+                )
+            ).all()
+            session_ids_from_events = [e.session_id for e in matching_events if e.session_id]
+            if session_ids_from_events:
+                filter_condition = and_(
+                    filter_condition,
+                    UserSession.id.in_(session_ids_from_events)
+                )
+            else:
+                # No sessions found for this event, return empty result
+                filter_condition = and_(filter_condition, UserSession.id == None)  # This will return no results
         else:
-            return jsonify({'error': 'Invalid filter type. Must be device, browser, or os'}), 400
+            return jsonify({'error': 'Invalid filter type. Must be device, browser, os, country, city, page, or event'}), 400
         
         # Get sessions matching the filter
         sessions = UserSession.query.filter(filter_condition).order_by(desc(UserSession.start_time)).all()
