@@ -66,9 +66,17 @@ class APIKey(db.Model):
     last_used = db.Column(db.DateTime)
     expires_at = db.Column(db.DateTime)  # Optional expiration
     
+    # Free tier fields
+    is_free_tier = db.Column(db.Boolean, default=False, nullable=False)  # Special free tier key
+    free_tier_type = db.Column(db.String(50))  # 'educational', 'nonprofit', 'partner', etc.
+    granted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # Admin who granted it
+    granted_at = db.Column(db.DateTime)  # When it was granted
+    notes = db.Column(db.Text)  # Optional notes about why it was granted
+    
     # Relationships
     usage_logs = db.relationship('UsageLog', backref='api_key', lazy=True)
     rate_limits = db.relationship('RateLimit', backref='api_key', lazy=True)
+    granted_by_user = db.relationship('User', foreign_keys=[granted_by], backref='granted_free_tier_keys')
     
     @staticmethod
     def generate_key():
@@ -86,7 +94,12 @@ class APIKey(db.Model):
             'rate_limit': self.rate_limit,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_used': self.last_used.isoformat() if self.last_used else None,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None
+            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'is_free_tier': self.is_free_tier,
+            'free_tier_type': self.free_tier_type,
+            'granted_by': self.granted_by,
+            'granted_at': self.granted_at.isoformat() if self.granted_at else None,
+            'notes': self.notes
         }
         if include_key:
             data['key'] = self.key
@@ -108,6 +121,7 @@ class UsageLog(db.Model):
     user_agent = db.Column(db.String(500))
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     error_message = db.Column(db.Text)  # Error details if any
+    is_free_tier = db.Column(db.Boolean, default=False, nullable=False)  # Track if this was a free tier request
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization"""
@@ -123,7 +137,8 @@ class UsageLog(db.Model):
             'ip_address': self.ip_address,
             'user_agent': self.user_agent,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
-            'error_message': self.error_message
+            'error_message': self.error_message,
+            'is_free_tier': self.is_free_tier
         }
 
 class RateLimit(db.Model):

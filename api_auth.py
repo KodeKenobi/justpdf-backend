@@ -31,6 +31,29 @@ def verify_api_key(api_key_string):
     
     return api_key.user
 
+def verify_api_key_with_key(api_key_string):
+    """Verify API key and return both user and API key object"""
+    if not api_key_string:
+        return None, None
+    
+    from database import db
+    from models import APIKey
+    
+    # Find API key
+    api_key = APIKey.query.filter_by(key=api_key_string, is_active=True).first()
+    if not api_key:
+        return None, None
+    
+    # Check if key is expired
+    if api_key.expires_at and api_key.expires_at < datetime.utcnow():
+        return None, None
+    
+    # Update last used timestamp
+    api_key.last_used = datetime.utcnow()
+    db.session.commit()
+    
+    return api_key.user, api_key
+
 def require_api_key(f):
     """Decorator to require valid API key"""
     @wraps(f)
@@ -48,15 +71,15 @@ def require_api_key(f):
         if not api_key:
             return jsonify({'error': 'API key required'}), 401
         
-        # Verify API key
-        user = verify_api_key(api_key)
-        if not user:
+        # Verify API key and get both user and key object
+        user, api_key_obj = verify_api_key_with_key(api_key)
+        if not user or not api_key_obj:
             return jsonify({'error': 'Invalid API key'}), 401
         
-        # Store user in g for use in route
+        # Store user and API key in g for use in route
         g.current_user = user
-        from models import APIKey
-        g.current_api_key = APIKey.query.filter_by(key=api_key).first()
+        g.current_api_key = api_key_obj
+        g.is_free_tier = api_key_obj.is_free_tier  # Store free tier status for easy access
         
         return f(*args, **kwargs)
     return decorated_function
@@ -70,6 +93,9 @@ def log_api_usage(endpoint, method, status_code, file_size=None, processing_time
         from database import db
         from models import UsageLog
         
+        # Check if this is a free tier request
+        is_free_tier = getattr(g, 'is_free_tier', False) or (g.current_api_key.is_free_tier if g.current_api_key else False)
+        
         usage_log = UsageLog(
             api_key_id=g.current_api_key.id,
             user_id=g.current_user.id,
@@ -80,7 +106,8 @@ def log_api_usage(endpoint, method, status_code, file_size=None, processing_time
             processing_time=processing_time,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent', ''),
-            error_message=error_message
+            error_message=error_message,
+            is_free_tier=is_free_tier
         )
         
         db.session.add(usage_log)
@@ -134,24 +161,78 @@ def require_rate_limit(f):
         if not hasattr(g, 'current_api_key'):
             return f(*args, **kwargs)
         
-        # Check rate limit
-        allowed, remaining = check_rate_limit(g.current_api_key.id)
-        if not allowed:
-            return jsonify({
-                'error': 'Rate limit exceeded',
-                'limit': g.current_api_key.rate_limit,
-                'reset_time': datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-            }), 429
+        # Free tier keys bypass rate limiting (they can have very high limits set)
+        is_free_tier = getattr(g, 'is_free_tier', False) or (g.current_api_key.is_free_tier if g.current_api_key else False)
         
-        # Add rate limit info to response headers
-        response = f(*args, **kwargs)
-        if hasattr(response, 'headers'):
-            response.headers['X-RateLimit-Limit'] = str(g.current_api_key.rate_limit)
-            response.headers['X-RateLimit-Remaining'] = str(remaining)
-            response.headers['X-RateLimit-Reset'] = str(int((datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)).timestamp()))
-        
-        return response
+        if not is_free_tier:
+            # Check rate limit for non-free tier keys
+            allowed, remaining = check_rate_limit(g.current_api_key.id)
+            if not allowed:
+                return jsonify({
+                    'error': 'Rate limit exceeded',
+                    'limit': g.current_api_key.rate_limit,
+                    'reset_time': datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                }), 429
+            
+            # Add rate limit info to response headers
+            response = f(*args, **kwargs)
+            if hasattr(response, 'headers'):
+                response.headers['X-RateLimit-Limit'] = str(g.current_api_key.rate_limit)
+                response.headers['X-RateLimit-Remaining'] = str(remaining)
+                response.headers['X-RateLimit-Reset'] = str(int((datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)).timestamp()))
+            
+            return response
+        else:
+            # Free tier: still check rate limit but use the key's rate_limit value
+            # This allows setting very high limits (like 100000) for free tier keys
+            allowed, remaining = check_rate_limit(g.current_api_key.id)
+            if not allowed:
+                return jsonify({
+                    'error': 'Rate limit exceeded',
+                    'limit': g.current_api_key.rate_limit,
+                    'reset_time': datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                }), 429
+            
+            response = f(*args, **kwargs)
+            if hasattr(response, 'headers'):
+                response.headers['X-RateLimit-Limit'] = str(g.current_api_key.rate_limit)
+                response.headers['X-RateLimit-Remaining'] = str(remaining)
+                response.headers['X-RateLimit-Reset'] = str(int((datetime.utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)).timestamp()))
+                response.headers['X-Free-Tier'] = 'true'
+            
+            return response
     return decorated_function
+
+def should_bypass_monthly_limit():
+    """Check if the current request should bypass monthly call limits"""
+    if not hasattr(g, 'current_api_key'):
+        return False
+    return getattr(g, 'is_free_tier', False) or (g.current_api_key.is_free_tier if g.current_api_key else False)
+
+def increment_monthly_usage():
+    """Increment monthly_used counter for the current user (skip for free tier keys)"""
+    if should_bypass_monthly_limit():
+        return  # Don't increment for free tier keys
+    
+    if not hasattr(g, 'current_user') or not g.current_user:
+        return
+    
+    try:
+        from database import db
+        from models import User
+        
+        # Refresh user from database
+        user = User.query.get(g.current_user.id)
+        if not user:
+            return
+        
+        # Only increment if not unlimited
+        if user.monthly_call_limit != -1:
+            user.monthly_used += 1
+            db.session.commit()
+    except Exception as e:
+        # Don't let usage tracking errors break the API
+        print(f"Error incrementing monthly usage: {e}")
 
 def get_user_stats(user_id):
     """Get usage statistics for a user"""

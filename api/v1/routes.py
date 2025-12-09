@@ -8,10 +8,69 @@ import subprocess
 import threading
 import base64
 
-from api_auth import require_api_key, require_rate_limit, log_api_usage
+from api_auth import require_api_key, require_rate_limit, log_api_usage, should_bypass_monthly_limit, increment_monthly_usage
 
 # Create Blueprint
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
+
+@api_v1.before_request
+def check_monthly_limits():
+    """Check monthly call limits before processing requests (bypass for free tier)"""
+    # Skip for OPTIONS requests
+    if request.method == 'OPTIONS':
+        return None
+    
+    # Only check if user is authenticated via API key
+    if not hasattr(g, 'current_user') or not g.current_user:
+        return None
+    
+    # Bypass monthly limits for free tier keys
+    if should_bypass_monthly_limit():
+        return None
+    
+    # Check monthly call limits for regular users
+    from database import db
+    from models import User
+    from datetime import datetime, timedelta
+    
+    # Refresh user from database to get latest monthly_used
+    user = User.query.get(g.current_user.id)
+    if not user:
+        return None
+    
+    # Check if monthly limit is exceeded (unless unlimited, which is -1)
+    if user.monthly_call_limit != -1:
+        if user.monthly_used >= user.monthly_call_limit:
+            # Check if it's time to reset monthly counter
+            now = datetime.utcnow()
+            reset_date = user.monthly_reset_date or user.created_at
+            
+            # Reset if it's been more than 30 days since last reset
+            days_since_reset = (now - reset_date).days
+            if days_since_reset >= 30:
+                user.monthly_used = 0
+                user.monthly_reset_date = now
+                db.session.commit()
+            else:
+                # Still exceeded, return error
+                from flask import jsonify
+                return jsonify({
+                    'error': 'Monthly call limit exceeded',
+                    'limit': user.monthly_call_limit,
+                    'used': user.monthly_used,
+                    'remaining': 0,
+                    'reset_date': user.monthly_reset_date.isoformat() if user.monthly_reset_date else None
+                }), 429
+    
+    return None
+
+@api_v1.after_request
+def increment_usage_after_request(response):
+    """Increment monthly usage after successful API requests"""
+    # Only increment for successful requests (2xx status codes)
+    if response.status_code >= 200 and response.status_code < 300:
+        increment_monthly_usage()
+    return response
 
 # Define folder constants
 UPLOAD_FOLDER = "uploads"

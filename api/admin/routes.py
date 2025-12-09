@@ -748,3 +748,339 @@ def get_notification_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============================================================================
+# FREE TIER API KEY MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@admin_api.route('/free-tier-keys', methods=['GET'])
+@require_admin
+def list_free_tier_keys():
+    """List all free tier API keys"""
+    try:
+        from models import APIKey, User
+        from database import db
+        
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        search = request.args.get('search', '')
+        free_tier_type = request.args.get('free_tier_type', '')
+        is_active = request.args.get('is_active', '')
+        
+        # Build query - only free tier keys
+        query = APIKey.query.filter_by(is_free_tier=True)
+        
+        if search:
+            query = query.filter(
+                or_(
+                    APIKey.name.contains(search),
+                    APIKey.key.contains(search),
+                    APIKey.notes.contains(search)
+                )
+            )
+        if free_tier_type:
+            query = query.filter_by(free_tier_type=free_tier_type)
+        if is_active:
+            query = query.filter_by(is_active=(is_active.lower() == 'true'))
+        
+        # Order by creation date (newest first)
+        query = query.order_by(desc(APIKey.created_at))
+        
+        # Paginate
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        keys = pagination.items
+        
+        # Get usage stats for each key
+        from models import UsageLog
+        from sqlalchemy import func
+        
+        result = []
+        for key in keys:
+            # Get usage stats
+            total_usage = UsageLog.query.filter_by(api_key_id=key.id).count()
+            recent_usage = UsageLog.query.filter(
+                UsageLog.api_key_id == key.id,
+                UsageLog.timestamp >= datetime.utcnow() - timedelta(days=30)
+            ).count()
+            
+            key_dict = key.to_dict(include_key=False)
+            key_dict['usage'] = {
+                'total': total_usage,
+                'last_30_days': recent_usage
+            }
+            
+            # Add granted by user email if available
+            if key.granted_by:
+                granted_by_user = User.query.get(key.granted_by)
+                if granted_by_user:
+                    key_dict['granted_by_email'] = granted_by_user.email
+            
+            result.append(key_dict)
+        
+        return jsonify({
+            'keys': result,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/free-tier-keys', methods=['POST'])
+@require_admin
+def create_free_tier_key():
+    """Create a new free tier API key"""
+    try:
+        from models import APIKey, User
+        from database import db
+        from api_auth import generate_api_key
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Required fields
+        name = data.get('name')
+        if not name:
+            return jsonify({'error': 'Name is required'}), 400
+        
+        # Optional fields
+        free_tier_type = data.get('free_tier_type', 'educational')  # Default to educational
+        rate_limit = data.get('rate_limit', 10000)  # High default rate limit for free tier
+        notes = data.get('notes', '')
+        expires_at = data.get('expires_at')  # Optional expiration date
+        
+        # Parse expiration date if provided
+        expiration_date = None
+        if expires_at:
+            try:
+                expiration_date = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            except:
+                return jsonify({'error': 'Invalid expiration date format'}), 400
+        
+        # Create a system user for free tier keys (or use a dedicated user)
+        # For now, we'll create keys associated with the admin user who creates them
+        # In production, you might want a dedicated system user
+        system_user = User.query.filter_by(role='super_admin').first()
+        if not system_user:
+            system_user = g.current_user
+        
+        # Generate API key
+        key_string = generate_api_key()
+        
+        # Create the API key
+        api_key = APIKey(
+            key=key_string,
+            name=name,
+            user_id=system_user.id,
+            is_active=True,
+            rate_limit=rate_limit,
+            is_free_tier=True,
+            free_tier_type=free_tier_type,
+            granted_by=g.current_user.id,
+            granted_at=datetime.utcnow(),
+            notes=notes,
+            expires_at=expiration_date
+        )
+        
+        db.session.add(api_key)
+        db.session.commit()
+        
+        # Return the key with the actual key string (only shown once)
+        result = api_key.to_dict(include_key=True)
+        result['granted_by_email'] = g.current_user.email
+        
+        return jsonify({
+            'message': 'Free tier API key created successfully',
+            'key': result
+        }), 201
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/free-tier-keys/<int:key_id>', methods=['GET'])
+@require_admin
+def get_free_tier_key(key_id):
+    """Get details of a specific free tier API key"""
+    try:
+        from models import APIKey, User, UsageLog
+        from database import db
+        from sqlalchemy import func
+        
+        api_key = APIKey.query.filter_by(id=key_id, is_free_tier=True).first()
+        if not api_key:
+            return jsonify({'error': 'Free tier API key not found'}), 404
+        
+        # Get detailed usage stats
+        total_usage = UsageLog.query.filter_by(api_key_id=api_key.id).count()
+        recent_usage = UsageLog.query.filter(
+            UsageLog.api_key_id == api_key.id,
+            UsageLog.timestamp >= datetime.utcnow() - timedelta(days=30)
+        ).count()
+        
+        # Get usage by endpoint
+        usage_by_endpoint = db.session.query(
+            UsageLog.endpoint,
+            func.count(UsageLog.id).label('count')
+        ).filter(
+            UsageLog.api_key_id == api_key.id
+        ).group_by(
+            UsageLog.endpoint
+        ).order_by(
+            func.count(UsageLog.id).desc()
+        ).limit(10).all()
+        
+        result = api_key.to_dict(include_key=False)
+        result['usage'] = {
+            'total': total_usage,
+            'last_30_days': recent_usage,
+            'by_endpoint': [{'endpoint': ep, 'count': count} for ep, count in usage_by_endpoint]
+        }
+        
+        # Add granted by user email if available
+        if api_key.granted_by:
+            granted_by_user = User.query.get(api_key.granted_by)
+            if granted_by_user:
+                result['granted_by_email'] = granted_by_user.email
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/free-tier-keys/<int:key_id>', methods=['PUT'])
+@require_admin
+def update_free_tier_key(key_id):
+    """Update a free tier API key"""
+    try:
+        from models import APIKey
+        from database import db
+        
+        api_key = APIKey.query.filter_by(id=key_id, is_free_tier=True).first()
+        if not api_key:
+            return jsonify({'error': 'Free tier API key not found'}), 404
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Update allowed fields
+        if 'name' in data:
+            api_key.name = data['name']
+        if 'free_tier_type' in data:
+            api_key.free_tier_type = data['free_tier_type']
+        if 'rate_limit' in data:
+            api_key.rate_limit = data['rate_limit']
+        if 'notes' in data:
+            api_key.notes = data['notes']
+        if 'is_active' in data:
+            api_key.is_active = data['is_active']
+        if 'expires_at' in data:
+            if data['expires_at']:
+                try:
+                    api_key.expires_at = datetime.fromisoformat(data['expires_at'].replace('Z', '+00:00'))
+                except:
+                    return jsonify({'error': 'Invalid expiration date format'}), 400
+            else:
+                api_key.expires_at = None
+        
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Free tier API key updated successfully',
+            'key': api_key.to_dict(include_key=False)
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/free-tier-keys/<int:key_id>', methods=['DELETE'])
+@require_admin
+def revoke_free_tier_key(key_id):
+    """Revoke (deactivate) a free tier API key"""
+    try:
+        from models import APIKey
+        from database import db
+        
+        api_key = APIKey.query.filter_by(id=key_id, is_free_tier=True).first()
+        if not api_key:
+            return jsonify({'error': 'Free tier API key not found'}), 404
+        
+        # Deactivate the key instead of deleting (preserves history)
+        api_key.is_active = False
+        db.session.commit()
+        
+        return jsonify({
+            'message': 'Free tier API key revoked successfully'
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@admin_api.route('/free-tier-keys/stats', methods=['GET'])
+@require_admin
+def get_free_tier_stats():
+    """Get statistics about free tier API key usage"""
+    try:
+        from models import APIKey, UsageLog
+        from database import db
+        from sqlalchemy import func
+        
+        # Total free tier keys
+        total_keys = APIKey.query.filter_by(is_free_tier=True).count()
+        active_keys = APIKey.query.filter_by(is_free_tier=True, is_active=True).count()
+        
+        # Total usage by free tier keys
+        total_usage = db.session.query(func.count(UsageLog.id)).join(
+            APIKey, UsageLog.api_key_id == APIKey.id
+        ).filter(
+            APIKey.is_free_tier == True
+        ).scalar() or 0
+        
+        # Usage in last 30 days
+        recent_usage = db.session.query(func.count(UsageLog.id)).join(
+            APIKey, UsageLog.api_key_id == APIKey.id
+        ).filter(
+            APIKey.is_free_tier == True,
+            UsageLog.timestamp >= datetime.utcnow() - timedelta(days=30)
+        ).scalar() or 0
+        
+        # Usage by free tier type
+        usage_by_type = db.session.query(
+            APIKey.free_tier_type,
+            func.count(UsageLog.id).label('count')
+        ).join(
+            UsageLog, APIKey.id == UsageLog.api_key_id
+        ).filter(
+            APIKey.is_free_tier == True
+        ).group_by(
+            APIKey.free_tier_type
+        ).all()
+        
+        return jsonify({
+            'total_keys': total_keys,
+            'active_keys': active_keys,
+            'inactive_keys': total_keys - active_keys,
+            'total_usage': total_usage,
+            'usage_last_30_days': recent_usage,
+            'usage_by_type': {t: c for t, c in usage_by_type}
+        }), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+

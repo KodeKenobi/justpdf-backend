@@ -221,7 +221,64 @@ def init_db(app):
                     db.session.execute(text("UPDATE users SET monthly_reset_date = :now WHERE monthly_reset_date IS NULL"), {"now": datetime.utcnow()})
                     db.session.commit()
                     print("✅ Added monthly_reset_date")
-            else:
+            
+            # Check and migrate api_keys table for free tier fields
+            if 'api_keys' in tables:
+                print("🔄 Checking api_keys table for missing free tier columns...")
+                api_keys_columns = [col['name'] for col in inspector.get_columns('api_keys')]
+                
+                if 'is_free_tier' not in api_keys_columns:
+                    print("🔄 Migrating: Adding is_free_tier column to api_keys...")
+                    # PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+                    if is_supabase or not is_sqlite:
+                        db.session.execute(text("ALTER TABLE api_keys ADD COLUMN is_free_tier BOOLEAN DEFAULT FALSE"))
+                    else:
+                        db.session.execute(text("ALTER TABLE api_keys ADD COLUMN is_free_tier INTEGER DEFAULT 0"))
+                    db.session.commit()
+                    print("✅ Added is_free_tier to api_keys")
+                
+                if 'free_tier_type' not in api_keys_columns:
+                    print("🔄 Migrating: Adding free_tier_type column to api_keys...")
+                    db.session.execute(text("ALTER TABLE api_keys ADD COLUMN free_tier_type VARCHAR(50)"))
+                    db.session.commit()
+                    print("✅ Added free_tier_type to api_keys")
+                
+                if 'granted_by' not in api_keys_columns:
+                    print("🔄 Migrating: Adding granted_by column to api_keys...")
+                    db.session.execute(text("ALTER TABLE api_keys ADD COLUMN granted_by INTEGER"))
+                    db.session.commit()
+                    print("✅ Added granted_by to api_keys")
+                
+                if 'granted_at' not in api_keys_columns:
+                    print("🔄 Migrating: Adding granted_at column to api_keys...")
+                    db.session.execute(text("ALTER TABLE api_keys ADD COLUMN granted_at TIMESTAMP"))
+                    db.session.commit()
+                    print("✅ Added granted_at to api_keys")
+                
+                if 'notes' not in api_keys_columns:
+                    print("🔄 Migrating: Adding notes column to api_keys...")
+                    # PostgreSQL uses TEXT, SQLite uses TEXT
+                    db.session.execute(text("ALTER TABLE api_keys ADD COLUMN notes TEXT"))
+                    db.session.commit()
+                    print("✅ Added notes to api_keys")
+            
+            # Check and migrate usage_logs table for free tier field
+            if 'usage_logs' in tables:
+                print("🔄 Checking usage_logs table for missing free tier column...")
+                usage_logs_columns = [col['name'] for col in inspector.get_columns('usage_logs')]
+                
+                if 'is_free_tier' not in usage_logs_columns:
+                    print("🔄 Migrating: Adding is_free_tier column to usage_logs...")
+                    # PostgreSQL uses BOOLEAN, SQLite uses INTEGER
+                    if is_supabase or not is_sqlite:
+                        db.session.execute(text("ALTER TABLE usage_logs ADD COLUMN is_free_tier BOOLEAN DEFAULT FALSE"))
+                    else:
+                        db.session.execute(text("ALTER TABLE usage_logs ADD COLUMN is_free_tier INTEGER DEFAULT 0"))
+                    db.session.commit()
+                    print("✅ Added is_free_tier to usage_logs")
+            
+            # If users table doesn't exist, create all tables
+            if 'users' not in tables:
                 # Table doesn't exist - create all tables
                 print("📦 Creating database tables...")
                 db.create_all()
