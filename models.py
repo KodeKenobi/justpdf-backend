@@ -23,7 +23,7 @@ class User(db.Model):
     monthly_reset_date = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)  # Last reset date
     
     # Relationships
-    api_keys = db.relationship('APIKey', backref='user', lazy=True, cascade='all, delete-orphan')
+    api_keys = db.relationship('APIKey', foreign_keys='APIKey.user_id', backref='user', lazy=True, cascade='all, delete-orphan')
     usage_logs = db.relationship('UsageLog', backref='user', lazy=True)
     reset_history = db.relationship('ResetHistory', foreign_keys='ResetHistory.user_id', backref='user', lazy=True)
     
