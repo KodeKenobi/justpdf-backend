@@ -87,6 +87,42 @@ def login_user(email, password):
         if not user.check_password(password):
             return None, "Invalid credentials"
         
+        # CRITICAL: Sync role from Supabase if available
+        # This ensures the backend always has the correct role from Supabase
+        try:
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            
+            # Use hardcoded Supabase connection string
+            supabase_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+            
+            conn = psycopg2.connect(supabase_url, sslmode='require')
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            cursor.execute(
+                "SELECT role, is_active FROM users WHERE email = %s",
+                (email.lower(),)
+            )
+            supabase_user = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            # If user exists in Supabase and role differs, sync it
+            if supabase_user:
+                supabase_role = supabase_user['role']
+                supabase_is_active = supabase_user['is_active']
+                
+                if user.role != supabase_role or user.is_active != supabase_is_active:
+                    print(f"🔄 [LOGIN] Syncing role from Supabase for {email}: {user.role} -> {supabase_role}")
+                    user.role = supabase_role
+                    user.is_active = supabase_is_active
+                    db.session.commit()
+                    print(f"✅ [LOGIN] Role synced from Supabase: {email} now has role {supabase_role}")
+        except Exception as sync_error:
+            # Don't fail login if Supabase sync fails
+            print(f"⚠️ [LOGIN] Failed to sync role from Supabase: {sync_error}")
+        
         # Update last login
         user.last_login = datetime.utcnow()
         db.session.commit()

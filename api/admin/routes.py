@@ -1084,3 +1084,168 @@ def get_free_tier_stats():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@admin_api.route('/test-supabase-users', methods=['GET'])
+@require_admin
+def test_supabase_users():
+    """
+    Retrieve all users from Supabase and return them, along with summary statistics.
+    Requires admin or super_admin role.
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        from urllib.parse import urlparse, quote_plus
+
+        # Use the hardcoded Supabase connection string from database.py or supabase_sync.py
+        # This ensures we are always querying the actual Supabase DB
+        supabase_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+
+        conn = psycopg2.connect(supabase_url, sslmode='require')
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT id, email, role, is_active, subscription_tier,
+                   monthly_call_limit, monthly_used, created_at, last_login
+            FROM users
+            ORDER BY id ASC
+        """)
+        supabase_users = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        # Calculate statistics
+        total_users = len(supabase_users)
+        super_admins = sum(1 for u in supabase_users if u['role'] == 'super_admin')
+        regular_admins = sum(1 for u in supabase_users if u['role'] == 'admin')
+        regular_users = sum(1 for u in supabase_users if u['role'] == 'user')
+        active_users = sum(1 for u in supabase_users if u['is_active'])
+        inactive_users = total_users - active_users
+
+        users_by_tier = {}
+        for user_data in supabase_users:
+            tier = user_data.get('subscription_tier', 'unknown')
+            users_by_tier[tier] = users_by_tier.get(tier, 0) + 1
+
+        stats = {
+            "totalUsers": total_users,
+            "superAdmins": super_admins,
+            "regularAdmins": regular_admins,
+            "regularUsers": regular_users,
+            "activeUsers": active_users,
+            "inactiveUsers": inactive_users,
+            "usersByTier": users_by_tier,
+        }
+
+        return jsonify({"users": supabase_users, "stats": stats}), 200
+
+    except Exception as e:
+        print(f"ERROR in test_supabase_users: {str(e)}")
+        return jsonify({"message": f"Error fetching Supabase users: {str(e)}"}), 500
+
+@admin_api.route('/sync-user-role-from-supabase', methods=['POST'])
+@require_admin
+def sync_user_role_from_supabase():
+    """
+    Sync user role from Supabase to backend database.
+    Requires admin or super_admin role.
+    
+    Body: { "email": "user@example.com" } or empty to sync all users
+    """
+    try:
+        from models import User
+        from database import db
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower() if data.get('email') else None
+
+        # Use the hardcoded Supabase connection string
+        supabase_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+
+        conn = psycopg2.connect(supabase_url, sslmode='require')
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Query Supabase for users
+        if email:
+            cursor.execute(
+                "SELECT id, email, role, is_active FROM users WHERE email = %s",
+                (email,)
+            )
+        else:
+            cursor.execute(
+                "SELECT id, email, role, is_active FROM users ORDER BY email"
+            )
+
+        supabase_users = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not supabase_users:
+            return jsonify({
+                'message': f'No users found in Supabase' + (f' with email {email}' if email else ''),
+                'synced': 0,
+                'updated': 0,
+                'not_found': 0
+            }), 200
+
+        # Sync each user
+        synced_count = 0
+        updated_count = 0
+        not_found_count = 0
+        updates = []
+
+        for supabase_user in supabase_users:
+            user_email = supabase_user['email']
+            supabase_role = supabase_user['role']
+            supabase_is_active = supabase_user['is_active']
+
+            # Check if user exists in backend database
+            backend_user = User.query.filter_by(email=user_email).first()
+
+            if not backend_user:
+                not_found_count += 1
+                continue
+
+            # Check if roles match
+            if backend_user.role == supabase_role and backend_user.is_active == supabase_is_active:
+                synced_count += 1
+            else:
+                old_role = backend_user.role
+                old_active = backend_user.is_active
+                
+                # Update role and active status in backend database
+                backend_user.role = supabase_role
+                backend_user.is_active = supabase_is_active
+                
+                updates.append({
+                    'email': user_email,
+                    'old_role': old_role,
+                    'new_role': supabase_role,
+                    'old_active': old_active,
+                    'new_active': supabase_is_active
+                })
+                updated_count += 1
+
+        # Commit all updates
+        if updated_count > 0:
+            db.session.commit()
+
+        return jsonify({
+            'message': 'Sync completed successfully',
+            'total_in_supabase': len(supabase_users),
+            'synced': synced_count,
+            'updated': updated_count,
+            'not_found_in_backend': not_found_count,
+            'updates': updates
+        }), 200
+
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        print(f"ERROR in sync_user_role_from_supabase: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"message": f"Error syncing user roles: {str(e)}"}), 500
+
