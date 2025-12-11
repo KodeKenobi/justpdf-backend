@@ -266,9 +266,11 @@ def get_events_list():
         else:
             start_time = now - timedelta(hours=24)
         
-        # Build query
+        # Build query (exclude all admin pages)
         query = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
+        ).filter(
+            ~AnalyticsEvent.page_url.like('%/admin/%')
         )
         
         # Filter by event type if specified
@@ -315,12 +317,14 @@ def get_events_list():
                 'session_id': event.session_id,
             })
         
-        # Get unique event types for filtering
+        # Get unique event types for filtering (exclude all admin pages)
         event_types = db.session.query(
             AnalyticsEvent.event_name,
             func.count(AnalyticsEvent.id).label('count')
         ).filter(
             AnalyticsEvent.timestamp >= start_time
+        ).filter(
+            ~AnalyticsEvent.page_url.like('%/admin/%')
         ).group_by(AnalyticsEvent.event_name).order_by(desc('count')).all()
         
         return jsonify({
@@ -380,14 +384,18 @@ def get_dashboard():
             UserSession.start_time >= start_time
         ).count()
         
-        # Total page views
+        # Total page views (exclude all admin pages)
         total_page_views = PageView.query.filter(
             PageView.timestamp >= start_time
+        ).filter(
+            ~PageView.page_url.like('%/admin/%')
         ).count()
         
-        # Total events
+        # Total events (exclude all admin pages)
         total_events = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
+        ).filter(
+            ~AnalyticsEvent.page_url.like('%/admin/%')
         ).count()
         
         # Average session duration (in seconds)
@@ -407,22 +415,26 @@ def get_dashboard():
             )
             avg_duration = int(total_duration / len(sessions_with_duration)) if sessions_with_duration else 0
         
-        # Top pages
+        # Top pages (exclude all admin pages)
         top_pages_query = db.session.query(
             PageView.page_url,
             func.count(PageView.id).label('views')
         ).filter(
             PageView.timestamp >= start_time
+        ).filter(
+            ~PageView.page_url.like('%/admin/%')
         ).group_by(PageView.page_url).order_by(desc('views')).limit(10).all()
         
         top_pages = [{'page': page, 'views': views} for page, views in top_pages_query]
         
-        # Top events
+        # Top events (exclude all admin pages)
         top_events_query = db.session.query(
             AnalyticsEvent.event_name,
             func.count(AnalyticsEvent.id).label('count')
         ).filter(
             AnalyticsEvent.timestamp >= start_time
+        ).filter(
+            ~AnalyticsEvent.page_url.like('%/admin/%')
         ).group_by(AnalyticsEvent.event_name).order_by(desc('count')).limit(10).all()
         
         top_events = [{'event': event, 'count': count} for event, count in top_events_query]
@@ -493,9 +505,11 @@ def get_dashboard():
         
         city_breakdown = [{'city': city or 'Unknown', 'country': country or 'Unknown', 'count': count} for city, country, count in city_breakdown_query]
         
-        # Recent activity (last 100 events) with detailed descriptions
+        # Recent activity (last 100 events) with detailed descriptions (exclude all admin pages)
         recent_events = AnalyticsEvent.query.filter(
             AnalyticsEvent.timestamp >= start_time
+        ).filter(
+            ~AnalyticsEvent.page_url.like('%/admin/%')
         ).order_by(desc(AnalyticsEvent.timestamp)).limit(100).all()
         
         recent_activity = []
@@ -618,10 +632,11 @@ def get_dashboard():
                 'timestamp': int(event.timestamp.timestamp() * 1000) if event.timestamp else int(datetime.utcnow().timestamp() * 1000)
             })
         
-        # Error rate (events with error in name or type)
+        # Error rate (events with error in name or type, exclude all admin pages)
         error_events = AnalyticsEvent.query.filter(
             and_(
                 AnalyticsEvent.timestamp >= start_time,
+                ~AnalyticsEvent.page_url.like('%/admin/%'),
                 or_(
                     AnalyticsEvent.event_name.ilike('%error%'),
                     AnalyticsEvent.event_type.ilike('%error%')
@@ -631,10 +646,11 @@ def get_dashboard():
         
         error_rate = (error_events / total_events * 100) if total_events > 0 else 0
         
-        # Conversion rate (events with conversion in name)
+        # Conversion rate (events with conversion in name, exclude all admin pages)
         conversion_events = AnalyticsEvent.query.filter(
             and_(
                 AnalyticsEvent.timestamp >= start_time,
+                ~AnalyticsEvent.page_url.like('%/admin/%'),
                 AnalyticsEvent.event_name.ilike('%conversion%')
             )
         ).count()
