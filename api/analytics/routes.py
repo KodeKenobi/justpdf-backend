@@ -891,20 +891,3 @@ def get_detailed_metrics():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-
-        }), 200
-
-        
-
-    except Exception as e:
-
-        print(f"Error getting events list: {e}")
-
-        import traceback
-
-        traceback.print_exc()
-
-        return jsonify({'error': str(e)}), 500
-
-
-
