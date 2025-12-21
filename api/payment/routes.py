@@ -463,7 +463,7 @@ def get_billing_history():
                 plan_name = tier_name.get(current_tier.lower(), current_tier)
                 
                 # Determine amount based on tier
-                tier_amounts = {'free': 0.0, 'premium': 29.0, 'production': 29.0, 'enterprise': 49.0}
+                tier_amounts = {'free': 0.0, 'premium': 9.0, 'production': 9.0, 'enterprise': 19.0}
                 subscription_amount = tier_amounts.get(current_tier.lower(), 0.0)
                 
                 # Use most recent notification date or user created_at

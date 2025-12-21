@@ -485,7 +485,7 @@ def get_welcome_email_html(user_email: str, tier: str = 'free') -> tuple[str, st
                 'Admin dashboard access',
                 'Community support'
             ],
-            'upgrade_message': 'Ready for more? Upgrade to Production ($29/month) for 5,000 API calls or Enterprise ($49/month) for unlimited calls!'
+            'upgrade_message': 'Ready for more? Upgrade to Production ($9/month) for 5,000 API calls or Enterprise ($19/month) for unlimited calls!'
         },
         'premium': {
             'name': 'Production Plan',
@@ -498,7 +498,7 @@ def get_welcome_email_html(user_email: str, tier: str = 'free') -> tuple[str, st
                 'Admin dashboard access',
                 'Priority support'
             ],
-            'upgrade_message': 'Need unlimited calls? Upgrade to Enterprise ($49/month) for unlimited API calls and enterprise features!'
+            'upgrade_message': 'Need unlimited calls? Upgrade to Enterprise ($19/month) for unlimited API calls and enterprise features!'
         },
         'enterprise': {
             'name': 'Enterprise Plan',

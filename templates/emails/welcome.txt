@@ -20,10 +20,10 @@ Go to Dashboard: https://www.trevnoctilla.com/dashboard
 
 Explore Other Plans:
 
-Production Plan - $29/month
+Production Plan - $9/month
 5,000 API calls/month • Priority support • All features
 
-Enterprise Plan - $49/month
+Enterprise Plan - $19/month
 Unlimited API calls • Dedicated support • Custom SLAs • White-label options
 
 {{ tier_info.upgrade_message }}

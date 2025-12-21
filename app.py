@@ -81,9 +81,20 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
 # Health check endpoint (must be defined early, before any heavy initialization)
 @app.route("/health", methods=["GET"])
 def health_check():
-    """Simple health check for Railway deployment"""
+    """Simple health check for Railway deployment with Trevnoctilla backlink"""
     try:
-        return jsonify({"status": "healthy", "message": "Backend is running"}), 200
+        response = jsonify({
+            "status": "healthy",
+            "message": "Backend is running",
+            "service": "Trevnoctilla API Backend",
+            "website": "https://www.trevnoctilla.com",
+            "powered_by": "Trevnoctilla - Free Online PDF Editor & File Converter"
+        })
+        # Add backlink in headers
+        response.headers["X-Powered-By"] = "Trevnoctilla"
+        response.headers["X-Service-URL"] = "https://www.trevnoctilla.com"
+        response.headers["Link"] = '<https://www.trevnoctilla.com>; rel="canonical"'
+        return response, 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -163,6 +174,25 @@ try:
 except Exception as e:
     print(f"⚠️ Failed to initialize JWT: {e}")
     # Continue anyway - health endpoint doesn't need JWT
+
+# Add backlink headers to all responses
+@app.after_request
+def add_backlink_headers(response):
+    """Add Trevnoctilla backlink headers to all API responses"""
+    # Only add if not already set (to avoid overriding specific routes)
+    if 'X-Powered-By' not in response.headers:
+        response.headers['X-Powered-By'] = 'Trevnoctilla'
+    if 'X-Service-URL' not in response.headers:
+        response.headers['X-Service-URL'] = 'https://www.trevnoctilla.com'
+    # Add Link header for SEO backlink
+    existing_link = response.headers.get('Link', '')
+    if 'trevnoctilla.com' not in existing_link:
+        link_header = '<https://www.trevnoctilla.com>; rel="canonical"'
+        if existing_link:
+            response.headers['Link'] = f'{existing_link}, {link_header}'
+        else:
+            response.headers['Link'] = link_header
+    return response
 
 # Initialize database synchronously (required for admin endpoints)
 try:
@@ -416,6 +446,28 @@ def index():
             return f"Failed to save file: {str(e)}", 500
             
         return redirect(url_for("convert_pdf", filename=file.filename))
+    
+    # For GET requests, return API info with backlinks
+    if request.headers.get('Accept', '').startswith('application/json'):
+        response = jsonify({
+            "service": "Trevnoctilla API Backend",
+            "description": "Free Online PDF Editor & File Converter API",
+            "website": "https://www.trevnoctilla.com",
+            "api_docs": "https://www.trevnoctilla.com/api-docs",
+            "features": [
+                "PDF editing and manipulation",
+                "Video, audio, and image conversion",
+                "QR code generation",
+                "File processing APIs"
+            ],
+            "status": "operational"
+        })
+        # Add backlink headers
+        response.headers["X-Powered-By"] = "Trevnoctilla"
+        response.headers["X-Service-URL"] = "https://www.trevnoctilla.com"
+        response.headers["Link"] = '<https://www.trevnoctilla.com>; rel="canonical", <https://www.trevnoctilla.com/api-docs>; rel="documentation"'
+        return response
+    
     return render_template("index.html")
 
 @app.route("/get_page_count", methods=["POST"])
