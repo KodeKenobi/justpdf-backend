@@ -63,7 +63,7 @@ def check_monthly_limits():
                 }), 429
     
     return None
-
+    
 @api_v1.after_request
 def increment_usage_after_request(response):
     """Increment monthly usage after successful API requests"""
@@ -1089,3 +1089,4 @@ def health_check():
         'timestamp': datetime.utcnow().isoformat(),
         'version': '1.0.0'
     }), 200
+
