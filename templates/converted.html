@@ -2244,16 +2244,7 @@
 
           // Determine if this is for preview or download
           const isPreview = event.data.type === "GENERATE_PDF_FOR_PREVIEW";
-          console.log("Is preview mode:", isPreview);
-
-          try {
-            generatePDF(isPreview);
-            console.log("generatePDF function called successfully");
-          } catch (error) {
-            console.error("ERROR calling generatePDF:", error);
-            console.error("Error message:", error.message);
-            console.error("Error stack:", error.stack);
-          }
+          generatePDF(isPreview);
         } else if (event.data.type === "CONFIGURE_SIGNATURE_MODAL") {
           console.log("✍️ Configuring signature modal behavior:", event.data);
           // Set a flag to control signature modal behavior
@@ -2283,9 +2274,6 @@
       }
 
       async function generatePDF(isPreview = false) {
-        console.log("=== GENERATEPDF FUNCTION STARTED ===");
-        console.log("isPreview:", isPreview);
-
         // Prevent duplicate execution
         if (isGeneratingPDF) {
           console.log(
@@ -2295,7 +2283,6 @@
         }
 
         isGeneratingPDF = true;
-        console.log("Set isGeneratingPDF to true");
 
         // Declare variables outside try block so they're accessible in catch/finally
         let pagesToProcess = [];
@@ -2523,31 +2510,20 @@
             // Generate PDF for preview
             console.log("Generating PDF for preview:", filename);
 
-            try {
-              const pdfBlob = pdf.output("blob");
-              console.log("PDF blob created, size:", pdfBlob.size, "type:", pdfBlob.type);
+            const pdfBlob = pdf.output("blob");
+            const url = URL.createObjectURL(pdfBlob);
 
-              const url = URL.createObjectURL(pdfBlob);
-              console.log("Blob URL created:", url);
+            // Send the PDF URL to the parent component
+            window.parent.postMessage(
+              {
+                type: "PDF_GENERATED_FOR_PREVIEW",
+                pdfUrl: url,
+                filename: filename,
+              },
+              "*"
+            );
 
-              // Send the PDF URL to the parent component
-              console.log("Sending PDF_GENERATED_FOR_PREVIEW message to parent");
-              window.parent.postMessage(
-                {
-                  type: "PDF_GENERATED_FOR_PREVIEW",
-                  pdfUrl: url,
-                  filename: filename,
-                },
-                "*"
-              );
-
-              console.log("PDF_GENERATED_FOR_PREVIEW message sent successfully");
-              console.log("=== PDF GENERATION FOR PREVIEW COMPLETED ===");
-            } catch (error) {
-              console.error("ERROR generating PDF for preview:", error);
-              console.error("Error message:", error.message);
-            }
-
+            console.log("PDF generated for preview successfully");
             showNotification("PDF generated for preview!", false);
           } else {
             // Download the PDF
@@ -2570,11 +2546,7 @@
             showNotification("PDF downloaded successfully!", false);
           }
         } catch (error) {
-          console.error("=== PDF GENERATION ERROR ===");
           console.error("Error generating PDF:", error);
-          console.error("Error message:", error.message);
-          console.error("Error stack:", error.stack);
-          console.error("Error type:", error.constructor.name);
           showNotification("Error generating PDF: " + error.message, true);
 
           // Restore original page visibility on error
