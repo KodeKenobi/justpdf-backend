@@ -304,7 +304,7 @@ CMD ["python", "start_api.py"]
 - **Documentation**: https://trevnoctilla.com/api/docs
 - **Dashboard**: https://trevnoctilla.com/dashboard
 - **Admin Panel**: https://trevnoctilla.com/admin
-- **Email**: info@trevoctilla.com
+- **Email**: info@trevnoctilla.com
 
 ## License
 
