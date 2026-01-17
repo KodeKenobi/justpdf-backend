@@ -20,15 +20,15 @@ def test_cors_headers():
         "https://web-production-ef253.up.railway.app"
     ]
     
-    print("🧪 Testing CORS Configuration")
+    print(" Testing CORS Configuration")
     print("=" * 50)
     
     # Test production backend
-    print(f"\n🌐 Testing Production Backend: {base_url}")
+    print(f"\n Testing Production Backend: {base_url}")
     try:
         # Test OPTIONS request (preflight)
         for origin in test_origins:
-            print(f"\n📍 Testing origin: {origin}")
+            print(f"\n Testing origin: {origin}")
             try:
                 response = requests.options(
                     f"{base_url}/convert-video",
@@ -48,20 +48,20 @@ def test_cors_headers():
                     for header, value in cors_headers.items():
                         print(f"     {header}: {value}")
                 else:
-                    print("   ❌ No CORS headers found")
+                    print("   [ERROR] No CORS headers found")
                     
             except requests.exceptions.RequestException as e:
-                print(f"   ❌ Error: {e}")
+                print(f"   [ERROR] Error: {e}")
                 
     except Exception as e:
-        print(f"❌ Production backend test failed: {e}")
+        print(f"[ERROR] Production backend test failed: {e}")
     
     # Test local backend
-    print(f"\n🏠 Testing Local Backend: {local_url}")
+    print(f"\n Testing Local Backend: {local_url}")
     try:
         # Test OPTIONS request (preflight)
         for origin in test_origins:
-            print(f"\n📍 Testing origin: {origin}")
+            print(f"\n Testing origin: {origin}")
             try:
                 response = requests.options(
                     f"{local_url}/convert-video",
@@ -81,13 +81,13 @@ def test_cors_headers():
                     for header, value in cors_headers.items():
                         print(f"     {header}: {value}")
                 else:
-                    print("   ❌ No CORS headers found")
+                    print("   [ERROR] No CORS headers found")
                     
             except requests.exceptions.RequestException as e:
-                print(f"   ❌ Error: {e}")
+                print(f"   [ERROR] Error: {e}")
                 
     except Exception as e:
-        print(f"❌ Local backend test failed: {e}")
+        print(f"[ERROR] Local backend test failed: {e}")
 
 if __name__ == "__main__":
     test_cors_headers()

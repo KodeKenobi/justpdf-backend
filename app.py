@@ -23,25 +23,25 @@ PLAYWRIGHT_AVAILABLE = False
 try:
     from weasyprint import HTML, CSS
     WEASYPRINT_AVAILABLE = True
-    print("✅ WeasyPrint available")
+    print("[OK] WeasyPrint available")
 except (ImportError, OSError) as e:
-    print(f"⚠️ WeasyPrint not available: {e}")
+    print(f"[WARN] WeasyPrint not available: {e}")
 
 # Try xhtml2pdf (pure Python, works on Windows)
 try:
     from xhtml2pdf import pisa
     XHTML2PDF_AVAILABLE = True
-    print("✅ xhtml2pdf available")
+    print("[OK] xhtml2pdf available")
 except ImportError:
-    print("⚠️ xhtml2pdf not available")
+    print("[WARN] xhtml2pdf not available")
 
 # Try Playwright (browser-based, most accurate but requires browser installation)
 try:
     from playwright.sync_api import sync_playwright
     PLAYWRIGHT_AVAILABLE = True
-    print("✅ Playwright available")
+    print("[OK] Playwright available")
 except ImportError:
-    print("⚠️ Playwright not available")
+    print("[WARN] Playwright not available")
 
 # Import new API modules
 import sys
@@ -53,19 +53,19 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 # Import database and auth modules
-print("📦 Importing modules...")
+print("[LOAD] Importing modules...")
 try:
     from database import init_db
-    print("✅ Database module imported successfully")
+    print("[OK] Database module imported successfully")
     from models import *  # Import all models to register them with SQLAlchemy
-    print("✅ Models imported successfully")
+    print("[OK] Models imported successfully")
     # Explicitly import Notification to ensure it's registered
     from models import Notification
-    print("✅ Notification model imported successfully")
+    print("[OK] Notification model imported successfully")
     from auth import jwt
-    print("✅ Auth module imported successfully")
+    print("[OK] Auth module imported successfully")
 except ImportError as e:
-    print(f"❌ Import error: {e}")
+    print(f"[ERROR] Import error: {e}")
     print(f"Current directory: {current_dir}")
     print(f"Python path: {sys.path}")
     print(f"Files in current directory: {os.listdir(current_dir)}")
@@ -99,61 +99,68 @@ def health_check():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 # Import blueprints with error handling (non-critical for health endpoint)
-print("📦 Importing blueprints...")
+print("[LOAD] Importing blueprints...")
 try:
     from auth_routes import auth_bp
-    print("✅ auth_bp imported")
+    print("[OK] auth_bp imported")
 except Exception as e:
-    print(f"⚠️ Failed to import auth_bp: {e}")
+    print(f"[WARN] Failed to import auth_bp: {e}")
     auth_bp = None
 
 try:
     from api.v1.routes import api_v1
-    print("✅ api_v1 imported")
+    print("[OK] api_v1 imported")
 except Exception as e:
-    print(f"⚠️ Failed to import api_v1: {e}")
+    print(f"[WARN] Failed to import api_v1: {e}")
     api_v1 = None
 
 try:
     from api.admin.routes import admin_api
-    print("✅ admin_api imported")
+    print("[OK] admin_api imported")
 except Exception as e:
-    print(f"⚠️ Failed to import admin_api: {e}")
+    print(f"[WARN] Failed to import admin_api: {e}")
     admin_api = None
 
 try:
     from api.client.routes import client_api
-    print("✅ client_api imported")
+    print("[OK] client_api imported")
 except Exception as e:
-    print(f"⚠️ Failed to import client_api: {e}")
+    print(f"[WARN] Failed to import client_api: {e}")
     client_api = None
 
 try:
     from api.payment.routes import payment_api
-    print("✅ payment_api imported")
+    print("[OK] payment_api imported")
 except Exception as e:
-    print(f"⚠️ Failed to import payment_api: {e}")
+    print(f"[WARN] Failed to import payment_api: {e}")
     payment_api = None
 
 try:
     from api.analytics.routes import analytics_api
-    print("✅ analytics_api imported")
+    print("[OK] analytics_api imported")
 except Exception as e:
-    print(f"⚠️ Failed to import analytics_api: {e}")
+    print(f"[WARN] Failed to import analytics_api: {e}")
     analytics_api = None
 
 try:
-    from test_routes import test_bp
-    print("✅ test_bp imported")
+    from api.campaigns.routes import campaigns_api
+    print("[OK] campaigns_api imported")
 except Exception as e:
-    print(f"⚠️ Failed to import test_bp: {e}")
+    print(f"[WARN] Failed to import campaigns_api: {e}")
+    campaigns_api = None
+
+try:
+    from test_routes import test_bp
+    print("[OK] test_bp imported")
+except Exception as e:
+    print(f"[WARN] Failed to import test_bp: {e}")
     test_bp = None
 
 try:
     from debug_routes import debug_bp
-    print("✅ debug_bp imported")
+    print("[OK] debug_bp imported")
 except Exception as e:
-    print(f"⚠️ Failed to import debug_bp: {e}")
+    print(f"[WARN] Failed to import debug_bp: {e}")
     debug_bp = None
 
 # Configuration
@@ -170,9 +177,9 @@ app.config['JWT_HEADER_TYPE'] = 'Bearer'
 # Initialize extensions
 try:
     jwt.init_app(app)
-    print("✅ JWT extension initialized")
+    print("[OK] JWT extension initialized")
 except Exception as e:
-    print(f"⚠️ Failed to initialize JWT: {e}")
+    print(f"[WARN] Failed to initialize JWT: {e}")
     # Continue anyway - health endpoint doesn't need JWT
 
 # Add backlink headers to all responses
@@ -196,12 +203,12 @@ def add_backlink_headers(response):
 
 # Initialize database synchronously (required for admin endpoints)
 try:
-    print("🔄 Initializing database...")
+    print("[RELOAD] Initializing database...")
     init_db(app)
-    print("✅ Database initialized successfully")
+    print("[OK] Database initialized successfully")
 except Exception as e:
-    print(f"⚠️ Database initialization failed: {e}")
-    print("⚠️ App will continue to start, but database features may not work")
+    print(f"[WARN] Database initialization failed: {e}")
+    print("[WARN] App will continue to start, but database features may not work")
     import traceback
     traceback.print_exc()
 
@@ -790,20 +797,20 @@ def convert_pdf(filename):
         mobile_param = request.args.get('mobile', 'false')
         is_mobile = str(mobile_param).lower() == 'true'
         
-        print(f"🔍 [TEMPLATE SELECTION] Mobile param: '{mobile_param}', is_mobile: {is_mobile}")
-        print(f"🔍 [TEMPLATE SELECTION] All request args: {dict(request.args)}")
+        print(f" [TEMPLATE SELECTION] Mobile param: '{mobile_param}', is_mobile: {is_mobile}")
+        print(f" [TEMPLATE SELECTION] All request args: {dict(request.args)}")
         
         # Force reload by touching the template file
         template_name = "converted-mobile.html" if is_mobile else "converted.html"
         template_path = os.path.join(app.template_folder, template_name)
-        print(f"🔍 [TEMPLATE SELECTION] Selected template: {template_name}")
-        print(f"🔍 [TEMPLATE SELECTION] Template folder: {app.template_folder}")
-        print(f"🔍 [TEMPLATE SELECTION] Template path: {template_path}")
-        print(f"🔍 [TEMPLATE SELECTION] Template exists: {os.path.exists(template_path)}")
+        print(f" [TEMPLATE SELECTION] Selected template: {template_name}")
+        print(f" [TEMPLATE SELECTION] Template folder: {app.template_folder}")
+        print(f" [TEMPLATE SELECTION] Template path: {template_path}")
+        print(f" [TEMPLATE SELECTION] Template exists: {os.path.exists(template_path)}")
         
         # Fallback to desktop template if mobile template doesn't exist
         if is_mobile and not os.path.exists(template_path):
-            print(f"⚠️ [TEMPLATE SELECTION] WARNING: Mobile template not found, falling back to desktop template")
+            print(f"[WARN] [TEMPLATE SELECTION] WARNING: Mobile template not found, falling back to desktop template")
             template_name = "converted.html"
             template_path = os.path.join(app.template_folder, template_name)
             is_mobile = False  # Reset flag since we're using desktop template
@@ -2036,7 +2043,7 @@ def convert_html_to_pdf():
         if "<html" not in html_content.lower() and "<body" not in html_content.lower():
             print("WARNING: HTML file may not have proper HTML structure")
         
-        print(f"✅ HTML file validated: {html_size} bytes, {len(html_content)} characters")
+        print(f"[OK] HTML file validated: {html_size} bytes, {len(html_content)} characters")
         
         # Generate output filename
         base_name = os.path.splitext(original_filename)[0]
@@ -2051,7 +2058,7 @@ def convert_html_to_pdf():
         try:
             conversion_success = convert_html_to_pdf_pymupdf_step_by_step(filepath, pdf_path)
             if conversion_success:
-                print("✅ Successfully converted using PyMuPDF step-by-step method")
+                print("[OK] Successfully converted using PyMuPDF step-by-step method")
         except Exception as e:
             print(f"PyMuPDF step-by-step conversion error: {e}")
         
@@ -2060,7 +2067,7 @@ def convert_html_to_pdf():
             try:
                 conversion_success = convert_html_to_pdf_playwright(filepath, pdf_path)
                 if conversion_success:
-                    print("✅ Successfully converted using Playwright")
+                    print("[OK] Successfully converted using Playwright")
             except Exception as e:
                 print(f"Playwright conversion error: {e}")
         
@@ -2069,7 +2076,7 @@ def convert_html_to_pdf():
             try:
                 conversion_success = convert_html_to_pdf_weasyprint(filepath, pdf_path)
                 if conversion_success:
-                    print("✅ Successfully converted using WeasyPrint")
+                    print("[OK] Successfully converted using WeasyPrint")
             except Exception as e:
                 print(f"WeasyPrint conversion error: {e}")
         
@@ -2078,7 +2085,7 @@ def convert_html_to_pdf():
             try:
                 conversion_success = convert_html_to_pdf_xhtml2pdf(filepath, pdf_path)
                 if conversion_success:
-                    print("✅ Successfully converted using xhtml2pdf")
+                    print("[OK] Successfully converted using xhtml2pdf")
             except Exception as e:
                 print(f"xhtml2pdf conversion error: {e}")
         
@@ -2150,7 +2157,7 @@ def convert_html_to_pdf():
                         "error": "Conversion created PDF with pages but no visible content"
                     }), 500
             
-            print(f"✅ PDF validation passed: {page_count} pages, {total_text} chars of text")
+            print(f"[OK] PDF validation passed: {page_count} pages, {total_text} chars of text")
             
         except Exception as e:
             print(f"WARNING: Could not validate PDF content: {e}")
@@ -2620,7 +2627,7 @@ def convert_html_to_pdf_pymupdf_step_by_step(html_path, output_path):
                 print(f"Step-by-step conversion failed: PDF has {page_count} pages but no content (no text or images)")
                 return False
             
-            print(f"✅ Successfully converted HTML to PDF using step-by-step method: {output_path}")
+            print(f"[OK] Successfully converted HTML to PDF using step-by-step method: {output_path}")
             print(f"PDF size: {pdf_size} bytes, {page_count} pages, {total_text} chars text, {total_images} images")
             return True
         except Exception as e:
@@ -2835,7 +2842,7 @@ def _add_elements_to_page(page_html, page, page_width, page_height):
     print(f"Total elements added to page: {elements_added} (text spans: {len(text_spans)}, images: {len(images)})")
     
     if elements_added == 0:
-        print(f"⚠️ WARNING: No elements were added to the page! Page HTML length: {len(page_html)}")
+        print(f"[WARN] WARNING: No elements were added to the page! Page HTML length: {len(page_html)}")
         print(f"Page HTML preview (first 500 chars): {page_html[:500]}")
         print(f"Text spans found: {len(text_spans)}, Images found: {len(images)}")
 
@@ -3278,7 +3285,7 @@ def convert_with_pymupdf(pdf_path, output_path):
             return False
         
         doc.close()
-        print(f"✅ Successfully created HTML file: {output_path} ({file_size} bytes)")
+        print(f"[OK] Successfully created HTML file: {output_path} ({file_size} bytes)")
         return True
         
     except Exception as e:
@@ -5109,45 +5116,48 @@ def cleanup_abandoned_processes():
 # Register API blueprints (only if they were imported successfully)
 if auth_bp:
     app.register_blueprint(auth_bp)
-    print("✅ auth_bp registered")
+    print("[OK] auth_bp registered")
 if api_v1:
     app.register_blueprint(api_v1)
-    print("✅ api_v1 registered")
+    print("[OK] api_v1 registered")
 if admin_api:
     app.register_blueprint(admin_api)
-    print("✅ admin_api registered")
+    print("[OK] admin_api registered")
 if client_api:
     app.register_blueprint(client_api)
-    print("✅ client_api registered")
+    print("[OK] client_api registered")
 if payment_api:
     app.register_blueprint(payment_api)
-    print("✅ payment_api registered")
+    print("[OK] payment_api registered")
 if analytics_api:
     app.register_blueprint(analytics_api)
-    print("✅ analytics_api registered")
+    print("[OK] analytics_api registered")
+if campaigns_api:
+    app.register_blueprint(campaigns_api)
+    print("[OK] campaigns_api registered")
 if test_bp:
     app.register_blueprint(test_bp)
-    print("✅ test_bp registered")
+    print("[OK] test_bp registered")
 if debug_bp:
     app.register_blueprint(debug_bp)
-    print("✅ debug_bp registered")
+    print("[OK] debug_bp registered")
 
 # Register cleanup on shutdown
 import atexit
 atexit.register(cleanup_all_processes)
 
 if __name__ == "__main__":
-    print("🚀 Starting Flask application...")
-    print(f"📊 Database URL: {os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')}")
-    print(f"🔑 Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
-    print(f"🔐 JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
+    print("[START] Starting Flask application...")
+    print(f"[INFO] Database URL: {os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')}")
+    print(f"[KEY] Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
+    print(f"[SEC] JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
     
     # Database is already initialized above
     
-    print(f"✅ All dependencies loaded successfully")
+    print(f"[OK] All dependencies loaded successfully")
     
     # Get port from environment variable (Railway provides this)
     port = int(os.getenv('PORT', 5000))
-    print(f"🌐 Starting server on port {port}")
+    print(f" Starting server on port {port}")
     
     app.run(debug=False, host='0.0.0.0', port=port)

@@ -11,20 +11,20 @@ def debug_login():
         email = 'kodekenobi@gmail.com'
         password = 'Kopenikus0218!'
 
-        print(f"🔍 Testing login for: {email}")
+        print(f" Testing login for: {email}")
         
         # Test the login_user function directly
         result, message = login_user(email, password)
         
         if result:
-            print(f"✅ Login successful!")
+            print(f"[OK] Login successful!")
             print(f"   Message: {message}")
             print(f"   User ID: {result['user']['id']}")
             print(f"   User Email: {result['user']['email']}")
             print(f"   User Role: {result['user']['role']}")
             print(f"   Token exists: {'access_token' in result}")
         else:
-            print(f"❌ Login failed!")
+            print(f"[ERROR] Login failed!")
             print(f"   Message: {message}")
 
 if __name__ == '__main__':

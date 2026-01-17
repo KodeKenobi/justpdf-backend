@@ -14,7 +14,7 @@ def create_test_user():
             # Check if user already exists
             existing_user = User.query.filter_by(email='kodekenobi@gmail.com').first()
             if existing_user:
-                print(f"✅ User already exists: {existing_user.email}")
+                print(f"[OK] User already exists: {existing_user.email}")
                 print(f"   Role: {existing_user.role}")
                 print(f"   Active: {existing_user.is_active}")
                 print(f"   Created: {existing_user.created_at}")
@@ -31,7 +31,7 @@ def create_test_user():
             db.session.add(user)
             db.session.commit()
             
-            print("✅ Test user created successfully!")
+            print("[OK] Test user created successfully!")
             print(f"   Email: {user.email}")
             print(f"   Password: TestPassword123!")
             print(f"   Role: {user.role}")
@@ -41,7 +41,7 @@ def create_test_user():
             
         except Exception as e:
             db.session.rollback()
-            print(f"❌ Error creating test user: {e}")
+            print(f"[ERROR] Error creating test user: {e}")
             return None
 
 if __name__ == "__main__":

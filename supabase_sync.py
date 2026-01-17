@@ -32,7 +32,7 @@ def sync_user_to_supabase(user):
                 import psycopg2
                 from psycopg2.extras import RealDictCursor
             except ImportError:
-                print("⚠️ [SUPABASE SYNC] psycopg2 not installed, skipping sync")
+                print("[WARN] [SUPABASE SYNC] psycopg2 not installed, skipping sync")
                 return
             
             # Connect to Supabase
@@ -69,7 +69,7 @@ def sync_user_to_supabase(user):
                     user.last_login if user.last_login else None,
                     user.email
                 ))
-                print(f"✅ [SUPABASE SYNC] Updated user in Supabase: {user.email}")
+                print(f"[OK] [SUPABASE SYNC] Updated user in Supabase: {user.email}")
             else:
                 # Insert new user (include password_hash so user can login after DB reset)
                 cursor.execute("""
@@ -89,7 +89,7 @@ def sync_user_to_supabase(user):
                     user.created_at if user.created_at else datetime.utcnow(),
                     user.last_login if user.last_login else None
                 ))
-                print(f"✅ [SUPABASE SYNC] Added user to Supabase: {user.email}")
+                print(f"[OK] [SUPABASE SYNC] Added user to Supabase: {user.email}")
             
             conn.commit()
             cursor.close()
@@ -97,12 +97,12 @@ def sync_user_to_supabase(user):
             
         except Exception as e:
             # Don't break registration if sync fails
-            print(f"⚠️ [SUPABASE SYNC] Failed to sync user {user.email} to Supabase: {e}")
+            print(f"[WARN] [SUPABASE SYNC] Failed to sync user {user.email} to Supabase: {e}")
             import traceback
             traceback.print_exc()
     
     # Start sync in background thread (non-daemon so it completes even if main thread ends)
     sync_thread = threading.Thread(target=sync_async, daemon=False)
     sync_thread.start()
-    print(f"🔄 [SUPABASE SYNC] Started sync thread for user: {user.email}")
+    print(f"[RELOAD] [SUPABASE SYNC] Started sync thread for user: {user.email}")
 

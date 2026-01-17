@@ -19,14 +19,14 @@ def delete_all_users():
         try:
             # Get count before deletion
             user_count = User.query.count()
-            print(f"📊 Found {user_count} users in database")
+            print(f"[INFO] Found {user_count} users in database")
             
             if user_count == 0:
-                print("✅ No users to delete")
+                print("[OK] No users to delete")
                 return
             
             # Confirm deletion
-            print("\n⚠️  WARNING: This will permanently delete ALL users!")
+            print("\n[WARN]  WARNING: This will permanently delete ALL users!")
             print(f"   - {user_count} users")
             print(f"   - All API keys")
             print(f"   - All usage logs")
@@ -36,46 +36,46 @@ def delete_all_users():
             response = input("\n❓ Are you sure you want to continue? (type 'DELETE ALL' to confirm): ")
             
             if response != 'DELETE ALL':
-                print("❌ Deletion cancelled")
+                print("[ERROR] Deletion cancelled")
                 return
             
-            print("\n🗑️  Starting deletion...")
+            print("\n️  Starting deletion...")
             
             # Delete related data first (though cascade should handle APIKey)
             # Delete notifications
             notification_count = Notification.query.count()
             if notification_count > 0:
                 Notification.query.delete()
-                print(f"   ✅ Deleted {notification_count} notifications")
+                print(f"   [OK] Deleted {notification_count} notifications")
             
             # Delete usage logs
             usage_log_count = UsageLog.query.count()
             if usage_log_count > 0:
                 UsageLog.query.delete()
-                print(f"   ✅ Deleted {usage_log_count} usage logs")
+                print(f"   [OK] Deleted {usage_log_count} usage logs")
             
             # Delete reset history
             reset_history_count = ResetHistory.query.count()
             if reset_history_count > 0:
                 ResetHistory.query.delete()
-                print(f"   ✅ Deleted {reset_history_count} reset history records")
+                print(f"   [OK] Deleted {reset_history_count} reset history records")
             
             # Delete API keys (cascade should handle this, but being explicit)
             api_key_count = APIKey.query.count()
             if api_key_count > 0:
                 APIKey.query.delete()
-                print(f"   ✅ Deleted {api_key_count} API keys")
+                print(f"   [OK] Deleted {api_key_count} API keys")
             
             # Delete all users
             deleted_count = User.query.delete()
             db.session.commit()
             
-            print(f"\n✅ Successfully deleted {deleted_count} users and all related data")
+            print(f"\n[OK] Successfully deleted {deleted_count} users and all related data")
             print(f"   Total users remaining: {User.query.count()}")
             
         except Exception as e:
             db.session.rollback()
-            print(f"\n❌ Error deleting users: {e}")
+            print(f"\n[ERROR] Error deleting users: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -88,14 +88,14 @@ if __name__ == '__main__':
                         app.config.get('SQLALCHEMY_DATABASE_URI'))
     
     env = "PRODUCTION" if is_production else "LOCAL"
-    print(f"🌍 Environment: {env}")
+    print(f" Environment: {env}")
     
     if is_production:
-        print("⚠️  PRODUCTION MODE DETECTED!")
+        print("[WARN]  PRODUCTION MODE DETECTED!")
         print("   Make sure you have the correct DATABASE_URL set")
         response = input("   Continue with production database? (yes/no): ")
         if response.lower() != 'yes':
-            print("❌ Cancelled")
+            print("[ERROR] Cancelled")
             sys.exit(0)
     
     delete_all_users()

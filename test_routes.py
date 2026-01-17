@@ -36,8 +36,8 @@ def database_admin():
 def send_test_welcome_email():
     """Test endpoint to send welcome email"""
     try:
-        print(f"📧 Received request to send welcome email")
-        print(f"📧 Request data: {request.get_json()}")
+        print(f" Received request to send welcome email")
+        print(f" Request data: {request.get_json()}")
         
         from email_service import send_welcome_email
         from datetime import datetime
@@ -50,12 +50,12 @@ def send_test_welcome_email():
         # Use current date as payment date for invoice generation
         payment_date = datetime.now()
         
-        print(f"📧 Sending test welcome email to {recipient} (tier: {tier}, amount: {amount})")
-        print(f"📧 Payment date for invoice: {payment_date}")
+        print(f" Sending test welcome email to {recipient} (tier: {tier}, amount: {amount})")
+        print(f" Payment date for invoice: {payment_date}")
         
         success = send_welcome_email(recipient, tier, amount=amount, payment_id="", payment_date=payment_date)
         
-        print(f"📧 Email send result: {success}")
+        print(f" Email send result: {success}")
         
         if success:
             return jsonify({
@@ -74,13 +74,13 @@ def send_test_welcome_email():
             
     except ImportError as e:
         error_msg = f'Import error: {str(e)}'
-        print(f"❌ Import error in send_test_welcome_email: {e}")
+        print(f"[ERROR] Import error in send_test_welcome_email: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'message': error_msg}), 500
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ Error in send_test_welcome_email: {e}")
+        print(f"[ERROR] Error in send_test_welcome_email: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
@@ -99,7 +99,7 @@ def delete_user():
         if not email:
             return jsonify({'success': False, 'error': 'Email is required'}), 400
         
-        print(f"🗑️ Attempting COMPLETE deletion of user: {email}")
+        print(f"️ Attempting COMPLETE deletion of user: {email}")
         print(f"   This will delete user from database and ensure no cache remains")
         
         # Try multiple lookup methods to find user
@@ -113,31 +113,31 @@ def delete_user():
                     break
         
         if not user:
-            print(f"❌ User not found: {email}")
+            print(f"[ERROR] User not found: {email}")
             return jsonify({'success': False, 'error': f'User not found: {email}'}), 404
         
         user_id = user.id
         user_email = user.email
-        print(f"📊 Found user: {user_email} (ID: {user_id})")
+        print(f"[INFO] Found user: {user_email} (ID: {user_id})")
         
         # Delete ALL related data first (cascade delete)
         print(f"   Step 1: Deleting all related data...")
         
         # Delete API keys
         api_keys_deleted = APIKey.query.filter_by(user_id=user_id).delete(synchronize_session=False)
-        print(f"      ✅ Deleted {api_keys_deleted} API keys")
+        print(f"      [OK] Deleted {api_keys_deleted} API keys")
         
         # Delete usage logs
         usage_logs_deleted = UsageLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
-        print(f"      ✅ Deleted {usage_logs_deleted} usage logs")
+        print(f"      [OK] Deleted {usage_logs_deleted} usage logs")
         
         # Delete reset history
         reset_history_deleted = ResetHistory.query.filter_by(user_id=user_id).delete(synchronize_session=False)
-        print(f"      ✅ Deleted {reset_history_deleted} reset history records")
+        print(f"      [OK] Deleted {reset_history_deleted} reset history records")
         
         # Update notifications to remove user references
         notifications_updated = Notification.query.filter_by(read_by=user_id).update({'read_by': None}, synchronize_session=False)
-        print(f"      ✅ Updated {notifications_updated} notification references")
+        print(f"      [OK] Updated {notifications_updated} notification references")
         
         # Force flush to ensure all deletes are processed
         db.session.flush()
@@ -147,7 +147,7 @@ def delete_user():
         print(f"   Step 3: Deleting user from database...")
         db.session.delete(user)
         db.session.commit()
-        print(f"      ✅ User deleted and committed to database")
+        print(f"      [OK] User deleted and committed to database")
         
         # Force another flush and commit to ensure no cache
         db.session.flush()
@@ -160,7 +160,7 @@ def delete_user():
         # Check 1: Query by email
         verify_user_email = User.query.filter_by(email=email).first()
         if verify_user_email:
-            print(f"      ❌ ERROR: User still exists when querying by email!")
+            print(f"      [ERROR] ERROR: User still exists when querying by email!")
             db.session.rollback()
             return jsonify({
                 'success': False,
@@ -171,7 +171,7 @@ def delete_user():
         # Check 2: Query by ID
         verify_user_id = User.query.get(user_id)
         if verify_user_id:
-            print(f"      ❌ ERROR: User still exists when querying by ID!")
+            print(f"      [ERROR] ERROR: User still exists when querying by ID!")
             db.session.rollback()
             return jsonify({
                 'success': False,
@@ -185,7 +185,7 @@ def delete_user():
                                       {"user_id": user_id, "email": email.lower()})
             raw_user = result.fetchone()
             if raw_user:
-                print(f"      ❌ ERROR: User still exists in raw SQL query!")
+                print(f"      [ERROR] ERROR: User still exists in raw SQL query!")
                 db.session.rollback()
                 return jsonify({
                     'success': False,
@@ -193,25 +193,25 @@ def delete_user():
                     'message': f'Failed to delete user {user_email}'
                 }), 500
         except Exception as sql_error:
-            print(f"      ⚠️  Could not perform raw SQL check (non-critical): {sql_error}")
+            print(f"      [WARN]  Could not perform raw SQL check (non-critical): {sql_error}")
         
         # Check 4: Verify no API keys remain
         remaining_keys = APIKey.query.filter_by(user_id=user_id).count()
         if remaining_keys > 0:
-            print(f"      ⚠️  WARNING: {remaining_keys} API keys still exist for deleted user")
+            print(f"      [WARN]  WARNING: {remaining_keys} API keys still exist for deleted user")
             # Force delete them
             APIKey.query.filter_by(user_id=user_id).delete(synchronize_session=False)
             db.session.commit()
-            print(f"      ✅ Force deleted remaining API keys")
+            print(f"      [OK] Force deleted remaining API keys")
         
         # Check 5: Verify no usage logs remain
         remaining_logs = UsageLog.query.filter_by(user_id=user_id).count()
         if remaining_logs > 0:
-            print(f"      ⚠️  WARNING: {remaining_logs} usage logs still exist for deleted user")
+            print(f"      [WARN]  WARNING: {remaining_logs} usage logs still exist for deleted user")
             # Force delete them
             UsageLog.query.filter_by(user_id=user_id).delete(synchronize_session=False)
             db.session.commit()
-            print(f"      ✅ Force deleted remaining usage logs")
+            print(f"      [OK] Force deleted remaining usage logs")
         
         # Final verification - refresh the session to clear any cache
         db.session.expire_all()
@@ -220,7 +220,7 @@ def delete_user():
         # Final check
         final_check = User.query.filter_by(email=email).first()
         if final_check:
-            print(f"      ❌ ERROR: User still exists after cache expiration!")
+            print(f"      [ERROR] ERROR: User still exists after cache expiration!")
             db.session.rollback()
             return jsonify({
                 'success': False,
@@ -228,10 +228,10 @@ def delete_user():
                 'message': f'Failed to delete user {user_email}'
             }), 500
         
-        print(f"✅ User {user_email} (ID: {user_id}) COMPLETELY DELETED from database")
-        print(f"   ✅ All related data deleted")
-        print(f"   ✅ All caches cleared")
-        print(f"   ✅ User will be immediately invalid - dashboard will reject access")
+        print(f"[OK] User {user_email} (ID: {user_id}) COMPLETELY DELETED from database")
+        print(f"   [OK] All related data deleted")
+        print(f"   [OK] All caches cleared")
+        print(f"   [OK] User will be immediately invalid - dashboard will reject access")
         
         return jsonify({
             'success': True,
@@ -247,7 +247,7 @@ def delete_user():
         from database import db
         db.session.rollback()
         error_msg = str(e)
-        print(f"❌ Error deleting user: {e}")
+        print(f"[ERROR] Error deleting user: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'success': False, 'error': error_msg, 'type': type(e).__name__, 'message': f'Error: {error_msg}'}), 500
@@ -394,7 +394,7 @@ def view_database():
     except Exception as e:
         error_msg = str(e)
         error_type = type(e).__name__
-        print(f"❌ Error viewing database: {e}")
+        print(f"[ERROR] Error viewing database: {e}")
         import traceback
         traceback.print_exc()
         

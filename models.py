@@ -417,3 +417,142 @@ class UserSession(db.Model):
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+class Campaign(db.Model):
+    """Contact automation campaign"""
+    __tablename__ = 'campaigns'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    message_template = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), default='draft', nullable=False)  # draft, queued, processing, completed, paused, failed
+    spreadsheet_filename = db.Column(db.String(500))
+    spreadsheet_path = db.Column(db.String(500))  # Stored in Supabase Storage
+    
+    # Statistics
+    total_companies = db.Column(db.Integer, default=0, nullable=False)
+    processed_count = db.Column(db.Integer, default=0, nullable=False)
+    success_count = db.Column(db.Integer, default=0, nullable=False)
+    failed_count = db.Column(db.Integer, default=0, nullable=False)
+    captcha_count = db.Column(db.Integer, default=0, nullable=False)
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    
+    # Relationships
+    user = db.relationship('User', backref='campaigns')
+    companies = db.relationship('Company', backref='campaign', lazy=True, cascade='all, delete-orphan')
+    
+    def to_dict(self, include_companies=False):
+        """Convert to dictionary for JSON serialization"""
+        data = {
+            'id': self.id,
+            'user_id': self.user_id,
+            'name': self.name,
+            'message_template': self.message_template,
+            'status': self.status,
+            'spreadsheet_filename': self.spreadsheet_filename,
+            'total_companies': self.total_companies,
+            'processed_count': self.processed_count,
+            'success_count': self.success_count,
+            'failed_count': self.failed_count,
+            'captcha_count': self.captcha_count,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'progress_percentage': round((self.processed_count / self.total_companies * 100) if self.total_companies > 0 else 0, 2)
+        }
+        if include_companies:
+            data['companies'] = [company.to_dict() for company in self.companies]
+        return data
+
+class Company(db.Model):
+    """Company in a campaign"""
+    __tablename__ = 'companies'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
+    company_name = db.Column(db.String(300), nullable=False)
+    website_url = db.Column(db.String(500), nullable=False)
+    contact_email = db.Column(db.String(200))  # Optional from spreadsheet
+    contact_person = db.Column(db.String(200))  # Optional from spreadsheet
+    phone = db.Column(db.String(50))  # Optional from spreadsheet
+    additional_data = db.Column(db.JSON)  # Any other columns from spreadsheet
+    
+    # Processing status
+    status = db.Column(db.String(20), default='pending', nullable=False, index=True)  # pending, processing, success, failed, captcha, skipped
+    error_message = db.Column(db.Text)
+    
+    # Contact page detection
+    contact_page_url = db.Column(db.String(500))
+    contact_page_found = db.Column(db.Boolean, default=False)
+    form_found = db.Column(db.Boolean, default=False)
+    
+    # Submission details
+    submitted_at = db.Column(db.DateTime)
+    screenshot_url = db.Column(db.String(500))  # Screenshot stored in Supabase Storage
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    processed_at = db.Column(db.DateTime)
+    
+    # Relationships
+    submission_logs = db.relationship('SubmissionLog', backref='company', lazy=True, cascade='all, delete-orphan')
+    
+    def to_dict(self, include_logs=False):
+        """Convert to dictionary for JSON serialization"""
+        data = {
+            'id': self.id,
+            'campaign_id': self.campaign_id,
+            'company_name': self.company_name,
+            'website_url': self.website_url,
+            'contact_email': self.contact_email,
+            'contact_person': self.contact_person,
+            'phone': self.phone,
+            'additional_data': self.additional_data,
+            'status': self.status,
+            'error_message': self.error_message,
+            'contact_page_url': self.contact_page_url,
+            'contact_page_found': self.contact_page_found,
+            'form_found': self.form_found,
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
+            'screenshot_url': self.screenshot_url,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None
+        }
+        if include_logs:
+            data['logs'] = [log.to_dict() for log in self.submission_logs]
+        return data
+
+class SubmissionLog(db.Model):
+    """Detailed log of each submission attempt"""
+    __tablename__ = 'submission_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id'), nullable=False, index=True)
+    
+    # Attempt details
+    attempt_number = db.Column(db.Integer, default=1, nullable=False)
+    action = db.Column(db.String(100), nullable=False)  # 'visited_homepage', 'found_contact_page', 'detected_form', 'filled_form', 'submitted_form', 'captcha_detected', 'error'
+    status = db.Column(db.String(20), nullable=False)  # 'success', 'failed', 'warning'
+    message = db.Column(db.Text)
+    details = db.Column(db.JSON)  # Additional technical details
+    
+    # Timestamps
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'company_id': self.company_id,
+            'attempt_number': self.attempt_number,
+            'action': self.action,
+            'status': self.status,
+            'message': self.message,
+            'details': self.details,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }

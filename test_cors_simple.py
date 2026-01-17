@@ -51,5 +51,5 @@ def convert_video():
     return jsonify({"status": "success", "message": "CORS test successful"}), 200
 
 if __name__ == "__main__":
-    print("🧪 Starting CORS test server...")
+    print(" Starting CORS test server...")
     app.run(debug=True, host='0.0.0.0', port=5001)

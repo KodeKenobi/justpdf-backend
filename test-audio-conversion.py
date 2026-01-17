@@ -63,10 +63,10 @@ def test_audio_conversion():
             if response.status_code == 200:
                 result = response.json()
                 if result.get('status') == 'success':
-                    print(f"✅ MP3 conversion successful!")
+                    print(f"[OK] MP3 conversion successful!")
                     print(f"Download URL: http://localhost:5000{result['download_url']}")
                 else:
-                    print(f"❌ MP3 conversion failed: {result.get('message')}")
+                    print(f"[ERROR] MP3 conversion failed: {result.get('message')}")
             
     except Exception as e:
         print(f"MP3 conversion test failed: {e}")
@@ -91,10 +91,10 @@ def test_audio_conversion():
             if response.status_code == 200:
                 result = response.json()
                 if result.get('status') == 'success':
-                    print(f"✅ FLAC conversion successful!")
+                    print(f"[OK] FLAC conversion successful!")
                     print(f"Download URL: http://localhost:5000{result['download_url']}")
                 else:
-                    print(f"❌ FLAC conversion failed: {result.get('message')}")
+                    print(f"[ERROR] FLAC conversion failed: {result.get('message')}")
             
     except Exception as e:
         print(f"FLAC conversion test failed: {e}")

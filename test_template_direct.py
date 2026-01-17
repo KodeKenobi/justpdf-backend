@@ -24,35 +24,35 @@ with app.test_request_context('/convert/test.pdf?mobile=true'):
     ]
     
     try:
-        print("🧪 Testing template rendering with Flask app context...")
-        print(f"📁 Template folder: {app.template_folder}")
-        print(f"📁 Template folder exists: {os.path.exists(app.template_folder)}")
+        print(" Testing template rendering with Flask app context...")
+        print(f" Template folder: {app.template_folder}")
+        print(f" Template folder exists: {os.path.exists(app.template_folder)}")
         
         template_name = "converted-mobile-simple.html"
         template_path = os.path.join(app.template_folder, template_name)
-        print(f"📄 Template path: {template_path}")
-        print(f"📄 Template exists: {os.path.exists(template_path)}")
+        print(f" Template path: {template_path}")
+        print(f" Template exists: {os.path.exists(template_path)}")
         
         # Clear cache
         if hasattr(app, 'jinja_env'):
             app.jinja_env.cache.clear()
-            print("✅ Cleared Jinja2 cache")
+            print("[OK] Cleared Jinja2 cache")
         
         # Try to render
-        print(f"🔄 Rendering template: {template_name}")
+        print(f"[RELOAD] Rendering template: {template_name}")
         result = render_template(template_name, 
                                 filename="test.pdf",
                                 pages=pages_data)
         
-        print(f"✅ Template rendered successfully!")
-        print(f"📏 Rendered size: {len(result)} bytes")
-        print(f"📝 First 300 chars:\n{result[:300]}...")
+        print(f"[OK] Template rendered successfully!")
+        print(f" Rendered size: {len(result)} bytes")
+        print(f" First 300 chars:\n{result[:300]}...")
         
     except Exception as e:
-        print(f"❌ Template rendering failed!")
+        print(f"[ERROR] Template rendering failed!")
         print(f"Error: {str(e)}")
         import traceback
         print(f"Traceback:\n{traceback.format_exc()}")
 
-print("\n✅ Test complete!")
+print("\n[OK] Test complete!")
 

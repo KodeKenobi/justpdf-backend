@@ -15,7 +15,7 @@ def restore_users_from_supabase(db_session):
         import psycopg2
         from psycopg2.extras import RealDictCursor
     except ImportError:
-        print("⚠️ [RESTORE] psycopg2 not installed, cannot restore from Supabase")
+        print("[WARN] [RESTORE] psycopg2 not installed, cannot restore from Supabase")
         return
     
     # Get Supabase connection string
@@ -40,10 +40,10 @@ def restore_users_from_supabase(db_session):
         conn.close()
         
         if not supabase_users:
-            print("ℹ️ [RESTORE] No users found in Supabase to restore")
+            print("[INFO] [RESTORE] No users found in Supabase to restore")
             return
         
-        print(f"📥 [RESTORE] Found {len(supabase_users)} users in Supabase - restoring to primary database...")
+        print(f"[FETCH] [RESTORE] Found {len(supabase_users)} users in Supabase - restoring to primary database...")
         
         from models import User
         restored_count = 0
@@ -76,12 +76,12 @@ def restore_users_from_supabase(db_session):
             restored_count += 1
         
         db_session.commit()
-        print(f"✅ [RESTORE] Successfully restored {restored_count} users from Supabase")
+        print(f"[OK] [RESTORE] Successfully restored {restored_count} users from Supabase")
         if skipped_count > 0:
             print(f"   (Skipped {skipped_count} users that already existed)")
         
     except Exception as e:
-        print(f"❌ [RESTORE] Error restoring users from Supabase: {e}")
+        print(f"[ERROR] [RESTORE] Error restoring users from Supabase: {e}")
         import traceback
         traceback.print_exc()
         db_session.rollback()
@@ -98,22 +98,22 @@ def init_db(app):
     
     # If Railway DB detected, prefer explicit Supabase URL from environment
     if is_railway_db:
-        print("⚠️ [DATABASE] Railway auto-provisioned database detected!")
+        print("[WARN] [DATABASE] Railway auto-provisioned database detected!")
         print(f"   Railway DB URL: {database_url[:50]}...")
         # Check for explicit Supabase URL in environment (Railway might set both)
         supabase_url = os.getenv('SUPABASE_DATABASE_URL') or os.getenv('SUPABASE_URL')
         if supabase_url:
-            print("✅ [DATABASE] Using explicit Supabase URL from SUPABASE_DATABASE_URL")
+            print("[OK] [DATABASE] Using explicit Supabase URL from SUPABASE_DATABASE_URL")
             database_url = supabase_url
         else:
             # Use hardcoded Supabase connection as fallback
-            print("⚠️ [DATABASE] No explicit Supabase URL found, using hardcoded Supabase connection")
+            print("[WARN] [DATABASE] No explicit Supabase URL found, using hardcoded Supabase connection")
             database_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
     
     if not database_url:
         # Fallback to SQLite for local development
         database_url = 'sqlite:///trevnoctilla_api.db'
-        print("⚠️ [DATABASE] DATABASE_URL not set - using SQLite fallback")
+        print("[WARN] [DATABASE] DATABASE_URL not set - using SQLite fallback")
     
     # Detect Supabase connection
     is_supabase = 'supabase.com' in database_url or 'supabase.co' in database_url
@@ -123,13 +123,13 @@ def init_db(app):
     if is_supabase:
         # Mask password in logs
         masked_url = database_url.split('@')[1] if '@' in database_url else database_url
-        print(f"✅ [DATABASE] Using Supabase PostgreSQL: ...@{masked_url}")
+        print(f"[OK] [DATABASE] Using Supabase PostgreSQL: ...@{masked_url}")
     elif is_sqlite:
-        print(f"⚠️ [DATABASE] Using SQLite: {database_url}")
+        print(f"[WARN] [DATABASE] Using SQLite: {database_url}")
     else:
         # Mask password in logs
         masked_url = database_url.split('@')[1] if '@' in database_url else database_url
-        print(f"📊 [DATABASE] Using PostgreSQL: ...@{masked_url}")
+        print(f"[INFO] [DATABASE] Using PostgreSQL: ...@{masked_url}")
     
     # Handle PostgreSQL URL format for SQLAlchemy
     if database_url.startswith('postgres://'):
@@ -173,14 +173,14 @@ def init_db(app):
                         missing_tables.append(table_name)
                 
                 if missing_tables:
-                    print(f"📦 Creating missing tables: {', '.join(missing_tables)}...")
+                    print(f"[LOAD] Creating missing tables: {', '.join(missing_tables)}...")
                     # Ensure all models are imported before creating tables
                     try:
                         from models import Notification, AnalyticsEvent, PageView, UserSession
                         db.create_all()  # This will create all missing tables
-                        print(f"✅ Created missing tables: {', '.join(missing_tables)}")
+                        print(f"[OK] Created missing tables: {', '.join(missing_tables)}")
                     except Exception as e:
-                        print(f"⚠️ Warning: Could not create missing tables: {e}")
+                        print(f"[WARN] Warning: Could not create missing tables: {e}")
                         import traceback
                         traceback.print_exc()
                         # Continue anyway - tables might be created later
@@ -191,98 +191,98 @@ def init_db(app):
             
             if 'users' in tables:
                 # Table exists - check and add missing columns
-                print("🔄 Checking for missing columns...")
+                print("[RELOAD] Checking for missing columns...")
                 columns = [col['name'] for col in inspector.get_columns('users')]
                 
                 if 'subscription_tier' not in columns:
-                    print("🔄 Migrating: Adding subscription_tier column...")
+                    print("[RELOAD] Migrating: Adding subscription_tier column...")
                     db.session.execute(text("ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(20) DEFAULT 'free'"))
                     db.session.commit()
-                    print("✅ Added subscription_tier")
+                    print("[OK] Added subscription_tier")
                 
                 if 'monthly_call_limit' not in columns:
-                    print("🔄 Migrating: Adding monthly_call_limit column...")
+                    print("[RELOAD] Migrating: Adding monthly_call_limit column...")
                     db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_call_limit INTEGER DEFAULT 5"))
                     db.session.commit()
-                    print("✅ Added monthly_call_limit")
+                    print("[OK] Added monthly_call_limit")
                 
                 if 'monthly_used' not in columns:
-                    print("🔄 Migrating: Adding monthly_used column...")
+                    print("[RELOAD] Migrating: Adding monthly_used column...")
                     db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_used INTEGER DEFAULT 0"))
                     db.session.commit()
-                    print("✅ Added monthly_used")
+                    print("[OK] Added monthly_used")
                 
                 if 'monthly_reset_date' not in columns:
-                    print("🔄 Migrating: Adding monthly_reset_date column...")
+                    print("[RELOAD] Migrating: Adding monthly_reset_date column...")
                     # SQLite doesn't allow CURRENT_TIMESTAMP in ALTER TABLE, so add without default then update
                     db.session.execute(text("ALTER TABLE users ADD COLUMN monthly_reset_date DATETIME"))
                     # Update existing rows with current timestamp
                     from datetime import datetime
                     db.session.execute(text("UPDATE users SET monthly_reset_date = :now WHERE monthly_reset_date IS NULL"), {"now": datetime.utcnow()})
                     db.session.commit()
-                    print("✅ Added monthly_reset_date")
+                    print("[OK] Added monthly_reset_date")
             
             # Check and migrate api_keys table for free tier fields
             if 'api_keys' in tables:
-                print("🔄 Checking api_keys table for missing free tier columns...")
+                print("[RELOAD] Checking api_keys table for missing free tier columns...")
                 api_keys_columns = [col['name'] for col in inspector.get_columns('api_keys')]
                 
                 if 'is_free_tier' not in api_keys_columns:
-                    print("🔄 Migrating: Adding is_free_tier column to api_keys...")
+                    print("[RELOAD] Migrating: Adding is_free_tier column to api_keys...")
                     # PostgreSQL uses BOOLEAN, SQLite uses INTEGER
                     if is_supabase or not is_sqlite:
                         db.session.execute(text("ALTER TABLE api_keys ADD COLUMN is_free_tier BOOLEAN DEFAULT FALSE"))
                     else:
                         db.session.execute(text("ALTER TABLE api_keys ADD COLUMN is_free_tier INTEGER DEFAULT 0"))
                     db.session.commit()
-                    print("✅ Added is_free_tier to api_keys")
+                    print("[OK] Added is_free_tier to api_keys")
                 
                 if 'free_tier_type' not in api_keys_columns:
-                    print("🔄 Migrating: Adding free_tier_type column to api_keys...")
+                    print("[RELOAD] Migrating: Adding free_tier_type column to api_keys...")
                     db.session.execute(text("ALTER TABLE api_keys ADD COLUMN free_tier_type VARCHAR(50)"))
                     db.session.commit()
-                    print("✅ Added free_tier_type to api_keys")
+                    print("[OK] Added free_tier_type to api_keys")
                 
                 if 'granted_by' not in api_keys_columns:
-                    print("🔄 Migrating: Adding granted_by column to api_keys...")
+                    print("[RELOAD] Migrating: Adding granted_by column to api_keys...")
                     db.session.execute(text("ALTER TABLE api_keys ADD COLUMN granted_by INTEGER"))
                     db.session.commit()
-                    print("✅ Added granted_by to api_keys")
+                    print("[OK] Added granted_by to api_keys")
                 
                 if 'granted_at' not in api_keys_columns:
-                    print("🔄 Migrating: Adding granted_at column to api_keys...")
+                    print("[RELOAD] Migrating: Adding granted_at column to api_keys...")
                     db.session.execute(text("ALTER TABLE api_keys ADD COLUMN granted_at TIMESTAMP"))
                     db.session.commit()
-                    print("✅ Added granted_at to api_keys")
+                    print("[OK] Added granted_at to api_keys")
                 
                 if 'notes' not in api_keys_columns:
-                    print("🔄 Migrating: Adding notes column to api_keys...")
+                    print("[RELOAD] Migrating: Adding notes column to api_keys...")
                     # PostgreSQL uses TEXT, SQLite uses TEXT
                     db.session.execute(text("ALTER TABLE api_keys ADD COLUMN notes TEXT"))
                     db.session.commit()
-                    print("✅ Added notes to api_keys")
+                    print("[OK] Added notes to api_keys")
             
             # Check and migrate usage_logs table for free tier field
             if 'usage_logs' in tables:
-                print("🔄 Checking usage_logs table for missing free tier column...")
+                print("[RELOAD] Checking usage_logs table for missing free tier column...")
                 usage_logs_columns = [col['name'] for col in inspector.get_columns('usage_logs')]
                 
                 if 'is_free_tier' not in usage_logs_columns:
-                    print("🔄 Migrating: Adding is_free_tier column to usage_logs...")
+                    print("[RELOAD] Migrating: Adding is_free_tier column to usage_logs...")
                     # PostgreSQL uses BOOLEAN, SQLite uses INTEGER
                     if is_supabase or not is_sqlite:
                         db.session.execute(text("ALTER TABLE usage_logs ADD COLUMN is_free_tier BOOLEAN DEFAULT FALSE"))
                     else:
                         db.session.execute(text("ALTER TABLE usage_logs ADD COLUMN is_free_tier INTEGER DEFAULT 0"))
                     db.session.commit()
-                    print("✅ Added is_free_tier to usage_logs")
+                    print("[OK] Added is_free_tier to usage_logs")
             
             # If users table doesn't exist, create all tables
             if 'users' not in tables:
                 # Table doesn't exist - create all tables
-                print("📦 Creating database tables...")
+                print("[LOAD] Creating database tables...")
                 db.create_all()
-                print("✅ Database tables created successfully")
+                print("[OK] Database tables created successfully")
             
             # CRITICAL: Startup sync - restore users from Supabase if primary DB is empty
             # This prevents data loss when Railway database gets wiped on redeploy
@@ -290,11 +290,11 @@ def init_db(app):
             user_count = User.query.count()
             
             if user_count == 0:
-                print("⚠️ [DATABASE] Primary database is empty - checking Supabase for users to restore...")
+                print("[WARN] [DATABASE] Primary database is empty - checking Supabase for users to restore...")
                 try:
                     restore_users_from_supabase(db.session)
                 except Exception as e:
-                    print(f"⚠️ [DATABASE] Failed to restore users from Supabase: {e}")
+                    print(f"[WARN] [DATABASE] Failed to restore users from Supabase: {e}")
                     import traceback
                     traceback.print_exc()
                     # Continue anyway - users can still register fresh
@@ -324,23 +324,23 @@ def init_db(app):
                         user.set_password(secrets.token_urlsafe(32))
                     db.session.add(user)
                     db.session.commit()
-                    print(f"✅ Created super_admin user: {email}")
+                    print(f"[OK] Created super_admin user: {email}")
                 else:
                     # Update existing user to super_admin if not already
                     if user.role != 'super_admin':
                         user.role = 'super_admin'
                         db.session.commit()
-                        print(f"✅ Upgraded {email} to super_admin role")
+                        print(f"[OK] Upgraded {email} to super_admin role")
                     else:
-                        print(f"✅ {email} already has super_admin role")
+                        print(f"[OK] {email} already has super_admin role")
                 
         except Exception as e:
-            print(f"❌ Error creating database tables: {e}")
+            print(f"[ERROR] Error creating database tables: {e}")
             import traceback
             traceback.print_exc()
             # Don't raise - allow app to start even if database init fails
             # Database can be initialized later or healthcheck will show it's not ready
-            print("⚠️ Continuing without database initialization - app will start but database features may not work")
+            print("[WARN] Continuing without database initialization - app will start but database features may not work")
     
     return db
 

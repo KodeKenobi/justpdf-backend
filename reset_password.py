@@ -14,7 +14,7 @@ def reset_user_password():
             # Find the user
             user = User.query.filter_by(email='kodekenobi@gmail.com').first()
             if not user:
-                print("❌ User not found: kodekenobi@gmail.com")
+                print("[ERROR] User not found: kodekenobi@gmail.com")
                 return False
             
             # Set new password
@@ -24,7 +24,7 @@ def reset_user_password():
             
             db.session.commit()
             
-            print("✅ Password reset successfully!")
+            print("[OK] Password reset successfully!")
             print(f"   Email: {user.email}")
             print(f"   Password: {new_password}")
             print(f"   Role: {user.role}")
@@ -35,7 +35,7 @@ def reset_user_password():
             
         except Exception as e:
             db.session.rollback()
-            print(f"❌ Error resetting password: {e}")
+            print(f"[ERROR] Error resetting password: {e}")
             return False
 
 if __name__ == "__main__":

@@ -13,10 +13,10 @@ def debug_user():
         # Find user
         user = User.query.filter_by(email=email).first()
         if not user:
-            print(f"❌ User not found: {email}")
+            print(f"[ERROR] User not found: {email}")
             return
 
-        print(f"✅ User found: {email}")
+        print(f"[OK] User found: {email}")
         print(f"   ID: {user.id}")
         print(f"   Role: {user.role}")
         print(f"   Active: {user.is_active}")

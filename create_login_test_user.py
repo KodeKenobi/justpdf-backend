@@ -20,7 +20,7 @@ def create_login_test_user():
         # Check if user already exists
         existing_user = User.query.filter_by(email=email).first()
         if existing_user:
-            print(f"✅ User already exists: {email}")
+            print(f"[OK] User already exists: {email}")
             print(f"   ID: {existing_user.id}")
             print(f"   Role: {existing_user.role}")
             print(f"   Active: {existing_user.is_active}")
@@ -28,14 +28,14 @@ def create_login_test_user():
             # Update password to ensure it matches
             existing_user.set_password(password)
             db.session.commit()
-            print(f"   ✅ Password updated to match test script")
+            print(f"   [OK] Password updated to match test script")
             return existing_user
 
         # Create new user
-        print(f"📝 Creating test user: {email}")
+        print(f" Creating test user: {email}")
         user, message = register_user(email, password, role='user')
         if user:
-            print(f"✅ User created successfully!")
+            print(f"[OK] User created successfully!")
             print(f"   Email: {email}")
             print(f"   Password: {password}")
             print(f"   Role: {user.role}")
@@ -43,7 +43,7 @@ def create_login_test_user():
             print(f"   ID: {user.id}")
             return user
         else:
-            print(f"❌ Error creating user: {message}")
+            print(f"[ERROR] Error creating user: {message}")
             return None
 
 if __name__ == '__main__':

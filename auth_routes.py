@@ -62,7 +62,7 @@ def register():
                         user.monthly_reset_date if user.monthly_reset_date else datetime.utcnow(),
                         user.last_login if user.last_login else None, user.email
                     ))
-                    print(f"✅ [REGISTRATION] Updated user in Supabase: {user.email}")
+                    print(f"[OK] [REGISTRATION] Updated user in Supabase: {user.email}")
                 else:
                     # Insert
                     cursor.execute("""
@@ -78,14 +78,14 @@ def register():
                         user.created_at if user.created_at else datetime.utcnow(),
                         user.last_login if user.last_login else None
                     ))
-                    print(f"✅ [REGISTRATION] Added user to Supabase: {user.email}")
+                    print(f"[OK] [REGISTRATION] Added user to Supabase: {user.email}")
                 
                 conn.commit()
                 cursor.close()
                 conn.close()
                 
             except Exception as e:
-                print(f"⚠️ [REGISTRATION] Failed to sync to Supabase: {e}")
+                print(f"[WARN] [REGISTRATION] Failed to sync to Supabase: {e}")
                 import traceback
                 traceback.print_exc()
                 # Don't fail registration if sync fails
@@ -103,24 +103,24 @@ def register():
                 def send_email_async():
                     """Send welcome email in background thread"""
                     try:
-                        print(f"📧 [REGISTRATION] Background: Sending welcome email to {user.email} (tier: {tier})")
+                        print(f" [REGISTRATION] Background: Sending welcome email to {user.email} (tier: {tier})")
                         success = send_welcome_email(user.email, tier, amount=0.0, payment_id="", payment_date=registration_date)
                         if success:
-                            print(f"✅ [REGISTRATION] Background: Welcome email sent successfully to {user.email}")
+                            print(f"[OK] [REGISTRATION] Background: Welcome email sent successfully to {user.email}")
                         else:
-                            print(f"❌ [REGISTRATION] Background: Failed to send welcome email to {user.email}")
+                            print(f"[ERROR] [REGISTRATION] Background: Failed to send welcome email to {user.email}")
                             print(f"   Check email_service.py logs for details")
                     except Exception as e:
-                        print(f"❌ [REGISTRATION] Background: Exception sending welcome email to {user.email}: {e}")
+                        print(f"[ERROR] [REGISTRATION] Background: Exception sending welcome email to {user.email}: {e}")
                         import traceback
                         traceback.print_exc()
                 
                 # Start email sending in background thread (non-blocking)
                 email_thread = threading.Thread(target=send_email_async, daemon=True)
                 email_thread.start()
-                print(f"📧 [REGISTRATION] Welcome email queued for background sending to {user.email}")
+                print(f" [REGISTRATION] Welcome email queued for background sending to {user.email}")
             except Exception as e:
-                print(f"⚠️ [REGISTRATION] Failed to queue welcome email: {e}")
+                print(f"[WARN] [REGISTRATION] Failed to queue welcome email: {e}")
                 # Don't fail registration if email queueing fails
             
             return jsonify({
@@ -139,40 +139,40 @@ def login():
     try:
         data = request.get_json()
         
-        print(f"🔍 LOGIN DEBUG - Raw data: {data}")
+        print(f" LOGIN DEBUG - Raw data: {data}")
         
         if not data:
-            print("🔍 LOGIN DEBUG - No data provided")
+            print(" LOGIN DEBUG - No data provided")
             return jsonify({'error': 'No data provided'}), 400
         
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
         
-        print(f"🔍 LOGIN DEBUG - Email: '{email}' (len: {len(email)})")
-        print(f"🔍 LOGIN DEBUG - Password: '{password}' (len: {len(password)})")
+        print(f" LOGIN DEBUG - Email: '{email}' (len: {len(email)})")
+        print(f" LOGIN DEBUG - Password: '{password}' (len: {len(password)})")
         
         if not email or not password:
-            print("🔍 LOGIN DEBUG - Missing email or password")
+            print(" LOGIN DEBUG - Missing email or password")
             return jsonify({'error': 'Email and password are required'}), 400
         
-        print(f"🔍 LOGIN DEBUG - Calling login_user...")
+        print(f" LOGIN DEBUG - Calling login_user...")
         result, message = login_user(email, password)
         
-        print(f"🔍 LOGIN DEBUG - Result: {result is not None}")
-        print(f"🔍 LOGIN DEBUG - Message: {message}")
+        print(f" LOGIN DEBUG - Result: {result is not None}")
+        print(f" LOGIN DEBUG - Message: {message}")
         
         if result:
-            print("🔍 LOGIN DEBUG - Login successful, returning token")
+            print(" LOGIN DEBUG - Login successful, returning token")
             return jsonify({
                 'message': message,
                 **result
             }), 200
         else:
-            print("🔍 LOGIN DEBUG - Login failed, returning error")
+            print(" LOGIN DEBUG - Login failed, returning error")
             return jsonify({'error': message}), 401
             
     except Exception as e:
-        print(f"🔍 LOGIN DEBUG - Exception: {e}")
+        print(f" LOGIN DEBUG - Exception: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -380,9 +380,9 @@ def admin_update_password():
             cursor.close()
             conn.close()
             
-            print(f"✅ [ADMIN] Synced password update to Supabase: {email}")
+            print(f"[OK] [ADMIN] Synced password update to Supabase: {email}")
         except Exception as sync_error:
-            print(f"⚠️ [ADMIN] Failed to sync password to Supabase: {sync_error}")
+            print(f"[WARN] [ADMIN] Failed to sync password to Supabase: {sync_error}")
             # Don't fail the request if Supabase sync fails
         
         return jsonify({
@@ -428,7 +428,7 @@ def get_token_from_session():
             all_users = User.query.all()
             for u in all_users:
                 if u.email.lower().strip() == email.lower().strip():
-                    print(f"⚠️ [AUTH] Found user with different email casing: '{u.email}' (requested: '{email}')")
+                    print(f"[WARN] [AUTH] Found user with different email casing: '{u.email}' (requested: '{email}')")
                     print(f"   Using existing user ID: {u.id}, tier: {u.subscription_tier}")
                     user = u
                     break
@@ -437,7 +437,7 @@ def get_token_from_session():
         # This prevents "resurrection" of deleted users
         if not user:
             existing_emails = [u.email for u in User.query.all()]
-            print(f"❌ [AUTH] USER NOT FOUND: {email}")
+            print(f"[ERROR] [AUTH] USER NOT FOUND: {email}")
             print(f"   Existing users in database: {existing_emails}")
             print(f"   User may have been deleted - returning 404 to prevent resurrection")
             return jsonify({
@@ -456,10 +456,10 @@ def get_token_from_session():
         # But since user is already authenticated via NextAuth, password is not required
         if password:
             if not user.check_password(password):
-                print(f"⚠️ [AUTH] Password verification failed for {email} (but continuing since NextAuth session is valid)")
+                print(f"[WARN] [AUTH] Password verification failed for {email} (but continuing since NextAuth session is valid)")
                 # Don't fail - NextAuth already verified the user
         else:
-            print(f"✅ [AUTH] Trusting NextAuth session for {email} (no password required)")
+            print(f"[OK] [AUTH] Trusting NextAuth session for {email} (no password required)")
         
         # Update user metadata if needed (don't overwrite password)
         old_tier = user.subscription_tier
@@ -472,13 +472,13 @@ def get_token_from_session():
         # Only update subscription_tier if explicitly provided AND different
         # This prevents accidental resets
         if 'subscription_tier' in data and data.get('subscription_tier') != old_tier:
-            print(f"⚠️ [AUTH] Subscription tier change requested for {email}: {old_tier} -> {data.get('subscription_tier')}")
+            print(f"[WARN] [AUTH] Subscription tier change requested for {email}: {old_tier} -> {data.get('subscription_tier')}")
             print(f"   This should only happen through payment webhooks, not session sync")
             print(f"   PRESERVING existing tier: {old_tier}")
             # Don't update - preserve existing tier
         
         db.session.commit()
-        print(f"✅ [AUTH] Issued token for user: {email} (ID: {old_id}, tier: {old_tier})")
+        print(f"[OK] [AUTH] Issued token for user: {email} (ID: {old_id}, tier: {old_tier})")
         
         # Generate JWT token
         expires = timedelta(hours=24)

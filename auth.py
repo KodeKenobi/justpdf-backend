@@ -55,7 +55,7 @@ def register_user(email, password, role='user'):
                 existing_user.is_active = True
                 existing_user.created_at = datetime.utcnow()  # Reset creation date
                 db.session.commit()
-                print(f"✅ Reactivated deactivated user: {email}")
+                print(f"[OK] Reactivated deactivated user: {email}")
                 return existing_user, "Account reactivated successfully"
         
         # Create new user
@@ -114,14 +114,14 @@ def login_user(email, password):
                 supabase_is_active = supabase_user['is_active']
                 
                 if user.role != supabase_role or user.is_active != supabase_is_active:
-                    print(f"🔄 [LOGIN] Syncing role from Supabase for {email}: {user.role} -> {supabase_role}")
+                    print(f"[RELOAD] [LOGIN] Syncing role from Supabase for {email}: {user.role} -> {supabase_role}")
                     user.role = supabase_role
                     user.is_active = supabase_is_active
                     db.session.commit()
-                    print(f"✅ [LOGIN] Role synced from Supabase: {email} now has role {supabase_role}")
+                    print(f"[OK] [LOGIN] Role synced from Supabase: {email} now has role {supabase_role}")
         except Exception as sync_error:
             # Don't fail login if Supabase sync fails
-            print(f"⚠️ [LOGIN] Failed to sync role from Supabase: {sync_error}")
+            print(f"[WARN] [LOGIN] Failed to sync role from Supabase: {sync_error}")
         
         # Update last login
         user.last_login = datetime.utcnow()

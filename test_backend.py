@@ -5,7 +5,7 @@ from app import app
 
 def test_health_endpoint():
     """Test the health endpoint"""
-    print("🔍 Testing health endpoint...")
+    print(" Testing health endpoint...")
     with app.test_client() as client:
         response = client.get('/health')
         print(f"   Status: {response.status_code}")
@@ -19,7 +19,7 @@ def test_health_endpoint():
 
 def test_ffmpeg_endpoint():
     """Test the FFmpeg endpoint"""
-    print("🔍 Testing FFmpeg endpoint...")
+    print(" Testing FFmpeg endpoint...")
     with app.test_client() as client:
         response = client.get('/test-ffmpeg')
         print(f"   Status: {response.status_code}")
@@ -33,7 +33,7 @@ def test_ffmpeg_endpoint():
 
 def test_convert_video_endpoint():
     """Test the convert-video endpoint (without file)"""
-    print("🔍 Testing convert-video endpoint...")
+    print(" Testing convert-video endpoint...")
     with app.test_client() as client:
         response = client.post('/convert-video')
         print(f"   Status: {response.status_code}")
@@ -47,7 +47,7 @@ def test_convert_video_endpoint():
 
 def main():
     """Run all tests"""
-    print("🚀 Testing backend locally...")
+    print("[START] Testing backend locally...")
     print("=" * 50)
     
     tests = [
@@ -63,21 +63,21 @@ def main():
         try:
             if test():
                 passed += 1
-                print("   ✅ PASSED")
+                print("   [OK] PASSED")
             else:
-                print("   ❌ FAILED")
+                print("   [ERROR] FAILED")
         except Exception as e:
-            print(f"   ❌ ERROR: {e}")
+            print(f"   [ERROR] ERROR: {e}")
         print()
     
     print("=" * 50)
-    print(f"📊 Results: {passed}/{total} tests passed")
+    print(f"[INFO] Results: {passed}/{total} tests passed")
     
     if passed == total:
-        print("🎉 All tests passed! Backend is working locally.")
+        print("[SUCCESS] All tests passed! Backend is working locally.")
         return True
     else:
-        print("⚠️  Some tests failed. Backend needs fixes.")
+        print("[WARN]  Some tests failed. Backend needs fixes.")
         return False
 
 if __name__ == "__main__":

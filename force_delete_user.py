@@ -18,11 +18,11 @@ def force_delete_user(email):
             user = User.query.filter_by(email=email).first()
             
             if not user:
-                print(f"❌ User not found: {email}")
+                print(f"[ERROR] User not found: {email}")
                 return False
             
             user_id = user.id
-            print(f"📊 Found user: {email} (ID: {user_id})")
+            print(f"[INFO] Found user: {email} (ID: {user_id})")
             
             # Delete using raw SQL to ensure it works
             try:
@@ -39,20 +39,20 @@ def force_delete_user(email):
                 # Verify
                 verify = db.session.execute(text("SELECT id FROM users WHERE email = :email"), {"email": email}).fetchone()
                 if verify:
-                    print(f"❌ User still exists after SQL delete!")
+                    print(f"[ERROR] User still exists after SQL delete!")
                     return False
                 
-                print(f"✅ User {email} force deleted successfully")
+                print(f"[OK] User {email} force deleted successfully")
                 return True
                 
             except Exception as e:
                 db.session.rollback()
-                print(f"❌ SQL delete error: {e}")
+                print(f"[ERROR] SQL delete error: {e}")
                 raise
                 
         except Exception as e:
             db.session.rollback()
-            print(f"❌ Error: {e}")
+            print(f"[ERROR] Error: {e}")
             import traceback
             traceback.print_exc()
             return False

@@ -100,8 +100,8 @@ def list_users():
             and not search and not roles and not is_active and not subscription_tiers):
             # Return all users without pagination
             all_users = query.all()
-            print(f"🔍 Super Admin list_users - Total users in DB: {User.query.count()}")
-            print(f"🔍 Super Admin list_users - Returning ALL {len(all_users)} users (no pagination)")
+            print(f" Super Admin list_users - Total users in DB: {User.query.count()}")
+            print(f" Super Admin list_users - Returning ALL {len(all_users)} users (no pagination)")
             return jsonify({
                 'users': [user.to_dict() for user in all_users],
                 'pagination': {
@@ -122,12 +122,12 @@ def list_users():
         )
         
         # Debug logging
-        print(f"🔍 Admin list_users - Total users in DB: {User.query.count()}")
-        print(f"🔍 Admin list_users - Query result count: {users.total}")
-        print(f"🔍 Admin list_users - Current user: {g.current_user.email if hasattr(g, 'current_user') and g.current_user else 'None'}")
-        print(f"🔍 Admin list_users - Current user role: {g.current_user.role if hasattr(g, 'current_user') and g.current_user else 'None'}")
-        print(f"🔍 Admin list_users - Per page: {per_page}, Requested: {requested_per_page}")
-        print(f"🔍 Admin list_users - Returning {len(users.items)} users")
+        print(f" Admin list_users - Total users in DB: {User.query.count()}")
+        print(f" Admin list_users - Query result count: {users.total}")
+        print(f" Admin list_users - Current user: {g.current_user.email if hasattr(g, 'current_user') and g.current_user else 'None'}")
+        print(f" Admin list_users - Current user role: {g.current_user.role if hasattr(g, 'current_user') and g.current_user else 'None'}")
+        print(f" Admin list_users - Per page: {per_page}, Requested: {requested_per_page}")
+        print(f" Admin list_users - Returning {len(users.items)} users")
         
         return jsonify({
             'users': [user.to_dict() for user in users.items],
@@ -568,7 +568,7 @@ def toggle_user_status(user_id):
         db.session.commit()
         
         status = "activated" if user.is_active else "deactivated"
-        print(f"✅ User {user.email} {status} by admin {g.current_user.email}")
+        print(f"[OK] User {user.email} {status} by admin {g.current_user.email}")
         
         return jsonify({
             'message': f'User {status} successfully',

@@ -69,9 +69,9 @@ def upgrade_subscription():
             try:
                 user = User.query.filter_by(id=int(user_id)).first()
                 if user:
-                    print(f"✅ [UPGRADE] User found by ID: {user_id} ({user.email}, tier: {user.subscription_tier})")
+                    print(f"[OK] [UPGRADE] User found by ID: {user_id} ({user.email}, tier: {user.subscription_tier})")
             except (ValueError, TypeError):
-                print(f"⚠️ [UPGRADE] Invalid user_id format: {user_id}")
+                print(f"[WARN] [UPGRADE] Invalid user_id format: {user_id}")
                 pass
         
         # If not found by ID, try email (case-insensitive lookup)
@@ -79,20 +79,20 @@ def upgrade_subscription():
             # First try exact match
             user = User.query.filter_by(email=user_email).first()
             if user:
-                print(f"✅ [UPGRADE] User found by email (exact): {user_email} (ID: {user.id}, tier: {user.subscription_tier})")
+                print(f"[OK] [UPGRADE] User found by email (exact): {user_email} (ID: {user.id}, tier: {user.subscription_tier})")
             else:
                 # Try case-insensitive lookup
                 all_users = User.query.all()
                 for u in all_users:
                     if u.email.lower().strip() == user_email.lower().strip():
-                        print(f"⚠️ [UPGRADE] Found user with different email casing: '{u.email}' (requested: '{user_email}')")
+                        print(f"[WARN] [UPGRADE] Found user with different email casing: '{u.email}' (requested: '{user_email}')")
                         print(f"   Using existing user ID: {u.id}, tier: {u.subscription_tier}")
                         user = u
                         break
         
         if not user:
             identifier = user_email or f"ID {user_id}" or "unknown"
-            print(f"❌ [UPGRADE] User not found for: {identifier}")
+            print(f"[ERROR] [UPGRADE] User not found for: {identifier}")
             print(f"   Searched by user_id: {user_id}")
             print(f"   Searched by email: {user_email}")
             # Log all users for debugging
@@ -117,7 +117,7 @@ def upgrade_subscription():
         
         # Verify the update by re-fetching the user
         db.session.refresh(user)
-        print(f"✅ Subscription updated for {user_email}: {old_tier} -> {new_tier}")
+        print(f"[OK] Subscription updated for {user_email}: {old_tier} -> {new_tier}")
         print(f"[UPGRADE] Verified - User {user.id} ({user.email}) now has tier: {user.subscription_tier}")
         print(f"[UPGRADE] User monthly_call_limit: {user.monthly_call_limit}")
         
@@ -159,9 +159,9 @@ def upgrade_subscription():
             cursor.close()
             conn.close()
             
-            print(f"✅ [UPGRADE] Synced tier update to Supabase: {user_email} -> {new_tier}")
+            print(f"[OK] [UPGRADE] Synced tier update to Supabase: {user_email} -> {new_tier}")
         except Exception as e:
-            print(f"⚠️ [UPGRADE] Failed to sync tier to Supabase: {e}")
+            print(f"[WARN] [UPGRADE] Failed to sync tier to Supabase: {e}")
             import traceback
             traceback.print_exc()
             # Don't fail the request if Supabase sync fails
@@ -190,7 +190,7 @@ def upgrade_subscription():
                     notification_type='payment'
                 )
         except Exception as e:
-            print(f"⚠️ Failed to create notification: {e}")
+            print(f"[WARN] Failed to create notification: {e}")
         
         # Send upgrade email if tier changed
         if tier_changed:
@@ -207,7 +207,7 @@ def upgrade_subscription():
                 else:
                     payment_date = datetime.now()
                 
-                print(f"📧 [UPGRADE] Attempting to send upgrade email to {user.email}...")
+                print(f" [UPGRADE] Attempting to send upgrade email to {user.email}...")
                 email_sent = send_upgrade_email(
                     user.email, 
                     old_tier, 
@@ -218,16 +218,16 @@ def upgrade_subscription():
                 )
                 
                 if email_sent:
-                    print(f"✅ [UPGRADE] Upgrade email sent successfully to {user.email}")
+                    print(f"[OK] [UPGRADE] Upgrade email sent successfully to {user.email}")
                 else:
-                    print(f"❌ [UPGRADE] Failed to send upgrade email to {user.email} - check logs above for details")
+                    print(f"[ERROR] [UPGRADE] Failed to send upgrade email to {user.email} - check logs above for details")
                     # Log additional context for debugging
                     print(f"   User: {user.email} (ID: {user.id})")
                     print(f"   Tier change: {old_tier} -> {new_tier}")
                     print(f"   Amount: {amount}")
                     print(f"   Payment ID: {payment_id}")
             except Exception as e:
-                print(f"❌ [UPGRADE] Exception while sending upgrade email: {e}")
+                print(f"[ERROR] [UPGRADE] Exception while sending upgrade email: {e}")
                 import traceback
                 traceback.print_exc()
                 # Don't fail the request if email fails
@@ -241,7 +241,7 @@ def upgrade_subscription():
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Error updating subscription: {e}")
+        print(f"[ERROR] Error updating subscription: {e}")
         return jsonify({'error': str(e)}), 500
 
 @payment_api.route('/generate-invoice-pdf', methods=['POST'])
@@ -273,28 +273,28 @@ def generate_invoice_pdf_endpoint():
         else:
             payment_date = datetime.now()
         
-        print(f"📄 [INVOICE PDF] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
+        print(f" [INVOICE PDF] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
         
         # Use existing generate_invoice_pdf function
         invoice_pdf = generate_invoice_pdf(tier, amount, user_email, payment_id, payment_date, item_description)
         
         if invoice_pdf:
             pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
-            print(f"✅ [INVOICE PDF] Invoice PDF generated ({len(invoice_pdf)} bytes)")
+            print(f"[OK] [INVOICE PDF] Invoice PDF generated ({len(invoice_pdf)} bytes)")
             return jsonify({
                 'success': True,
                 'pdf_base64': pdf_base64,
                 'size': len(invoice_pdf)
             }), 200
         else:
-            print(f"❌ [INVOICE PDF] Failed to generate invoice PDF")
+            print(f"[ERROR] [INVOICE PDF] Failed to generate invoice PDF")
             return jsonify({
                 'success': False,
                 'error': 'Failed to generate invoice PDF'
             }), 500
             
     except Exception as e:
-        print(f"❌ [INVOICE PDF] Error: {e}")
+        print(f"[ERROR] [INVOICE PDF] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -314,7 +314,7 @@ def get_file_invoice_email_html_endpoint():
         amount = data.get('amount', 1.0)
         payment_id = data.get('payment_id', '')
         
-        print(f"📧 [FILE INVOICE EMAIL] Generating email HTML for {item_name} (amount: {amount})")
+        print(f" [FILE INVOICE EMAIL] Generating email HTML for {item_name} (amount: {amount})")
         
         # Use existing get_file_invoice_email_html function
         html_content = get_file_invoice_email_html(item_name, amount, payment_id)
@@ -325,7 +325,7 @@ def get_file_invoice_email_html_endpoint():
         }), 200
             
     except Exception as e:
-        print(f"❌ [FILE INVOICE EMAIL] Error: {e}")
+        print(f"[ERROR] [FILE INVOICE EMAIL] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -395,7 +395,7 @@ def get_billing_history():
                 if notif.created_at and notif.created_at >= user_account_created_at:
                     notifications.append(notif)
                 else:
-                    print(f"⚠️ [BILLING HISTORY] Skipping notification {notif.id} - created before user account ({notif.created_at} < {user_account_created_at})")
+                    print(f"[WARN] [BILLING HISTORY] Skipping notification {notif.id} - created before user account ({notif.created_at} < {user_account_created_at})")
         
         # Transform notifications to billing history format
         billing_history = []
@@ -418,7 +418,7 @@ def get_billing_history():
                 'metadata': metadata
             })
         
-        print(f"📊 [BILLING HISTORY] Found {len(notifications)} notifications for user {user.id} (account created: {user_account_created_at}), created {len(billing_history)} billing history entries")
+        print(f"[INFO] [BILLING HISTORY] Found {len(notifications)} notifications for user {user.id} (account created: {user_account_created_at}), created {len(billing_history)} billing history entries")
         
         # Always add initial free tier subscription (from signup)
         # This shows when they first signed up, regardless of current tier
@@ -447,7 +447,7 @@ def get_billing_history():
                     'is_initial': True
                 }
             })
-            print(f"✅ [BILLING HISTORY] Added initial free tier subscription for user {user.email} (signup: {subscription_date})")
+            print(f"[OK] [BILLING HISTORY] Added initial free tier subscription for user {user.email} (signup: {subscription_date})")
         
         # If user is on premium/enterprise but has no payment notifications, add current subscription
         # This handles cases where upgrade notifications weren't created
@@ -488,7 +488,7 @@ def get_billing_history():
                         'is_current': True
                     }
                 })
-                print(f"✅ [BILLING HISTORY] Added current {current_tier} subscription for user {user.email} (amount: ${subscription_amount})")
+                print(f"[OK] [BILLING HISTORY] Added current {current_tier} subscription for user {user.email} (amount: ${subscription_amount})")
         
         # Sort by date (oldest first)
         billing_history.sort(key=lambda x: x['date'])
@@ -499,7 +499,7 @@ def get_billing_history():
         }), 200
         
     except Exception as e:
-        print(f"❌ [BILLING HISTORY] Error: {e}")
+        print(f"[ERROR] [BILLING HISTORY] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -539,7 +539,7 @@ def download_invoice():
         else:
             payment_date = datetime.now()
         
-        print(f"📄 [DOWNLOAD INVOICE] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
+        print(f" [DOWNLOAD INVOICE] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
         
         # Determine which template to use based on tier
         template_name = 'subscription-invoice.html' if tier in ['premium', 'production', 'enterprise', 'client'] else 'emails/invoice.html'
@@ -557,7 +557,7 @@ def download_invoice():
         
         if invoice_pdf:
             pdf_base64 = base64.b64encode(invoice_pdf).decode('utf-8')
-            print(f"✅ [DOWNLOAD INVOICE] Invoice PDF generated ({len(invoice_pdf)} bytes)")
+            print(f"[OK] [DOWNLOAD INVOICE] Invoice PDF generated ({len(invoice_pdf)} bytes)")
             return jsonify({
                 'success': True,
                 'pdf_base64': pdf_base64,
@@ -565,14 +565,14 @@ def download_invoice():
                 'filename': f'invoice_{tier}_{payment_date.strftime("%Y%m%d")}.pdf'
             }), 200
         else:
-            print(f"❌ [DOWNLOAD INVOICE] Failed to generate invoice PDF")
+            print(f"[ERROR] [DOWNLOAD INVOICE] Failed to generate invoice PDF")
             return jsonify({
                 'success': False,
                 'error': 'Failed to generate invoice PDF'
             }), 500
             
     except Exception as e:
-        print(f"❌ [DOWNLOAD INVOICE] Error: {e}")
+        print(f"[ERROR] [DOWNLOAD INVOICE] Error: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

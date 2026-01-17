@@ -37,12 +37,12 @@ def create_notification(
         db.session.add(notification)
         db.session.commit()
         
-        print(f"✅ Notification created: {title}")
+        print(f"[OK] Notification created: {title}")
         return notification
         
     except Exception as e:
         db.session.rollback()
-        print(f"❌ Error creating notification: {e}")
+        print(f"[ERROR] Error creating notification: {e}")
         raise
 
 def create_payment_notification(

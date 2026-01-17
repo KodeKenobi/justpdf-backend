@@ -85,11 +85,11 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
                 import base64
                 logo_base64 = base64.b64encode(logo_response.content).decode('utf-8')
                 logo_data_uri = f"data:image/png;base64,{logo_base64}"
-                print(f"✅ [SUBSCRIPTION] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
+                print(f"[OK] [SUBSCRIPTION] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
             else:
-                print(f"⚠️ [SUBSCRIPTION] Failed to download logo: HTTP {logo_response.status_code}")
+                print(f"[WARN] [SUBSCRIPTION] Failed to download logo: HTTP {logo_response.status_code}")
         except Exception as e:
-            print(f"⚠️ [SUBSCRIPTION] Error downloading logo: {e}")
+            print(f"[WARN] [SUBSCRIPTION] Error downloading logo: {e}")
             # Continue without logo if download fails
         
         # Generate subscription HTML with embedded logo
@@ -109,9 +109,9 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         
         # Debug: Log HTML size and preview
         html_size = len(subscription_html)
-        print(f"📄 [SUBSCRIPTION] Generated HTML ({html_size} chars)")
-        print(f"📄 [SUBSCRIPTION] HTML preview (first 500 chars): {subscription_html[:500]}")
-        print(f"📄 [SUBSCRIPTION] HTML saved to: {html_path}")
+        print(f" [SUBSCRIPTION] Generated HTML ({html_size} chars)")
+        print(f" [SUBSCRIPTION] HTML preview (first 500 chars): {subscription_html[:500]}")
+        print(f" [SUBSCRIPTION] HTML saved to: {html_path}")
         
         # Get API URL for PDF conversion
         # Use frontend domain if available (Next.js rewrites proxy to backend)
@@ -119,15 +119,15 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
         if frontend_url and frontend_url.startswith('http'):
             api_url = frontend_url
-            print(f"📄 [SUBSCRIPTION] Using frontend domain for PDF conversion: {api_url}")
+            print(f" [SUBSCRIPTION] Using frontend domain for PDF conversion: {api_url}")
         else:
             api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
             if not api_url.startswith('http'):
                 api_url = f'https://{api_url}'
-            print(f"📄 [SUBSCRIPTION] Using direct backend URL for PDF conversion: {api_url}")
+            print(f" [SUBSCRIPTION] Using direct backend URL for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
-        print(f"📄 [SUBSCRIPTION] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
+        print(f" [SUBSCRIPTION] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
         response = None
         with open(html_path, 'rb') as html_file:
             files = {'html': ('subscription.html', html_file, 'text/html')}
@@ -138,7 +138,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
                     timeout=60  # Increased timeout for PDF generation
                 )
             except requests.exceptions.Timeout:
-                print(f"❌ [SUBSCRIPTION] PDF conversion timed out after 60 seconds")
+                print(f"[ERROR] [SUBSCRIPTION] PDF conversion timed out after 60 seconds")
                 # Clean up temp HTML file
                 try:
                     os.unlink(html_path)
@@ -146,7 +146,7 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
                     pass
                 return None
             except requests.exceptions.RequestException as e:
-                print(f"❌ [SUBSCRIPTION] PDF conversion request failed: {e}")
+                print(f"[ERROR] [SUBSCRIPTION] PDF conversion request failed: {e}")
                 # Clean up temp HTML file
                 try:
                     os.unlink(html_path)
@@ -162,36 +162,36 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         
         if response and response.status_code == 200:
             data = response.json()
-            print(f"📄 [SUBSCRIPTION] Conversion response: {data}")
+            print(f" [SUBSCRIPTION] Conversion response: {data}")
             if data.get('status') == 'success' and data.get('download_url'):
                 # Download the PDF
                 pdf_url = data['download_url']
                 if not pdf_url.startswith('http'):
                     pdf_url = f"{api_url}{pdf_url}"
                 
-                print(f"📄 [SUBSCRIPTION] Downloading PDF from: {pdf_url}")
+                print(f" [SUBSCRIPTION] Downloading PDF from: {pdf_url}")
                 pdf_response = requests.get(pdf_url, timeout=30)
                 if pdf_response.status_code == 200:
                     pdf_size = len(pdf_response.content)
-                    print(f"✅ [SUBSCRIPTION] PDF generated successfully ({pdf_size} bytes)")
+                    print(f"[OK] [SUBSCRIPTION] PDF generated successfully ({pdf_size} bytes)")
                     if pdf_size < 1000:
-                        print(f"⚠️ [SUBSCRIPTION] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
+                        print(f"[WARN] [SUBSCRIPTION] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
                     return pdf_response.content
                 else:
-                    print(f"❌ [SUBSCRIPTION] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
+                    print(f"[ERROR] [SUBSCRIPTION] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
             else:
                 error_msg = data.get('error', data.get('message', 'Unknown error'))
-                print(f"❌ [SUBSCRIPTION] Conversion failed: {error_msg}")
+                print(f"[ERROR] [SUBSCRIPTION] Conversion failed: {error_msg}")
                 print(f"   Full response: {data}")
         else:
             error_text = response.text[:500] if response.text else "No error message"
-            print(f"❌ [SUBSCRIPTION] HTML to PDF conversion failed: {response.status_code}")
+            print(f"[ERROR] [SUBSCRIPTION] HTML to PDF conversion failed: {response.status_code}")
             print(f"   Error response: {error_text}")
         
         return None
         
     except Exception as e:
-        print(f"❌ [SUBSCRIPTION] Error generating subscription PDF: {e}")
+        print(f"[ERROR] [SUBSCRIPTION] Error generating subscription PDF: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -247,11 +247,11 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
                 import base64
                 logo_base64 = base64.b64encode(logo_response.content).decode('utf-8')
                 logo_data_uri = f"data:image/png;base64,{logo_base64}"
-                print(f"✅ [INVOICE] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
+                print(f"[OK] [INVOICE] Logo downloaded and embedded as base64 ({len(logo_base64)} chars)")
             else:
-                print(f"⚠️ [INVOICE] Failed to download logo: HTTP {logo_response.status_code}")
+                print(f"[WARN] [INVOICE] Failed to download logo: HTTP {logo_response.status_code}")
         except Exception as e:
-            print(f"⚠️ [INVOICE] Error downloading logo: {e}")
+            print(f"[WARN] [INVOICE] Error downloading logo: {e}")
             # Continue without logo if download fails
         
         # Generate invoice HTML with embedded logo
@@ -304,9 +304,9 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         
         # Debug: Log HTML size and preview
         html_size = len(invoice_html)
-        print(f"📄 [INVOICE] Generated HTML ({html_size} chars)")
-        print(f"📄 [INVOICE] HTML preview (first 500 chars): {invoice_html[:500]}")
-        print(f"📄 [INVOICE] HTML saved to: {html_path}")
+        print(f" [INVOICE] Generated HTML ({html_size} chars)")
+        print(f" [INVOICE] HTML preview (first 500 chars): {invoice_html[:500]}")
+        print(f" [INVOICE] HTML saved to: {html_path}")
         
         # Get API URL for PDF conversion
         # Use frontend domain if available (Next.js rewrites proxy to backend)
@@ -314,15 +314,15 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
         if frontend_url and frontend_url.startswith('http'):
             api_url = frontend_url
-            print(f"📄 [INVOICE] Using frontend domain for PDF conversion: {api_url}")
+            print(f" [INVOICE] Using frontend domain for PDF conversion: {api_url}")
         else:
             api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
             if not api_url.startswith('http'):
                 api_url = f'https://{api_url}'
-            print(f"📄 [INVOICE] Using direct backend URL for PDF conversion: {api_url}")
+            print(f" [INVOICE] Using direct backend URL for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
-        print(f"📄 [INVOICE] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
+        print(f" [INVOICE] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
         response = None
         with open(html_path, 'rb') as html_file:
             files = {'html': ('invoice.html', html_file, 'text/html')}
@@ -333,7 +333,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
                     timeout=60  # Increased timeout for PDF generation
                 )
             except requests.exceptions.Timeout:
-                print(f"❌ [INVOICE] PDF conversion timed out after 60 seconds")
+                print(f"[ERROR] [INVOICE] PDF conversion timed out after 60 seconds")
                 # Clean up temp HTML file
                 try:
                     os.unlink(html_path)
@@ -341,7 +341,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
                     pass
                 return None
             except requests.exceptions.RequestException as e:
-                print(f"❌ [INVOICE] PDF conversion request failed: {e}")
+                print(f"[ERROR] [INVOICE] PDF conversion request failed: {e}")
                 # Clean up temp HTML file
                 try:
                     os.unlink(html_path)
@@ -357,36 +357,36 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         
         if response and response.status_code == 200:
             data = response.json()
-            print(f"📄 [INVOICE] Conversion response: {data}")
+            print(f" [INVOICE] Conversion response: {data}")
             if data.get('status') == 'success' and data.get('download_url'):
                 # Download the PDF
                 pdf_url = data['download_url']
                 if not pdf_url.startswith('http'):
                     pdf_url = f"{api_url}{pdf_url}"
                 
-                print(f"📄 [INVOICE] Downloading PDF from: {pdf_url}")
+                print(f" [INVOICE] Downloading PDF from: {pdf_url}")
                 pdf_response = requests.get(pdf_url, timeout=30)
                 if pdf_response.status_code == 200:
                     pdf_size = len(pdf_response.content)
-                    print(f"✅ [INVOICE] PDF generated successfully ({pdf_size} bytes)")
+                    print(f"[OK] [INVOICE] PDF generated successfully ({pdf_size} bytes)")
                     if pdf_size < 1000:
-                        print(f"⚠️ [INVOICE] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
+                        print(f"[WARN] [INVOICE] WARNING: PDF size is very small ({pdf_size} bytes), might be blank!")
                     return pdf_response.content
                 else:
-                    print(f"❌ [INVOICE] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
+                    print(f"[ERROR] [INVOICE] Failed to download PDF: {pdf_response.status_code} - {pdf_response.text[:200]}")
             else:
                 error_msg = data.get('error', data.get('message', 'Unknown error'))
-                print(f"❌ [INVOICE] Conversion failed: {error_msg}")
+                print(f"[ERROR] [INVOICE] Conversion failed: {error_msg}")
                 print(f"   Full response: {data}")
         else:
             error_text = response.text[:500] if response.text else "No error message"
-            print(f"❌ [INVOICE] HTML to PDF conversion failed: {response.status_code}")
+            print(f"[ERROR] [INVOICE] HTML to PDF conversion failed: {response.status_code}")
             print(f"   Error response: {error_text}")
         
         return None
         
     except Exception as e:
-        print(f"❌ [INVOICE] Error generating invoice PDF: {e}")
+        print(f"[ERROR] [INVOICE] Error generating invoice PDF: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -426,38 +426,38 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         # Format: [{ filename: "invoice.pdf", content: base64String, contentType: "application/pdf" }]
         if attachments:
             payload['attachments'] = attachments
-            print(f"📎 [EMAIL] Including {len(attachments)} attachment(s) in email payload")
+            print(f" [EMAIL] Including {len(attachments)} attachment(s) in email payload")
             for i, att in enumerate(attachments, 1):
                 print(f"   {i}. {att.get('filename', 'unknown')} ({len(att.get('content', ''))} base64 chars)")
         
-        print(f"📤 [EMAIL] Sending email to {to_email} via Next.js API")
-        print(f"📤 [EMAIL] API URL: {email_api_url}")
-        print(f"📤 [EMAIL] Subject: {subject}")
-        print(f"📤 [EMAIL] Has attachments: {bool(attachments)}")
+        print(f" [EMAIL] Sending email to {to_email} via Next.js API")
+        print(f" [EMAIL] API URL: {email_api_url}")
+        print(f" [EMAIL] Subject: {subject}")
+        print(f" [EMAIL] Has attachments: {bool(attachments)}")
         
         # Send email via Next.js API route
         response = requests.post(email_api_url, json=payload, timeout=30)
         
-        print(f"📥 [EMAIL] Response status: {response.status_code}")
-        print(f"📥 [EMAIL] Response body: {response.text[:200]}")
+        print(f"[FETCH] [EMAIL] Response status: {response.status_code}")
+        print(f"[FETCH] [EMAIL] Response body: {response.text[:200]}")
         
         if response.status_code == 200:
             data = response.json()
             if data.get('success'):
-                print(f"✅ [EMAIL] Email sent successfully to {to_email} (ID: {data.get('email_id', 'N/A')})")
+                print(f"[OK] [EMAIL] Email sent successfully to {to_email} (ID: {data.get('email_id', 'N/A')})")
                 return True
             else:
-                print(f"❌ [EMAIL] Email send failed: {data.get('error', 'Unknown error')}")
+                print(f"[ERROR] [EMAIL] Email send failed: {data.get('error', 'Unknown error')}")
                 return False
         else:
             error_msg = response.text
-            print(f"❌ [EMAIL] Error sending email to {to_email}: HTTP {response.status_code} - {error_msg}")
+            print(f"[ERROR] [EMAIL] Error sending email to {to_email}: HTTP {response.status_code} - {error_msg}")
             return False
         
     except Exception as e:
         error_msg = str(e)
         error_type = type(e).__name__
-        print(f"❌ [EMAIL] Error sending email to {to_email}: {error_type}: {error_msg}")
+        print(f"[ERROR] [EMAIL] Error sending email to {to_email}: {error_type}: {error_msg}")
         import traceback
         traceback.print_exc()
         # Don't re-raise - return False so registration/upgrade can still succeed
@@ -608,12 +608,12 @@ def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0,
         'premium': {'name': 'Production Plan'},
         'enterprise': {'name': 'Enterprise Plan'}
     }
-    subject = f"Welcome to Trevnoctilla - {tier_info.get(tier.lower(), tier_info['free'])['name']} Activated! 🎉"
+    subject = f"Welcome to Trevnoctilla - {tier_info.get(tier.lower(), tier_info['free'])['name']} Activated! [SUCCESS]"
     
     # Generate and attach invoice PDF
     attachments = []
     try:
-        print(f"📄 [WELCOME EMAIL] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
+        print(f" [WELCOME EMAIL] Generating invoice PDF for {user_email} (tier: {tier}, amount: {amount})")
         invoice_pdf = generate_invoice_pdf(tier, amount, user_email, payment_id, payment_date)
         if invoice_pdf:
             # Convert PDF bytes to base64
@@ -625,12 +625,12 @@ def send_welcome_email(user_email: str, tier: str = 'free', amount: float = 0.0,
                 'content': pdf_base64,
                 'contentType': 'application/pdf'
             })
-            print(f"✅ [WELCOME EMAIL] Invoice PDF generated and attached: {filename} ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
+            print(f"[OK] [WELCOME EMAIL] Invoice PDF generated and attached: {filename} ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
         else:
-            print(f"⚠️ [WELCOME EMAIL] Failed to generate invoice PDF, sending email without attachment")
+            print(f"[WARN] [WELCOME EMAIL] Failed to generate invoice PDF, sending email without attachment")
             print(f"   Check generate_invoice_pdf() logs for details")
     except Exception as e:
-        print(f"⚠️ [WELCOME EMAIL] Error generating invoice: {e}")
+        print(f"[WARN] [WELCOME EMAIL] Error generating invoice: {e}")
         import traceback
         traceback.print_exc()
         # Continue without attachment if invoice generation fails
@@ -658,13 +658,13 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
         'premium': 'Production Plan',
         'enterprise': 'Enterprise Plan'
     }
-    subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! 🚀"
+    subject = f"Trevnoctilla - Successfully Upgraded to {tier_names.get(new_tier.lower(), new_tier)}! [START]"
     
     # Generate and attach invoice PDF (more reliable than subscription PDF)
     # Use invoice PDF generation which is tested and working
     attachments = []
     try:
-        print(f"📄 [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
+        print(f" [UPGRADE EMAIL] Generating invoice PDF for {user_email} (tier: {new_tier}, amount: {amount})")
         
         # Use invoice PDF generation instead of subscription PDF (more reliable)
         invoice_pdf = generate_invoice_pdf(
@@ -687,9 +687,9 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
                 'content': pdf_base64,
                 'contentType': 'application/pdf'
             })
-            print(f"✅ [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
+            print(f"[OK] [UPGRADE EMAIL] Invoice PDF attached ({len(invoice_pdf)} bytes, base64: {len(pdf_base64)} chars)")
         else:
-            print(f"⚠️ [UPGRADE EMAIL] Failed to generate invoice PDF, trying subscription PDF as fallback...")
+            print(f"[WARN] [UPGRADE EMAIL] Failed to generate invoice PDF, trying subscription PDF as fallback...")
             # Fallback to subscription PDF if invoice fails
             subscription_pdf = generate_subscription_pdf(
                 tier=new_tier,
@@ -710,12 +710,12 @@ def send_upgrade_email(user_email: str, old_tier: str, new_tier: str, amount: fl
                     'content': pdf_base64,
                     'contentType': 'application/pdf'
                 })
-                print(f"✅ [UPGRADE EMAIL] Subscription PDF attached as fallback ({len(subscription_pdf)} bytes)")
+                print(f"[OK] [UPGRADE EMAIL] Subscription PDF attached as fallback ({len(subscription_pdf)} bytes)")
             else:
-                print(f"⚠️ [UPGRADE EMAIL] Both invoice and subscription PDF generation failed, continuing without attachment")
+                print(f"[WARN] [UPGRADE EMAIL] Both invoice and subscription PDF generation failed, continuing without attachment")
                 print(f"   Check generate_invoice_pdf() and generate_subscription_pdf() logs for details")
     except Exception as e:
-        print(f"❌ [UPGRADE EMAIL] Error generating PDF attachment: {e}")
+        print(f"[ERROR] [UPGRADE EMAIL] Error generating PDF attachment: {e}")
         import traceback
         traceback.print_exc()
         # Continue without attachments if PDF generation fails

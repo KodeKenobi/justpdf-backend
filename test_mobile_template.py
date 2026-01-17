@@ -13,42 +13,42 @@ app = Flask(__name__)
 
 # Check template folder
 template_folder = app.template_folder
-print(f"📁 Template folder: {template_folder}")
-print(f"📁 Template folder exists: {os.path.exists(template_folder)}")
+print(f" Template folder: {template_folder}")
+print(f" Template folder exists: {os.path.exists(template_folder)}")
 
 # Check if mobile template exists
 mobile_template_path = os.path.join(template_folder, "converted-mobile-simple.html")
-print(f"📄 Mobile template path: {mobile_template_path}")
-print(f"📄 Mobile template exists: {os.path.exists(mobile_template_path)}")
+print(f" Mobile template path: {mobile_template_path}")
+print(f" Mobile template exists: {os.path.exists(mobile_template_path)}")
 
 if os.path.exists(mobile_template_path):
-    print(f"✅ Mobile template file found!")
+    print(f"[OK] Mobile template file found!")
     # Read and check template content
     with open(mobile_template_path, 'r', encoding='utf-8') as f:
         content = f.read()
-        print(f"📏 Template size: {len(content)} bytes")
-        print(f"📝 Template preview (first 200 chars):\n{content[:200]}...")
+        print(f" Template size: {len(content)} bytes")
+        print(f" Template preview (first 200 chars):\n{content[:200]}...")
         
         # Check for common issues
         if '{% for page in pages %}' in content:
-            print("✅ Found Jinja2 loop syntax")
+            print("[OK] Found Jinja2 loop syntax")
         else:
-            print("❌ Jinja2 loop syntax not found!")
+            print("[ERROR] Jinja2 loop syntax not found!")
         
         if '{{ page.html | safe }}' in content:
-            print("✅ Found page.html variable")
+            print("[OK] Found page.html variable")
         else:
-            print("❌ page.html variable not found!")
+            print("[ERROR] page.html variable not found!")
         
         if '{{ filename }}' in content:
-            print("✅ Found filename variable")
+            print("[OK] Found filename variable")
         else:
-            print("❌ filename variable not found!")
+            print("[ERROR] filename variable not found!")
 else:
-    print(f"❌ Mobile template file NOT found!")
+    print(f"[ERROR] Mobile template file NOT found!")
 
 # Try to render template with sample data
-print("\n🧪 Testing template rendering...")
+print("\n Testing template rendering...")
 try:
     env = Environment(loader=FileSystemLoader(template_folder))
     template = env.get_template("converted-mobile-simple.html")
@@ -66,15 +66,15 @@ try:
     }
     
     rendered = template.render(**test_data)
-    print(f"✅ Template rendered successfully!")
-    print(f"📏 Rendered size: {len(rendered)} bytes")
-    print(f"📝 Rendered preview (first 300 chars):\n{rendered[:300]}...")
+    print(f"[OK] Template rendered successfully!")
+    print(f" Rendered size: {len(rendered)} bytes")
+    print(f" Rendered preview (first 300 chars):\n{rendered[:300]}...")
     
 except Exception as e:
-    print(f"❌ Template rendering failed!")
+    print(f"[ERROR] Template rendering failed!")
     print(f"Error: {str(e)}")
     import traceback
     print(f"Traceback:\n{traceback.format_exc()}")
 
-print("\n✅ Test complete!")
+print("\n[OK] Test complete!")
 

@@ -25,11 +25,11 @@ def create_test_audio():
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode == 0:
-            print("✅ Test audio file created successfully!")
+            print("[OK] Test audio file created successfully!")
             print("File: test-audio.wav")
             return True
         else:
-            print(f"❌ Failed to create test audio: {result.stderr}")
+            print(f"[ERROR] Failed to create test audio: {result.stderr}")
             return False
             
     except Exception as e:

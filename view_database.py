@@ -17,13 +17,13 @@ def view_database():
             print("=" * 60)
             print("DATABASE CONTENTS")
             print("=" * 60)
-            print(f"\n📊 Database: {db.engine.url}")
-            print(f"📋 Tables: {', '.join(tables)}\n")
+            print(f"\n[INFO] Database: {db.engine.url}")
+            print(f"[LIST] Tables: {', '.join(tables)}\n")
             
             # View Users
             if 'users' in tables:
                 users = User.query.all()
-                print(f"\n👥 USERS ({len(users)} total):")
+                print(f"\n USERS ({len(users)} total):")
                 print("-" * 60)
                 for user in users:
                     print(f"  ID: {user.id}")
@@ -37,7 +37,7 @@ def view_database():
             # View API Keys
             if 'api_keys' in tables:
                 api_keys = APIKey.query.all()
-                print(f"\n🔑 API KEYS ({len(api_keys)} total):")
+                print(f"\n[KEY] API KEYS ({len(api_keys)} total):")
                 print("-" * 60)
                 for key in api_keys:
                     print(f"  ID: {key.id}")
@@ -49,7 +49,7 @@ def view_database():
             # View Usage Logs
             if 'usage_logs' in tables:
                 usage_logs = UsageLog.query.limit(10).all()
-                print(f"\n📝 USAGE LOGS (showing first 10 of {UsageLog.query.count()} total):")
+                print(f"\n USAGE LOGS (showing first 10 of {UsageLog.query.count()} total):")
                 print("-" * 60)
                 for log in usage_logs:
                     print(f"  ID: {log.id}")
@@ -61,7 +61,7 @@ def view_database():
             # View Notifications
             if 'notifications' in tables:
                 notifications = Notification.query.limit(10).all()
-                print(f"\n🔔 NOTIFICATIONS (showing first 10 of {Notification.query.count()} total):")
+                print(f"\n NOTIFICATIONS (showing first 10 of {Notification.query.count()} total):")
                 print("-" * 60)
                 for notif in notifications:
                     print(f"  ID: {notif.id}")
@@ -74,7 +74,7 @@ def view_database():
             print("=" * 60)
             
         except Exception as e:
-            print(f"❌ Error viewing database: {e}")
+            print(f"[ERROR] Error viewing database: {e}")
             import traceback
             traceback.print_exc()
 
