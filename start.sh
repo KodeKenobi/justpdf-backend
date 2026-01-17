@@ -55,7 +55,7 @@ except Exception as e:
 "
 set -e  # Re-enable exit on error for critical commands
 
-# Start gunicorn with the port
-echo "Starting Gunicorn on 0.0.0.0:$PORT..."
-echo "Gunicorn command: gunicorn --bind 0.0.0.0:$PORT --timeout 180 --workers 1 --max-requests 1000 --max-requests-jitter 50 app:app"
-exec gunicorn --bind 0.0.0.0:$PORT --timeout 180 --workers 1 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile - --log-level info app:app
+# Start gunicorn with the port and gevent worker for WebSocket support
+echo "Starting Gunicorn on 0.0.0.0:$PORT with gevent worker for WebSocket support..."
+echo "Gunicorn command: gunicorn --bind 0.0.0.0:$PORT --worker-class gevent --workers 1 --timeout 180 --max-requests 1000 --max-requests-jitter 50 app:app"
+exec gunicorn --bind 0.0.0.0:$PORT --worker-class gevent --workers 1 --timeout 180 --max-requests 1000 --max-requests-jitter 50 --access-logfile - --error-logfile - --log-level info app:app
