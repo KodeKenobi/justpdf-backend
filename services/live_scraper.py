@@ -36,26 +36,21 @@ class LiveScraper:
             print(f"Error sending log: {e}")
     
     async def stream_screenshot(self):
-        """Capture and stream screenshot (reduced quality for WebSocket)"""
+        """Capture and stream screenshot (full width, optimized quality)"""
         if not self.page or not self.streaming:
             return
             
         try:
-            # Take smaller, lower quality screenshot to avoid WebSocket issues
+            # Full viewport screenshot with optimized JPEG compression
             screenshot = await self.page.screenshot(
-                type='jpeg',  # Use JPEG instead of PNG (much smaller)
-                quality=40,   # Low quality to reduce size (1-100)
-                clip={
-                    'x': 0,
-                    'y': 0,
-                    'width': 640,  # Half the viewport width
-                    'height': 360   # Half the viewport height
-                }
+                type='jpeg',
+                quality=60,  # Balanced quality (good enough to see content)
+                full_page=False  # Just the viewport, not full scrollable page
             )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            # Only send if data is reasonable size (< 200KB base64)
-            if len(screenshot_base64) < 200000:
+            # Only send if data is reasonable size (< 300KB base64)
+            if len(screenshot_base64) < 300000:
                 self.ws.send(json.dumps({
                     'type': 'screenshot',
                     'data': {
@@ -63,6 +58,8 @@ class LiveScraper:
                         'timestamp': datetime.utcnow().isoformat()
                     }
                 }))
+            else:
+                print(f"Screenshot too large ({len(screenshot_base64)} bytes), skipping")
         except Exception as e:
             print(f"Error streaming screenshot: {e}")
     
@@ -71,7 +68,7 @@ class LiveScraper:
         while self.streaming and self.page:
             try:
                 await self.stream_screenshot()
-                await asyncio.sleep(2.0)  # 0.5 FPS - slower to avoid overload
+                await asyncio.sleep(0.5)  # 2 FPS for smoother monitoring
             except Exception as e:
                 print(f"Streaming loop error: {e}")
                 break
@@ -82,15 +79,15 @@ class LiveScraper:
             async with async_playwright() as p:
                 # Launch browser
                 await self.send_log('info', 'Starting', 'Launching browser...')
-                self.browser = await p.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox']
-                )
-                
-                context = await self.browser.new_context(
-                    viewport={'width': 1280, 'height': 720},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                )
+                        self.browser = await p.chromium.launch(
+                            headless=True,
+                            args=['--no-sandbox', '--disable-setuid-sandbox']
+                        )
+                        
+                        context = await self.browser.new_context(
+                            viewport={'width': 1920, 'height': 1080},  # Full HD viewport
+                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        )
                 
                 self.page = await context.new_page()
                 
@@ -222,57 +219,188 @@ class LiveScraper:
         return None
     
     async def fill_contact_form(self):
-        """Fill contact form with message"""
+        """Fill contact form with message - comprehensive field detection"""
         try:
-            # Find form fields
-            name_field = await self.page.query_selector('input[name*="name"], input[id*="name"], input[placeholder*="name"]')
-            email_field = await self.page.query_selector('input[type="email"], input[name*="email"], input[id*="email"]')
-            message_field = await self.page.query_selector('textarea[name*="message"], textarea[id*="message"], textarea[placeholder*="message"]')
+            # Comprehensive name field selectors
+            name_selectors = [
+                'input[name*="name" i]',
+                'input[id*="name" i]',
+                'input[placeholder*="name" i]',
+                'input[aria-label*="name" i]',
+                'input[type="text"]'
+            ]
             
+            # Comprehensive email field selectors
+            email_selectors = [
+                'input[type="email"]',
+                'input[name*="email" i]',
+                'input[id*="email" i]',
+                'input[placeholder*="email" i]',
+                'input[aria-label*="email" i]'
+            ]
+            
+            # Comprehensive message field selectors
+            message_selectors = [
+                'textarea[name*="message" i]',
+                'textarea[id*="message" i]',
+                'textarea[placeholder*="message" i]',
+                'textarea[aria-label*="message" i]',
+                'textarea[name*="comment" i]',
+                'textarea[id*="comment" i]',
+                'textarea',  # Any textarea as fallback
+                'input[name*="message" i]',
+                'input[id*="message" i]'
+            ]
+            
+            # Find fields
+            name_field = None
+            email_field = None
+            message_field = None
+            
+            for selector in name_selectors:
+                try:
+                    field = await self.page.query_selector(selector)
+                    if field and await field.is_visible():
+                        name_field = field
+                        break
+                except:
+                    continue
+            
+            for selector in email_selectors:
+                try:
+                    field = await self.page.query_selector(selector)
+                    if field and await field.is_visible():
+                        email_field = field
+                        break
+                except:
+                    continue
+            
+            for selector in message_selectors:
+                try:
+                    field = await self.page.query_selector(selector)
+                    if field and await field.is_visible():
+                        message_field = field
+                        break
+                except:
+                    continue
+            
+            # Message field is required
             if not message_field:
+                await self.send_log('failed', 'No Form', 'Could not find message/textarea field')
                 return False
             
-            # Fill fields
+            # Fill name field
             if name_field:
-                await name_field.fill(self.company.get('company_name', 'Business Inquiry'))
+                await name_field.click()  # Focus first
+                await name_field.fill(self.company.get('company_name', 'Business Development'))
+                await self.send_log('info', 'Field Filled', 'Name field filled')
             
+            # Fill email field (required for most forms)
             if email_field:
-                await email_field.fill(self.company.get('contact_email', 'inquiry@business.com'))
+                await email_field.click()
+                await email_field.fill(self.company.get('contact_email', 'contact@business.com'))
+                await self.send_log('info', 'Field Filled', 'Email field filled')
+            else:
+                await self.send_log('warning', 'Missing Field', 'No email field found')
             
+            # Fill message field
             if message_field:
+                await message_field.click()
+                
                 # Personalize message
                 message = self.message_template
                 for key, value in self.company.items():
-                    message = message.replace(f'{{{key}}}', str(value))
+                    if value:
+                        message = message.replace(f'{{{key}}}', str(value))
                 
                 await message_field.fill(message)
+                await self.send_log('success', 'Field Filled', 'Message field filled')
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(1)  # Let any validation run
             return True
             
         except Exception as e:
+            await self.send_log('failed', 'Error', f'Error filling form: {str(e)}')
             print(f"Error filling form: {e}")
             return False
     
     async def submit_form(self):
-        """Submit the contact form"""
+        """Submit the contact form and verify submission"""
         submit_selectors = [
             'button[type="submit"]',
             'input[type="submit"]',
             'button:has-text("Send")',
             'button:has-text("Submit")',
-            'button:has-text("Contact")',
-            '[class*="submit"]'
+            'button:has-text("Contact Us")',
+            'button:has-text("Send Message")',
+            'button[class*="submit"]',
+            'button[id*="submit"]',
+            'form button:last-of-type'
         ]
         
         for selector in submit_selectors:
             try:
                 button = await self.page.query_selector(selector)
                 if button:
-                    await button.click()
+                    # Check if button is visible and enabled
+                    is_visible = await button.is_visible()
+                    is_enabled = await button.is_enabled()
+                    
+                    if not is_visible or not is_enabled:
+                        continue
+                    
+                    # Record current URL before submission
+                    current_url = self.page.url
+                    
+                    # Click submit and wait for navigation or network idle
+                    try:
+                        # Try waiting for navigation (if form redirects)
+                        async with self.page.expect_navigation(timeout=5000, wait_until='networkidle'):
+                            await button.click()
+                        await self.send_log('success', 'Navigation', 'Form submitted - page redirected')
+                        return True
+                    except:
+                        # If no navigation, just click and wait for network
+                        await button.click()
+                        await self.page.wait_for_load_state('networkidle', timeout=5000)
+                    
+                    # Wait a bit for any success messages to appear
                     await asyncio.sleep(2)
+                    
+                    # Check for success indicators
+                    success_indicators = [
+                        'text=/thank you/i',
+                        'text=/success/i',
+                        'text=/sent/i',
+                        'text=/received/i',
+                        'text=/message.*sent/i',
+                        '.success-message',
+                        '.alert-success',
+                        '[class*="success"]'
+                    ]
+                    
+                    for indicator in success_indicators:
+                        try:
+                            element = await self.page.query_selector(indicator)
+                            if element:
+                                is_vis = await element.is_visible()
+                                if is_vis:
+                                    await self.send_log('success', 'Verified', 'Success message detected on page')
+                                    return True
+                        except:
+                            continue
+                    
+                    # Check if URL changed (redirect to thank you page)
+                    if self.page.url != current_url:
+                        await self.send_log('success', 'Verified', f'URL changed to {self.page.url}')
+                        return True
+                    
+                    # If we got here, submission probably worked but no clear confirmation
+                    await self.send_log('warning', 'Uncertain', 'Form submitted but no confirmation message found')
                     return True
-            except:
+                    
+            except Exception as e:
+                print(f"Error with selector {selector}: {e}")
                 continue
         
         return False
