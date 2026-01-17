@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, Response, make_response
 from flask_cors import CORS
+from flask_sock import Sock
 from werkzeug.utils import secure_filename
 import os
 import fitz
@@ -77,6 +78,9 @@ except ImportError as e:
 app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
+
+# Initialize WebSocket support
+sock = Sock(app)
 
 # Health check endpoint (must be defined early, before any heavy initialization)
 @app.route("/health", methods=["GET"])
@@ -5145,6 +5149,14 @@ if campaigns_api:
 if rules_api:
     app.register_blueprint(rules_api)
     print("[OK] rules_api registered")
+
+# Register WebSocket routes for live monitoring
+try:
+    from api.campaigns.websocket import register_websocket_routes
+    register_websocket_routes(sock)
+    print("[OK] WebSocket routes registered for live monitoring")
+except Exception as e:
+    print(f"[WARN] Failed to register WebSocket routes: {e}")
 
 # Initialize WebSocket Manager for live campaign monitoring
 try:
