@@ -59,7 +59,7 @@ def load_user():
 
 @campaigns_api.route('', methods=['GET'])
 def list_campaigns():
-    """Get all campaigns for the current user"""
+    """Get all campaigns (public endpoint - no auth required)"""
     try:
         from models import Campaign
         from database import db
@@ -149,7 +149,7 @@ const detector = new CompanyDetector();
 
 @campaigns_api.route('', methods=['POST'])
 def create_campaign():
-    """Create a new campaign"""
+    """Create a new campaign (public endpoint - no auth required)"""
     try:
         from models import Campaign, Company
         from database import db
