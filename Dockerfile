@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     python3-dev \
     pkg-config \
     libcairo2-dev \
-    libnspr4 \
-    libnss3 \
+    wget \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -20,8 +20,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers (needed for HTML to PDF conversion)
-RUN playwright install chromium || true
+# Install Playwright system dependencies and browsers
+# This installs all required libraries for Chromium to run
+RUN playwright install-deps chromium && \
+    playwright install chromium
 
 # Copy application code
 COPY . .
