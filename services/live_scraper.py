@@ -36,21 +36,33 @@ class LiveScraper:
             print(f"Error sending log: {e}")
     
     async def stream_screenshot(self):
-        """Capture and stream screenshot"""
+        """Capture and stream screenshot (reduced quality for WebSocket)"""
         if not self.page or not self.streaming:
             return
             
         try:
-            screenshot = await self.page.screenshot(type='png')
+            # Take smaller, lower quality screenshot to avoid WebSocket issues
+            screenshot = await self.page.screenshot(
+                type='jpeg',  # Use JPEG instead of PNG (much smaller)
+                quality=40,   # Low quality to reduce size (1-100)
+                clip={
+                    'x': 0,
+                    'y': 0,
+                    'width': 640,  # Half the viewport width
+                    'height': 360   # Half the viewport height
+                }
+            )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            self.ws.send(json.dumps({
-                'type': 'screenshot',
-                'data': {
-                    'image': f'data:image/png;base64,{screenshot_base64}',
-                    'timestamp': datetime.utcnow().isoformat()
-                }
-            }))
+            # Only send if data is reasonable size (< 200KB base64)
+            if len(screenshot_base64) < 200000:
+                self.ws.send(json.dumps({
+                    'type': 'screenshot',
+                    'data': {
+                        'image': f'data:image/jpeg;base64,{screenshot_base64}',
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                }))
         except Exception as e:
             print(f"Error streaming screenshot: {e}")
     
@@ -59,7 +71,7 @@ class LiveScraper:
         while self.streaming and self.page:
             try:
                 await self.stream_screenshot()
-                await asyncio.sleep(0.5)  # 2 FPS
+                await asyncio.sleep(2.0)  # 0.5 FPS - slower to avoid overload
             except Exception as e:
                 print(f"Streaming loop error: {e}")
                 break
