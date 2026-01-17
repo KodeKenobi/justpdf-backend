@@ -1,81 +1,15 @@
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from sqlalchemy import desc, or_
 from datetime import datetime
-from functools import wraps
 
-# Create Blueprint
+# Create Blueprint - All endpoints are public, no authentication required
 campaigns_api = Blueprint('campaigns_api', __name__, url_prefix='/api/campaigns')
 
-def require_auth(f):
-    """Decorator to require authentication"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not hasattr(g, 'current_user') or not g.current_user:
-            return jsonify({'error': 'Authentication required'}), 401
-        return f(*args, **kwargs)
-    return decorated_function
-
 @campaigns_api.before_request
-def load_user():
-    """Set g.current_user from JWT token or email"""
-    # Skip authentication for OPTIONS requests (CORS preflight)
+def handle_options():
+    """Handle OPTIONS requests (CORS preflight)"""
     if request.method == 'OPTIONS':
         return jsonify({}), 200
-    
-    # Try JWT authentication first
-    try:
-        from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
-        from models import User
-        
-        verify_jwt_in_request(optional=True)
-        user_id = get_jwt_identity()
-        if user_id:
-            if isinstance(user_id, str):
-                user_id = int(user_id)
-            g.current_user = User.query.get(user_id)
-            if g.current_user:
-                return
-    except Exception:
-        pass
-    
-    # Fallback to email in request body/params
-    email = request.args.get('email')
-    if not email:
-        try:
-            json_data = request.get_json(silent=True)
-            if json_data:
-                email = json_data.get('email')
-        except Exception:
-            pass
-    
-    if email:
-        from models import User
-        g.current_user = User.query.filter_by(email=email).first()
-        if g.current_user:
-            return
-    
-    # If neither worked, create/get demo user for public access
-    from models import User, db
-    demo_email = 'demo@example.com'
-    g.current_user = User.query.filter_by(email=demo_email).first()
-    
-    if not g.current_user:
-        # Create demo user if it doesn't exist
-        g.current_user = User(
-            email=demo_email,
-            name='Demo User',
-            role='user',
-            is_active=True
-        )
-        # Set a dummy password (won't be used for login)
-        g.current_user.password = 'demo_user_no_login'
-        db.session.add(g.current_user)
-        try:
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            # If commit fails, try to get the user again (race condition)
-            g.current_user = User.query.filter_by(email=demo_email).first()
 
 @campaigns_api.route('', methods=['GET'])
 def list_campaigns():
@@ -91,8 +25,8 @@ def list_campaigns():
         # Filters
         status = request.args.get('status')
         
-        # Build query
-        query = Campaign.query.filter_by(user_id=g.current_user.id)
+        # Build query - get all campaigns (public)
+        query = Campaign.query
         
         if status:
             query = query.filter_by(status=status)
@@ -213,9 +147,9 @@ def create_campaign():
                         except:
                             company_data['company_name'] = url
         
-        # Create campaign
+        # Create campaign (no user required - public)
         campaign = Campaign(
-            user_id=g.current_user.id,
+            user_id=None,  # Public campaign, no user association
             name=name,
             message_template=message_template,
             status='draft',

@@ -419,11 +419,11 @@ class UserSession(db.Model):
         }
 
 class Campaign(db.Model):
-    """Contact automation campaign"""
+    """Contact automation campaign - Public, no user required"""
     __tablename__ = 'campaigns'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)  # Optional - for public campaigns
     name = db.Column(db.String(200), nullable=False)
     message_template = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(20), default='draft', nullable=False)  # draft, queued, processing, completed, paused, failed
