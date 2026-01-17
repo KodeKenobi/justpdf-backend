@@ -1,3 +1,4 @@
+# Version: 2.0.1 - Fixed Playwright installation for live campaign monitoring
 from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, Response, make_response
 from flask_cors import CORS
 from flask_sock import Sock
