@@ -79,15 +79,15 @@ class LiveScraper:
             async with async_playwright() as p:
                 # Launch browser
                 await self.send_log('info', 'Starting', 'Launching browser...')
-                        self.browser = await p.chromium.launch(
-                            headless=True,
-                            args=['--no-sandbox', '--disable-setuid-sandbox']
-                        )
-                        
-                        context = await self.browser.new_context(
-                            viewport={'width': 1920, 'height': 1080},  # Full HD viewport
-                            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        )
+                self.browser = await p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox']
+                )
+                
+                context = await self.browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},  # Full HD viewport
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
                 
                 self.page = await context.new_page()
                 
@@ -102,8 +102,8 @@ class LiveScraper:
                     await self.page.goto(website_url, wait_until='networkidle', timeout=30000)
                     await self.send_log('success', 'Loaded', f'Successfully loaded homepage')
                 except Exception as e:
-                    await self.send_log('failed', 'Error', f'Failed to load homepage: {str(e)}')
-                    return {'success': False, 'error': str(e)}
+                    await self.send_log('failed', 'Connection Error', 'Unable to connect to website. The site may be down or blocking automated access.')
+                    return {'success': False, 'error': 'Website connection failed'}
                 
                 await asyncio.sleep(2)  # Let user see the page
                 
@@ -138,14 +138,14 @@ class LiveScraper:
                     submitted = await self.submit_form()
                     
                     if submitted:
-                        await self.send_log('success', 'Completed', 'Form submitted successfully!')
+                        await self.send_log('success', 'Completed', 'Message sent successfully!')
                         result = {'success': True}
                     else:
-                        await self.send_log('failed', 'Submit Failed', 'Could not submit form')
-                        result = {'success': False, 'error': 'Form submission failed'}
+                        await self.send_log('failed', 'Unable to Submit', 'Could not submit the contact form. The website may have protection measures in place.')
+                        result = {'success': False, 'error': 'Unable to submit form'}
                 else:
-                    await self.send_log('failed', 'No Form', 'Could not find or fill contact form')
-                    result = {'success': False, 'error': 'No form found'}
+                    await self.send_log('failed', 'No Contact Form', 'This website does not have a standard contact form or it could not be detected.')
+                    result = {'success': False, 'error': 'Contact form not found'}
                 
                 await asyncio.sleep(3)  # Let user see final result
                 
@@ -157,10 +157,15 @@ class LiveScraper:
                 return result
                 
         except Exception as e:
-            await self.send_log('failed', 'Error', f'Scraping failed: {str(e)}')
+            error_message = 'An unexpected error occurred while processing this website'
+            print(f"Technical error (hidden from user): {str(e)}")  # Log for debugging
+            await self.send_log('failed', 'Processing Error', error_message)
             if self.browser:
-                await self.browser.close()
-            return {'success': False, 'error': str(e)}
+                try:
+                    await self.browser.close()
+                except:
+                    pass
+            return {'success': False, 'error': error_message}
     
     async def handle_cookie_consent(self):
         """Handle cookie consent modals"""
@@ -286,7 +291,7 @@ class LiveScraper:
             
             # Message field is required
             if not message_field:
-                await self.send_log('failed', 'No Form', 'Could not find message/textarea field')
+                await self.send_log('failed', 'No Form Found', 'This website does not have a standard message field on this page.')
                 return False
             
             # Fill name field
@@ -320,8 +325,8 @@ class LiveScraper:
             return True
             
         except Exception as e:
-            await self.send_log('failed', 'Error', f'Error filling form: {str(e)}')
-            print(f"Error filling form: {e}")
+            await self.send_log('failed', 'Form Error', 'Unable to fill out the contact form. The form structure may be non-standard.')
+            print(f"Technical error filling form (hidden from user): {e}")
             return False
     
     async def submit_form(self):
@@ -396,11 +401,11 @@ class LiveScraper:
                         return True
                     
                     # If we got here, submission probably worked but no clear confirmation
-                    await self.send_log('warning', 'Uncertain', 'Form submitted but no confirmation message found')
+                    await self.send_log('warning', 'Submitted', 'Form submitted but no confirmation message was detected. The message may still have been received.')
                     return True
                     
             except Exception as e:
-                print(f"Error with selector {selector}: {e}")
+                print(f"Technical error with selector {selector} (hidden from user): {e}")
                 continue
         
         return False
