@@ -21,16 +21,19 @@ class LiveScraper:
         
     async def send_log(self, status, action, message, details=None):
         """Send log message via WebSocket"""
-        await self.ws.send(json.dumps({
-            'type': 'log',
-            'data': {
-                'status': status,
-                'action': action,
-                'message': message,
-                'details': details,
-                'timestamp': datetime.utcnow().isoformat()
-            }
-        }))
+        try:
+            self.ws.send(json.dumps({
+                'type': 'log',
+                'data': {
+                    'status': status,
+                    'action': action,
+                    'message': message,
+                    'details': details,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }))
+        except Exception as e:
+            print(f"Error sending log: {e}")
     
     async def stream_screenshot(self):
         """Capture and stream screenshot"""
@@ -41,7 +44,7 @@ class LiveScraper:
             screenshot = await self.page.screenshot(type='png')
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            await self.ws.send(json.dumps({
+            self.ws.send(json.dumps({
                 'type': 'screenshot',
                 'data': {
                     'image': f'data:image/png;base64,{screenshot_base64}',
