@@ -5135,6 +5135,14 @@ if analytics_api:
 if campaigns_api:
     app.register_blueprint(campaigns_api)
     print("[OK] campaigns_api registered")
+
+# Initialize WebSocket Manager for live campaign monitoring
+try:
+    from websocket_manager import ws_manager
+    ws_manager.init_app(app)
+    print("[OK] WebSocket manager initialized for live monitoring")
+except Exception as e:
+    print(f"[WARN] WebSocket manager initialization failed: {e}")
 if test_bp:
     app.register_blueprint(test_bp)
     print("[OK] test_bp registered")

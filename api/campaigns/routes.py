@@ -102,6 +102,53 @@ def list_campaigns():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/detect-companies', methods=['POST'])
+@require_auth
+def detect_companies():
+    """Auto-detect company names from URLs"""
+    try:
+        import subprocess
+        import json
+        
+        data = request.get_json()
+        urls = data.get('urls', [])
+        
+        if not urls or len(urls) == 0:
+            return jsonify({'error': 'At least one URL is required'}), 400
+        
+        # Call Node.js service to detect companies
+        result = subprocess.run(
+            ['node', '-e', f'''
+const {{ CompanyDetector }} = require('../services/company-detector.ts');
+const detector = new CompanyDetector();
+(async () => {{
+    const urls = {json.dumps(urls)};
+    const results = await detector.detectBatch(urls);
+    await detector.close();
+    console.log(JSON.stringify(Object.fromEntries(results)));
+}})();
+            '''],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            detected = json.loads(result.stdout)
+            return jsonify({
+                'success': True,
+                'companies': detected
+            }), 200
+        else:
+            print(f"Error detecting companies: {result.stderr}")
+            return jsonify({'error': 'Failed to detect companies'}), 500
+        
+    except Exception as e:
+        print(f"Error in detect_companies: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('', methods=['POST'])
 @require_auth
 def create_campaign():
@@ -114,6 +161,7 @@ def create_campaign():
         name = data.get('name')
         message_template = data.get('message_template')
         companies_data = data.get('companies', [])
+        auto_detect_names = data.get('auto_detect_names', True)
         
         # Validate input
         if not name or not message_template:
@@ -121,6 +169,32 @@ def create_campaign():
         
         if not companies_data or len(companies_data) == 0:
             return jsonify({'error': 'At least one company is required'}), 400
+        
+        # Auto-detect missing company names if enabled
+        if auto_detect_names:
+            urls_to_detect = []
+            for company_data in companies_data:
+                if not company_data.get('company_name') or company_data.get('company_name').strip() == '':
+                    urls_to_detect.append(company_data.get('website_url'))
+            
+            if urls_to_detect:
+                print(f"Auto-detecting company names for {len(urls_to_detect)} URLs...")
+                # This will be handled by the worker later
+                # For now, use domain name as fallback
+                for company_data in companies_data:
+                    if not company_data.get('company_name') or company_data.get('company_name').strip() == '':
+                        url = company_data.get('website_url', '')
+                        # Extract domain and use as company name
+                        try:
+                            from urllib.parse import urlparse
+                            parsed = urlparse(url if url.startswith('http') else f'https://{url}')
+                            domain = parsed.hostname or url
+                            domain = domain.replace('www.', '')
+                            company_name = domain.split('.')[0].capitalize()
+                            company_data['company_name'] = company_name
+                            print(f"Auto-detected company name: {company_name} from {url}")
+                        except:
+                            company_data['company_name'] = url
         
         # Create campaign
         campaign = Campaign(
@@ -485,6 +559,57 @@ def create_company_logs(company_id):
         import traceback
         traceback.print_exc()
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/companies/<int:company_id>/process', methods=['POST'])
+@require_auth
+def process_company_live(company_id):
+    """Process a single company with live monitoring"""
+    try:
+        from models import Company
+        from database import db
+        import threading
+        
+        company = Company.query.get(company_id)
+        
+        if not company:
+            return jsonify({'error': 'Company not found'}), 404
+        
+        # Check if user owns the campaign
+        if company.campaign.user_id != g.current_user.id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Mark as processing
+        company.status = 'processing'
+        db.session.commit()
+        
+        # Start processing in background thread
+        def process_in_background():
+            try:
+                # Call Node.js worker to process this company with live updates
+                import subprocess
+                subprocess.run(
+                    ['node', 'services/campaign-worker.ts', '--company-id', str(company_id), '--live'],
+                    cwd=os.path.join(os.path.dirname(__file__), '../..'),
+                    timeout=300  # 5 minute timeout
+                )
+            except Exception as e:
+                print(f"Error processing company {company_id}: {e}")
+        
+        thread = threading.Thread(target=process_in_background)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Processing started',
+            'company': company.to_dict()
+        }), 200
+        
+    except Exception as e:
+        print(f"Error starting company processing: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Internal API for Workers (no auth required)
