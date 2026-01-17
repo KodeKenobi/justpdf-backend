@@ -54,8 +54,28 @@ def load_user():
         if g.current_user:
             return
     
-    # If neither worked, set current_user to None (let route decide if auth is required)
-    g.current_user = None
+    # If neither worked, create/get demo user for public access
+    from models import User, db
+    demo_email = 'demo@example.com'
+    g.current_user = User.query.filter_by(email=demo_email).first()
+    
+    if not g.current_user:
+        # Create demo user if it doesn't exist
+        g.current_user = User(
+            email=demo_email,
+            name='Demo User',
+            role='user',
+            is_active=True
+        )
+        # Set a dummy password (won't be used for login)
+        g.current_user.password = 'demo_user_no_login'
+        db.session.add(g.current_user)
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            # If commit fails, try to get the user again (race condition)
+            g.current_user = User.query.filter_by(email=demo_email).first()
 
 @campaigns_api.route('', methods=['GET'])
 def list_campaigns():
@@ -243,10 +263,6 @@ def get_campaign(campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
         
-        # Check if user owns this campaign
-        if campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
-        
         include_companies = request.args.get('include_companies', 'false').lower() == 'true'
         
         return jsonify({
@@ -271,10 +287,6 @@ def update_campaign(campaign_id):
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Check if user owns this campaign
-        if campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
         
         data = request.get_json()
         
@@ -315,10 +327,6 @@ def delete_campaign(campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
         
-        # Check if user owns this campaign
-        if campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
-        
         db.session.delete(campaign)
         db.session.commit()
         
@@ -345,10 +353,6 @@ def start_campaign(campaign_id):
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Check if user owns this campaign
-        if campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
         
         # Check if campaign can be started
         if campaign.status not in ['draft', 'paused']:
@@ -385,10 +389,6 @@ def get_campaign_companies(campaign_id):
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Check if user owns this campaign
-        if campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
         
         # Pagination
         page = request.args.get('page', 1, type=int)
@@ -437,10 +437,6 @@ def get_company_logs(company_id):
         
         if not company:
             return jsonify({'error': 'Company not found'}), 404
-        
-        # Check if user owns the campaign that this company belongs to
-        if company.campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
         
         logs = SubmissionLog.query.filter_by(company_id=company_id).order_by(SubmissionLog.created_at).all()
         
@@ -564,10 +560,6 @@ def process_company_live(company_id):
         
         if not company:
             return jsonify({'error': 'Company not found'}), 404
-        
-        # Check if user owns the campaign
-        if company.campaign.user_id != g.current_user.id:
-            return jsonify({'error': 'Unauthorized'}), 403
         
         # Mark as processing
         company.status = 'processing'
