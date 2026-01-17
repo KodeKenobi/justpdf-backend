@@ -39,7 +39,15 @@ def load_user():
         pass
     
     # Fallback to email in request body/params
-    email = request.args.get('email') or (request.get_json() or {}).get('email')
+    email = request.args.get('email')
+    if not email:
+        try:
+            json_data = request.get_json(silent=True)
+            if json_data:
+                email = json_data.get('email')
+        except Exception:
+            pass
+    
     if email:
         from models import User
         g.current_user = User.query.filter_by(email=email).first()
@@ -477,4 +485,28 @@ def create_company_logs(company_id):
         import traceback
         traceback.print_exc()
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# Internal API for Workers (no auth required)
+@campaigns_api.route('/internal/queued', methods=['GET'])
+def get_queued_campaigns_internal():
+    """Internal endpoint for workers to fetch queued campaigns (no auth required)"""
+    try:
+        from models import Campaign
+        from database import db
+        
+        # Fetch campaigns with status 'queued' or 'processing'
+        campaigns = Campaign.query.filter(
+            or_(Campaign.status == 'queued', Campaign.status == 'processing')
+        ).order_by(Campaign.created_at).all()
+        
+        return jsonify({
+            'success': True,
+            'campaigns': [campaign.to_dict() for campaign in campaigns]
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching queued campaigns: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
