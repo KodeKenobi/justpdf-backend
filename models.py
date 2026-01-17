@@ -556,3 +556,124 @@ class SubmissionLog(db.Model):
             'details': self.details,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+class ScrapingRule(db.Model):
+    """Custom scraping rules for specific domains or global"""
+    __tablename__ = 'scraping_rules'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)  # NULL for global rules
+    
+    # Rule definition
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    domain = db.Column(db.String(500))  # NULL for global rules, specific domain otherwise
+    rule_type = db.Column(db.String(50), nullable=False)  # 'cookie', 'contact_page', 'form_field', 'submit_button', 'captcha'
+    
+    # Matching criteria
+    selector = db.Column(db.String(500))  # CSS selector
+    xpath = db.Column(db.String(500))  # XPath selector
+    text_pattern = db.Column(db.String(500))  # Text regex pattern
+    url_pattern = db.Column(db.String(500))  # URL pattern
+    
+    # Action
+    action = db.Column(db.String(50), nullable=False)  # 'click', 'fill', 'wait', 'navigate'
+    action_value = db.Column(db.String(500))  # Value to fill or wait time
+    
+    # Priority and conditions
+    priority = db.Column(db.Integer, default=100, nullable=False)  # Lower = higher priority
+    enabled = db.Column(db.Boolean, default=True, nullable=False)
+    language = db.Column(db.String(10))  # ISO code, NULL for all languages
+    
+    # Metadata
+    success_count = db.Column(db.Integer, default=0, nullable=False)
+    failure_count = db.Column(db.Integer, default=0, nullable=False)
+    last_used_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    user = db.relationship('User', backref='scraping_rules')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'name': self.name,
+            'description': self.description,
+            'domain': self.domain,
+            'rule_type': self.rule_type,
+            'selector': self.selector,
+            'xpath': self.xpath,
+            'text_pattern': self.text_pattern,
+            'url_pattern': self.url_pattern,
+            'action': self.action,
+            'action_value': self.action_value,
+            'priority': self.priority,
+            'enabled': self.enabled,
+            'language': self.language,
+            'success_count': self.success_count,
+            'failure_count': self.failure_count,
+            'last_used_at': self.last_used_at.isoformat() if self.last_used_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+class ScrapingSession(db.Model):
+    """Live scraping session for monitoring"""
+    __tablename__ = 'scraping_sessions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey('companies.id'), nullable=False, index=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey('campaigns.id'), nullable=False, index=True)
+    
+    # Session state
+    status = db.Column(db.String(20), default='active', nullable=False)  # 'active', 'completed', 'failed', 'stopped'
+    current_step = db.Column(db.String(200))
+    progress_percentage = db.Column(db.Integer, default=0, nullable=False)
+    
+    # Detected information
+    detected_language = db.Column(db.String(10))
+    contact_page_url = db.Column(db.String(500))
+    contact_page_found = db.Column(db.Boolean, default=False)
+    cookie_modal_handled = db.Column(db.Boolean, default=False)
+    captcha_detected = db.Column(db.Boolean, default=False)
+    form_found = db.Column(db.Boolean, default=False)
+    
+    # Live monitoring data
+    current_url = db.Column(db.String(500))
+    current_screenshot_url = db.Column(db.String(500))
+    video_recording_url = db.Column(db.String(500))
+    
+    # Timestamps
+    started_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = db.Column(db.DateTime)
+    last_update_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    # Relationships
+    company = db.relationship('Company', backref='scraping_sessions')
+    campaign = db.relationship('Campaign', backref='scraping_sessions')
+    
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'id': self.id,
+            'company_id': self.company_id,
+            'campaign_id': self.campaign_id,
+            'status': self.status,
+            'current_step': self.current_step,
+            'progress_percentage': self.progress_percentage,
+            'detected_language': self.detected_language,
+            'contact_page_url': self.contact_page_url,
+            'contact_page_found': self.contact_page_found,
+            'cookie_modal_handled': self.cookie_modal_handled,
+            'captcha_detected': self.captcha_detected,
+            'form_found': self.form_found,
+            'current_url': self.current_url,
+            'current_screenshot_url': self.current_screenshot_url,
+            'video_recording_url': self.video_recording_url,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'last_update_at': self.last_update_at.isoformat() if self.last_update_at else None,
+        }

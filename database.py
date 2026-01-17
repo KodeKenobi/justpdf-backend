@@ -164,9 +164,9 @@ def init_db(app):
                 # Check if users table exists
                 tables = inspector.get_table_names()
                 
-                # Create missing tables (notifications, analytics tables, campaigns tables, etc.)
+                # Create missing tables (notifications, analytics tables, campaigns tables, scraping rules, etc.)
                 missing_tables = []
-                required_tables = ['notifications', 'analytics_events', 'page_views', 'user_sessions', 'campaigns', 'companies', 'submission_logs']
+                required_tables = ['notifications', 'analytics_events', 'page_views', 'user_sessions', 'campaigns', 'companies', 'submission_logs', 'scraping_rules', 'scraping_sessions']
                 
                 for table_name in required_tables:
                     if table_name not in tables:
@@ -176,7 +176,7 @@ def init_db(app):
                     print(f"[LOAD] Creating missing tables: {', '.join(missing_tables)}...")
                     # Ensure all models are imported before creating tables
                     try:
-                        from models import Notification, AnalyticsEvent, PageView, UserSession, Campaign, Company, SubmissionLog
+                        from models import Notification, AnalyticsEvent, PageView, UserSession, Campaign, Company, SubmissionLog, ScrapingRule, ScrapingSession
                         db.create_all()  # This will create all missing tables
                         print(f"[OK] Created missing tables: {', '.join(missing_tables)}")
                     except Exception as e:
