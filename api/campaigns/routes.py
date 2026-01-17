@@ -58,7 +58,6 @@ def load_user():
     g.current_user = None
 
 @campaigns_api.route('', methods=['GET'])
-@require_auth
 def list_campaigns():
     """Get all campaigns for the current user"""
     try:
@@ -103,7 +102,6 @@ def list_campaigns():
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/detect-companies', methods=['POST'])
-@require_auth
 def detect_companies():
     """Auto-detect company names from URLs"""
     try:
@@ -150,7 +148,6 @@ const detector = new CompanyDetector();
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('', methods=['POST'])
-@require_auth
 def create_campaign():
     """Create a new campaign"""
     try:
@@ -236,7 +233,6 @@ def create_campaign():
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>', methods=['GET'])
-@require_auth
 def get_campaign(campaign_id):
     """Get a specific campaign with details"""
     try:
@@ -265,7 +261,6 @@ def get_campaign(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>', methods=['PATCH'])
-@require_auth
 def update_campaign(campaign_id):
     """Update a campaign"""
     try:
@@ -309,7 +304,6 @@ def update_campaign(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>', methods=['DELETE'])
-@require_auth
 def delete_campaign(campaign_id):
     """Delete a campaign"""
     try:
@@ -341,7 +335,6 @@ def delete_campaign(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>/start', methods=['POST'])
-@require_auth
 def start_campaign(campaign_id):
     """Start processing a campaign"""
     try:
@@ -383,7 +376,6 @@ def start_campaign(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>/companies', methods=['GET'])
-@require_auth
 def get_campaign_companies(campaign_id):
     """Get all companies in a campaign"""
     try:
@@ -436,7 +428,6 @@ def get_campaign_companies(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/companies/<int:company_id>/logs', methods=['GET'])
-@require_auth
 def get_company_logs(company_id):
     """Get submission logs for a specific company"""
     try:
@@ -562,7 +553,6 @@ def create_company_logs(company_id):
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/companies/<int:company_id>/process', methods=['POST'])
-@require_auth
 def process_company_live(company_id):
     """Process a single company with live monitoring"""
     try:
