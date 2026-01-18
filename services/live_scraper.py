@@ -35,44 +35,36 @@ class LiveScraper:
         except Exception as e:
             print(f"Error sending log: {e}")
     
-    async def stream_screenshot(self):
-        """Capture and stream screenshot (TINY size to prevent WebSocket crashes)"""
-        if not self.page or not self.streaming:
+    async def capture_form_preview(self):
+        """Capture ONE full-width screenshot of filled form before submission"""
+        if not self.page:
             return
             
         try:
-            # Ultra-low quality screenshot to keep size minimal
+            await self.send_log('info', 'Capturing', 'Taking screenshot of filled form...')
+            
+            # Full viewport screenshot - NO CROPPING
             screenshot = await self.page.screenshot(
                 type='jpeg',
-                quality=15,  # Very low quality but visible (was 60)
-                full_page=False,
-                clip={'x': 0, 'y': 0, 'width': 960, 'height': 540}  # Half HD resolution
+                quality=85,  # High quality for verification
+                full_page=False  # Just viewport, not entire scrollable page
             )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            # Only send if data is reasonable size (< 50KB base64 = ~37KB raw)
-            if len(screenshot_base64) < 50000:
-                self.ws.send(json.dumps({
-                    'type': 'screenshot',
-                    'data': {
-                        'image': f'data:image/jpeg;base64,{screenshot_base64}',
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                }))
-            else:
-                print(f"Screenshot too large ({len(screenshot_base64)} bytes), skipping")
+            # Send as special 'form_preview' type (not continuous stream)
+            self.ws.send(json.dumps({
+                'type': 'form_preview',
+                'data': {
+                    'image': f'data:image/jpeg;base64,{screenshot_base64}',
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }))
+            
+            await self.send_log('success', 'Preview Ready', 'Form preview captured - verify fields are filled correctly')
+            print(f"Form preview captured: {len(screenshot_base64)} bytes")
         except Exception as e:
-            print(f"Error streaming screenshot: {e}")
-    
-    async def start_streaming_loop(self):
-        """Continuously stream screenshots"""
-        while self.streaming and self.page:
-            try:
-                await self.stream_screenshot()
-                await asyncio.sleep(0.5)  # 2 FPS for smoother monitoring
-            except Exception as e:
-                print(f"Streaming loop error: {e}")
-                break
+            print(f"Error capturing form preview: {e}")
+            await self.send_log('warning', 'Preview Failed', 'Could not capture form preview')
     
     async def scrape_and_submit(self):
         """Main scraping flow with live streaming"""
@@ -91,9 +83,6 @@ class LiveScraper:
                 )
                 
                 self.page = await context.new_page()
-                
-                # Start streaming task (ultra-low quality to prevent crashes)
-                streaming_task = asyncio.create_task(self.start_streaming_loop())
                 
                 # Navigate to website
                 website_url = self.company['website_url']
@@ -135,6 +124,10 @@ class LiveScraper:
                     await self.send_log('success', 'Form Filled', 'Contact form filled successfully')
                     await asyncio.sleep(2)
                     
+                    # Capture screenshot of filled form BEFORE submission
+                    await self.capture_form_preview()
+                    await asyncio.sleep(2)  # Give user time to see the preview
+                    
                     # Submit form
                     await self.send_log('info', 'Submitting', 'Submitting contact form...')
                     submitted = await self.submit_form()
@@ -150,10 +143,6 @@ class LiveScraper:
                     result = {'success': False, 'error': 'Contact form not found'}
                 
                 await asyncio.sleep(3)  # Let user see final result
-                
-                # Stop streaming
-                self.streaming = False
-                await streaming_task
                 
                 await self.browser.close()
                 return result
