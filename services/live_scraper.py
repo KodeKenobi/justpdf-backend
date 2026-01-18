@@ -51,12 +51,12 @@ class LiveScraper:
     def cancel(self):
         """Cancel the scraping process"""
         self.cancelled = True
-        print("[CANCEL] Scraping process cancelled by user")
+        print("Processing stopped by user")
     
     async def check_cancelled(self):
         """Check if process was cancelled, raise exception if so"""
         if self.cancelled:
-            print("[CANCEL] Process cancelled, stopping...")
+            print("Stopping current process...")
             raise Exception("Process cancelled by user")
     
     async def send_log(self, status, action, message, details=None):
@@ -73,13 +73,13 @@ class LiveScraper:
                 }
             }))
         except Exception as e:
-            print(f"Error sending log: {e}")
+            print("Connection interrupted")
             # If WebSocket is dead, mark as cancelled
             if "Connection" in str(e) or "closed" in str(e).lower():
                 self.cancelled = True
     
     async def capture_form_preview(self):
-        """Capture screenshot and upload to Supabase Storage"""
+        """Capture screenshot"""
         if not self.page:
             return
             
@@ -99,7 +99,7 @@ class LiveScraper:
                     public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
                     if public_url:
                         self.screenshot_url = public_url
-                        print(f"[OK] Screenshot uploaded to Supabase: {public_url}")
+                        print("Screenshot saved successfully")
                         
                         # Send only the URL to frontend (not the huge base64 image)
                         self.ws.send(json.dumps({
@@ -111,18 +111,18 @@ class LiveScraper:
                         }))
                         await self.send_log('success', 'Preview Ready', f'Screenshot saved - view at: {public_url}')
                     else:
-                        print(f"[WARN] Screenshot upload returned None")
+                        print("Screenshot could not be saved")
                         await self.send_log('warning', 'Preview Failed', 'Could not save screenshot')
                 except Exception as upload_error:
-                    print(f"[ERROR] Failed to upload screenshot: {upload_error}")
+                    print("Unable to save screenshot")
                     import traceback
                     traceback.print_exc()
                     await self.send_log('warning', 'Preview Failed', 'Could not save screenshot to storage')
             else:
-                print(f"[WARN] Missing campaign_id or company_id for screenshot upload")
+                print("Screenshot processing skipped")
                 await self.send_log('warning', 'Preview Skipped', 'Missing IDs for screenshot')
         except Exception as e:
-            print(f"Error capturing form preview: {e}")
+            print("Screenshot capture failed")
             await self.send_log('warning', 'Preview Failed', 'Could not capture form preview')
     
     async def scrape_and_submit(self):
@@ -218,7 +218,7 @@ class LiveScraper:
         except Exception as e:
             # Check if this was a user cancellation
             if self.cancelled or "cancelled by user" in str(e).lower():
-                print(f"[CANCEL] Process cancelled by user")
+                print("Processing stopped by user request")
                 try:
                     await self.send_log('info', 'Cancelled', 'Process cancelled by user')
                 except:
@@ -232,9 +232,9 @@ class LiveScraper:
             
             # Regular error
             error_message = 'An unexpected error occurred while processing this website'
-            print(f"Technical error (hidden from user): {str(e)}")  # Log for debugging
+            print(f"Processing error: {str(e)}")  # Backend log
             import traceback
-            traceback.print_exc()  # Print full stack trace for debugging
+            traceback.print_exc()  # Full details for debugging
             try:
                 await self.send_log('failed', 'Processing Error', error_message)
             except:
@@ -528,7 +528,7 @@ class LiveScraper:
                     await asyncio.sleep(0.1)
                     
                 except Exception as e:
-                    print(f"Error filling text input: {e}")
+                    print("Skipping text field")
                     continue
             
             # === 2. EMAIL INPUTS (All variations) ===
@@ -551,7 +551,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', f'✓ Email: {fill_data["email"]}')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling email: {e}")
+                    print("Skipping email field")
                     continue
             
             # === 3. PHONE/MOBILE INPUTS (100+ variations) ===
@@ -587,7 +587,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', f'✓ Phone: {fill_data["phone"]}')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling phone: {e}")
+                    print("Skipping phone field")
                     continue
             
             # === 4. TEXTAREAS (Message/Comments/Description) ===
@@ -617,7 +617,7 @@ class LiveScraper:
                             await self.send_log('success', 'Field Filled', f'✓ Description field')
                             filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling textarea: {e}")
+                    print("Skipping message field")
                     continue
             
             # === 5. SELECT DROPDOWNS (Including country codes, industries, etc.) ===
@@ -721,7 +721,7 @@ class LiveScraper:
                     await asyncio.sleep(0.1)
                     
                 except Exception as e:
-                    print(f"Error filling select: {e}")
+                    print("Skipping dropdown field")
                     continue
             
             # === 6. CHECKBOXES (Terms, Privacy, Consent, etc.) ===
@@ -773,7 +773,7 @@ class LiveScraper:
                             await asyncio.sleep(0.1)
                             
                 except Exception as e:
-                    print(f"Error checking checkbox: {e}")
+                    print("Skipping checkbox")
                     continue
             
             # === 7. RADIO BUTTONS (Smart selection) ===
@@ -818,7 +818,7 @@ class LiveScraper:
                             await asyncio.sleep(0.1)
                             
                 except Exception as e:
-                    print(f"Error checking radio: {e}")
+                    print("Skipping radio button")
                     continue
             
             # === 8. DATE INPUTS (Smart date filling) ===
@@ -842,7 +842,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', f'✓ Date: {date_str}')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling date: {e}")
+                    print("Skipping date field")
                     continue
             
             # === 9. TIME INPUTS ===
@@ -855,7 +855,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', '✓ Time: 10:00 AM')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling time: {e}")
+                    print("Skipping time field")
                     continue
             
             # === 10. NUMBER INPUTS (Smart number filling) ===
@@ -880,7 +880,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', f'✓ Number: {number}')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling number: {e}")
+                    print("Skipping number field")
                     continue
             
             # === 11. RANGE SLIDERS ===
@@ -892,7 +892,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', '✓ Range Slider')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling range: {e}")
+                    print("Skipping range slider")
                     continue
             
             # === 12. COLOR PICKERS ===
@@ -904,7 +904,7 @@ class LiveScraper:
                         await self.send_log('success', 'Field Filled', '✓ Color Picker')
                         filled_fields += 1
                 except Exception as e:
-                    print(f"Error filling color: {e}")
+                    print("Skipping color picker")
                     continue
             
             await asyncio.sleep(1)
@@ -918,7 +918,7 @@ class LiveScraper:
             
         except Exception as e:
             await self.send_log('failed', 'Form Error', 'Unable to fill out the contact form.')
-            print(f"Technical error filling form: {e}")
+            print("Form filling encountered an issue")
             return False
     
     async def submit_form(self):
@@ -1001,15 +1001,15 @@ class LiveScraper:
                         return True  # Return immediately after ONE submit attempt
                         
                 except Exception as e:
-                    print(f"Technical error with selector {selector} (hidden from user): {e}")
+                    print("Trying next submit button...")
                     import traceback
                     traceback.print_exc()
                     continue
             
             return False
         except Exception as e:
-            print(f"Critical error in submit_form: {e}")
+            print("Form submission issue encountered")
             import traceback
             traceback.print_exc()
-            await self.send_log('failed', 'Submit Error', f'Failed to submit form: {str(e)}')
+            await self.send_log('failed', 'Submit Error', 'Unable to submit the form')
             return False
