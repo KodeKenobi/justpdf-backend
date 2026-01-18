@@ -466,66 +466,66 @@ class LiveScraper:
             ]
             
             for selector in submit_selectors:
-            try:
-                button = await self.page.query_selector(selector)
-                if button:
-                    # Check if button is visible and enabled
-                    is_visible = await button.is_visible()
-                    is_enabled = await button.is_enabled()
-                    
-                    if not is_visible or not is_enabled:
-                        continue
-                    
-                    # Record current URL before submission
-                    current_url = self.page.url
-                    
-                    # Click submit and wait for navigation or network idle
-                    try:
-                        # Try waiting for navigation (if form redirects)
-                        async with self.page.expect_navigation(timeout=5000, wait_until='networkidle'):
-                            await button.click()
-                        await self.send_log('success', 'Navigation', 'Form submitted - page redirected')
-                        return True
-                    except:
-                        # If no navigation, just click and wait for network
-                        await button.click()
-                        await self.page.wait_for_load_state('networkidle', timeout=5000)
-                    
-                    # Wait a bit for any success messages to appear
-                    await asyncio.sleep(2)
-                    
-                    # Check for success indicators
-                    success_indicators = [
-                        'text=/thank you/i',
-                        'text=/success/i',
-                        'text=/sent/i',
-                        'text=/received/i',
-                        'text=/message.*sent/i',
-                        '.success-message',
-                        '.alert-success',
-                        '[class*="success"]'
-                    ]
-                    
-                    for indicator in success_indicators:
-                        try:
-                            element = await self.page.query_selector(indicator)
-                            if element:
-                                is_vis = await element.is_visible()
-                                if is_vis:
-                                    await self.send_log('success', 'Verified', 'Success message detected on page')
-                                    return True
-                        except:
+                try:
+                    button = await self.page.query_selector(selector)
+                    if button:
+                        # Check if button is visible and enabled
+                        is_visible = await button.is_visible()
+                        is_enabled = await button.is_enabled()
+                        
+                        if not is_visible or not is_enabled:
                             continue
-                    
-                    # Check if URL changed (redirect to thank you page)
-                    if self.page.url != current_url:
-                        await self.send_log('success', 'Verified', f'URL changed to {self.page.url}', {'url': self.page.url})
+                        
+                        # Record current URL before submission
+                        current_url = self.page.url
+                        
+                        # Click submit and wait for navigation or network idle
+                        try:
+                            # Try waiting for navigation (if form redirects)
+                            async with self.page.expect_navigation(timeout=5000, wait_until='networkidle'):
+                                await button.click()
+                            await self.send_log('success', 'Navigation', 'Form submitted - page redirected')
+                            return True
+                        except:
+                            # If no navigation, just click and wait for network
+                            await button.click()
+                            await self.page.wait_for_load_state('networkidle', timeout=5000)
+                        
+                        # Wait a bit for any success messages to appear
+                        await asyncio.sleep(2)
+                        
+                        # Check for success indicators
+                        success_indicators = [
+                            'text=/thank you/i',
+                            'text=/success/i',
+                            'text=/sent/i',
+                            'text=/received/i',
+                            'text=/message.*sent/i',
+                            '.success-message',
+                            '.alert-success',
+                            '[class*="success"]'
+                        ]
+                        
+                        for indicator in success_indicators:
+                            try:
+                                element = await self.page.query_selector(indicator)
+                                if element:
+                                    is_vis = await element.is_visible()
+                                    if is_vis:
+                                        await self.send_log('success', 'Verified', 'Success message detected on page')
+                                        return True
+                            except:
+                                continue
+                        
+                        # Check if URL changed (redirect to thank you page)
+                        if self.page.url != current_url:
+                            await self.send_log('success', 'Verified', f'URL changed to {self.page.url}', {'url': self.page.url})
+                            return True
+                        
+                        # If we got here, submission probably worked but no clear confirmation
+                        await self.send_log('warning', 'Submitted', 'Form submitted but no confirmation message was detected. The message may still have been received.')
                         return True
-                    
-                    # If we got here, submission probably worked but no clear confirmation
-                    await self.send_log('warning', 'Submitted', 'Form submitted but no confirmation message was detected. The message may still have been received.')
-                    return True
-                    
+                        
                 except Exception as e:
                     print(f"Technical error with selector {selector} (hidden from user): {e}")
                     import traceback
