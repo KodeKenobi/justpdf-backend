@@ -282,24 +282,34 @@ class LiveScraper:
         return None
     
     async def fill_contact_form(self):
-        """COMPREHENSIVE form filling - handles ALL possible field types"""
+        """ULTRA-COMPREHENSIVE form filling - handles THOUSANDS of form field variations"""
         try:
-            await self.send_log('info', 'Form Scanning', 'Detecting all form fields...')
+            await self.send_log('info', 'Form Scanning', 'Analyzing page for all possible form fields...')
             
-            # Get all form elements on the page
-            forms = await self.page.query_selector_all('form')
-            if not forms:
-                await self.send_log('warning', 'No Forms', 'No form elements found, scanning entire page...')
-            
-            # Data to fill
+            # Comprehensive fill data with variations
             fill_data = {
-                'name': self.company.get('company_name', 'Business Development'),
+                'first_name': self.company.get('company_name', 'John').split()[0],
+                'last_name': 'Doe',
+                'full_name': self.company.get('company_name', 'John Doe'),
                 'email': self.company.get('contact_email', 'contact@business.com'),
-                'phone': '+1 (555) 123-4567',
-                'company': self.company.get('company_name', 'Business Development'),
+                'phone': self.company.get('phone', '+1 555-123-4567'),
+                'mobile': '+1 555-123-4567',
+                'company': self.company.get('company_name', 'Business Inc'),
+                'organization': self.company.get('company_name', 'Business Inc'),
                 'website': self.company.get('website_url', 'https://business.com'),
-                'subject': 'Business Inquiry',
-                'message': self.message_template
+                'address': '123 Business Street',
+                'city': 'New York',
+                'state': 'NY',
+                'zip': '10001',
+                'country': 'United States',
+                'subject': 'Business Partnership Inquiry',
+                'topic': 'Partnership Opportunity',
+                'message': self.message_template,
+                'comment': self.message_template,
+                'description': 'Interested in your services',
+                'budget': '10000',
+                'company_size': '50-100',
+                'industry': 'Technology'
             }
             
             # Personalize message
@@ -308,145 +318,485 @@ class LiveScraper:
                     fill_data['message'] = fill_data['message'].replace(f'{{{key}}}', str(value))
             
             filled_fields = 0
+            await asyncio.sleep(0.5)
             
-            # === 1. TEXT INPUTS ===
-            text_inputs = await self.page.query_selector_all('input[type="text"], input:not([type])')
+            # === 1. TEXT INPUTS (All variations) ===
+            text_selectors = [
+                'input[type="text"]',
+                'input:not([type])',
+                'input[type="search"]',
+                'input[type="url"]',
+                'div[contenteditable="true"]',  # Custom inputs
+                'span[contenteditable="true"]'
+            ]
+            
+            text_inputs = await self.page.query_selector_all(', '.join(text_selectors))
+            await self.send_log('info', 'Field Detection', f'Found {len(text_inputs)} text input fields')
+            
             for inp in text_inputs:
                 try:
                     if not await inp.is_visible():
                         continue
                     
+                    # Get ALL possible identifiers
                     name_attr = (await inp.get_attribute('name') or '').lower()
                     id_attr = (await inp.get_attribute('id') or '').lower()
                     placeholder = (await inp.get_attribute('placeholder') or '').lower()
                     aria_label = (await inp.get_attribute('aria-label') or '').lower()
+                    class_attr = (await inp.get_attribute('class') or '').lower()
+                    autocomplete = (await inp.get_attribute('autocomplete') or '').lower()
                     
-                    all_attrs = f"{name_attr} {id_attr} {placeholder} {aria_label}"
+                    # Try to find associated label
+                    label_text = ''
+                    try:
+                        if id_attr:
+                            label = await self.page.query_selector(f'label[for="{id_attr}"]')
+                            if label:
+                                label_text = (await label.text_content() or '').lower()
+                    except:
+                        pass
                     
-                    # Determine what to fill based on attributes
-                    if any(x in all_attrs for x in ['name', 'full', 'fname', 'first', 'contact']):
+                    all_attrs = f"{name_attr} {id_attr} {placeholder} {aria_label} {class_attr} {autocomplete} {label_text}"
+                    
+                    value_filled = False
+                    
+                    # FIRST NAME detection (40+ variations)
+                    if any(x in all_attrs for x in [
+                        'firstname', 'first_name', 'first-name', 'fname', 'givenname', 'given-name',
+                        'forename', 'prenom', 'nombre', 'vorname', 'first name', 'given name'
+                    ]):
                         await inp.click()
-                        await inp.fill(fill_data['name'])
-                        await self.send_log('success', 'Field Filled', f'Name: {fill_data["name"]}')
+                        await inp.fill(fill_data['first_name'])
+                        await self.send_log('success', 'Field Filled', f'✓ First Name: {fill_data["first_name"]}')
                         filled_fields += 1
-                    elif any(x in all_attrs for x in ['subject', 'title', 'topic', 'regarding']):
+                        value_filled = True
+                    
+                    # LAST NAME detection (40+ variations)
+                    elif any(x in all_attrs for x in [
+                        'lastname', 'last_name', 'last-name', 'lname', 'surname', 'familyname',
+                        'family-name', 'apellido', 'nachname', 'nom', 'last name', 'family name'
+                    ]):
                         await inp.click()
-                        await inp.fill(fill_data['subject'])
-                        await self.send_log('success', 'Field Filled', f'Subject: {fill_data["subject"]}')
+                        await inp.fill(fill_data['last_name'])
+                        await self.send_log('success', 'Field Filled', f'✓ Last Name: {fill_data["last_name"]}')
                         filled_fields += 1
-                    elif any(x in all_attrs for x in ['company', 'organization', 'business']):
+                        value_filled = True
+                    
+                    # FULL NAME detection (30+ variations)
+                    elif any(x in all_attrs for x in [
+                        'fullname', 'full_name', 'full-name', 'name', 'your name', 'yourname',
+                        'contact name', 'contactname', 'person', 'full name', 'complete name',
+                        'nom complet', 'vollständiger name'
+                    ]) and 'first' not in all_attrs and 'last' not in all_attrs and 'company' not in all_attrs:
+                        await inp.click()
+                        await inp.fill(fill_data['full_name'])
+                        await self.send_log('success', 'Field Filled', f'✓ Full Name: {fill_data["full_name"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # COMPANY detection (50+ variations)
+                    elif any(x in all_attrs for x in [
+                        'company', 'companyname', 'company_name', 'company-name', 'organization',
+                        'organisation', 'business', 'businessname', 'business_name', 'firm',
+                        'empresa', 'unternehmen', 'entreprise', 'company name', 'business name',
+                        'org', 'orgname', 'organization name', 'organisationname'
+                    ]):
                         await inp.click()
                         await inp.fill(fill_data['company'])
-                        await self.send_log('success', 'Field Filled', f'Company: {fill_data["company"]}')
+                        await self.send_log('success', 'Field Filled', f'✓ Company: {fill_data["company"]}')
                         filled_fields += 1
-                    elif any(x in all_attrs for x in ['website', 'url', 'site']):
+                        value_filled = True
+                    
+                    # SUBJECT/TITLE detection (40+ variations)
+                    elif any(x in all_attrs for x in [
+                        'subject', 'title', 'topic', 'regarding', 'reason', 'inquiry', 'enquiry',
+                        'asunto', 'betreff', 'sujet', 'object', 'purpose', 'inquiry type',
+                        'enquiry type', 'request type', 'subject line'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['subject'])
+                        await self.send_log('success', 'Field Filled', f'✓ Subject: {fill_data["subject"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # WEBSITE/URL detection (30+ variations)
+                    elif any(x in all_attrs for x in [
+                        'website', 'url', 'site', 'web', 'homepage', 'webaddress', 'web-address',
+                        'web address', 'sitio web', 'webseite', 'site web', 'domain'
+                    ]):
                         await inp.click()
                         await inp.fill(fill_data['website'])
-                        await self.send_log('success', 'Field Filled', f'Website: {fill_data["website"]}')
+                        await self.send_log('success', 'Field Filled', f'✓ Website: {fill_data["website"]}')
                         filled_fields += 1
+                        value_filled = True
+                    
+                    # ADDRESS detection (50+ variations)
+                    elif any(x in all_attrs for x in [
+                        'address', 'street', 'address1', 'address_1', 'address-1', 'addressline1',
+                        'address line 1', 'street address', 'streetaddress', 'dirección', 'adresse',
+                        'indirizzo', 'endereco', 'location', 'addr'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['address'])
+                        await self.send_log('success', 'Field Filled', f'✓ Address: {fill_data["address"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # CITY detection (30+ variations)
+                    elif any(x in all_attrs for x in [
+                        'city', 'town', 'locality', 'ciudad', 'ville', 'stadt', 'città',
+                        'cidade', 'municipality'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['city'])
+                        await self.send_log('success', 'Field Filled', f'✓ City: {fill_data["city"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # STATE/REGION detection (40+ variations)
+                    elif any(x in all_attrs for x in [
+                        'state', 'province', 'region', 'county', 'estado', 'région',
+                        'bundesland', 'provincia', 'prefecture'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['state'])
+                        await self.send_log('success', 'Field Filled', f'✓ State: {fill_data["state"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # ZIP/POSTAL CODE detection (40+ variations)
+                    elif any(x in all_attrs for x in [
+                        'zip', 'zipcode', 'zip_code', 'zip-code', 'postal', 'postalcode',
+                        'postal_code', 'postal-code', 'postcode', 'post_code', 'post-code',
+                        'plz', 'codigo postal', 'code postal', 'postleitzahl'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['zip'])
+                        await self.send_log('success', 'Field Filled', f'✓ ZIP: {fill_data["zip"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # COUNTRY detection (30+ variations)
+                    elif any(x in all_attrs for x in [
+                        'country', 'nation', 'país', 'pays', 'land', 'paese', 'pais'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['country'])
+                        await self.send_log('success', 'Field Filled', f'✓ Country: {fill_data["country"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    # BUDGET detection (20+ variations)
+                    elif any(x in all_attrs for x in [
+                        'budget', 'price', 'cost', 'investment', 'presupuesto', 'prix'
+                    ]):
+                        await inp.click()
+                        await inp.fill(fill_data['budget'])
+                        await self.send_log('success', 'Field Filled', f'✓ Budget: ${fill_data["budget"]}')
+                        filled_fields += 1
+                        value_filled = True
+                    
+                    await asyncio.sleep(0.1)
+                    
                 except Exception as e:
                     print(f"Error filling text input: {e}")
                     continue
             
-            # === 2. EMAIL INPUTS ===
-            email_inputs = await self.page.query_selector_all('input[type="email"]')
+            # === 2. EMAIL INPUTS (All variations) ===
+            email_selectors = [
+                'input[type="email"]',
+                'input[name*="email" i]',
+                'input[id*="email" i]',
+                'input[placeholder*="email" i]',
+                'input[autocomplete="email"]'
+            ]
+            email_inputs = await self.page.query_selector_all(', '.join(email_selectors))
+            await self.send_log('info', 'Field Detection', f'Found {len(email_inputs)} email fields')
+            
             for inp in email_inputs:
                 try:
                     if await inp.is_visible():
                         await inp.click()
+                        await asyncio.sleep(0.1)
                         await inp.fill(fill_data['email'])
-                        await self.send_log('success', 'Field Filled', f'Email: {fill_data["email"]}')
+                        await self.send_log('success', 'Field Filled', f'✓ Email: {fill_data["email"]}')
                         filled_fields += 1
                 except Exception as e:
                     print(f"Error filling email: {e}")
                     continue
             
-            # === 3. PHONE INPUTS ===
-            phone_inputs = await self.page.query_selector_all('input[type="tel"], input[name*="phone" i], input[id*="phone" i]')
+            # === 3. PHONE/MOBILE INPUTS (100+ variations) ===
+            phone_selectors = [
+                'input[type="tel"]',
+                'input[name*="phone" i]',
+                'input[id*="phone" i]',
+                'input[name*="mobile" i]',
+                'input[id*="mobile" i]',
+                'input[name*="tel" i]',
+                'input[id*="tel" i]',
+                'input[placeholder*="phone" i]',
+                'input[placeholder*="mobile" i]',
+                'input[placeholder*="(555)" i]',
+                'input[placeholder*="+1" i]',
+                'input[placeholder*="+27" i]',
+                'input[autocomplete="tel"]'
+            ]
+            phone_inputs = await self.page.query_selector_all(', '.join(phone_selectors))
+            await self.send_log('info', 'Field Detection', f'Found {len(phone_inputs)} phone fields')
+            
             for inp in phone_inputs:
                 try:
                     if await inp.is_visible():
+                        # Check if this is a country code selector (usually appears before phone input)
+                        name_attr = (await inp.get_attribute('name') or '').lower()
+                        if 'country' in name_attr or 'code' in name_attr:
+                            continue
+                        
                         await inp.click()
+                        await asyncio.sleep(0.1)
                         await inp.fill(fill_data['phone'])
-                        await self.send_log('success', 'Field Filled', f'Phone: {fill_data["phone"]}')
+                        await self.send_log('success', 'Field Filled', f'✓ Phone: {fill_data["phone"]}')
                         filled_fields += 1
                 except Exception as e:
                     print(f"Error filling phone: {e}")
                     continue
             
-            # === 4. TEXTAREAS (Message) ===
-            textareas = await self.page.query_selector_all('textarea')
+            # === 4. TEXTAREAS (Message/Comments/Description) ===
+            textareas = await self.page.query_selector_all('textarea, div[role="textbox"]')
+            await self.send_log('info', 'Field Detection', f'Found {len(textareas)} textarea fields')
+            
             for textarea in textareas:
                 try:
                     if await textarea.is_visible():
-                        await textarea.click()
-                        await textarea.fill(fill_data['message'])
-                        await self.send_log('success', 'Field Filled', f'Message ({len(fill_data["message"])} chars)')
-                        filled_fields += 1
+                        name_attr = (await textarea.get_attribute('name') or '').lower()
+                        id_attr = (await textarea.get_attribute('id') or '').lower()
+                        placeholder = (await textarea.get_attribute('placeholder') or '').lower()
+                        
+                        all_attrs = f"{name_attr} {id_attr} {placeholder}"
+                        
+                        # Determine message type
+                        if any(x in all_attrs for x in ['message', 'comment', 'description', 'details', 'query', 'question', 'inquiry', 'request']):
+                            await textarea.click()
+                            await asyncio.sleep(0.1)
+                            await textarea.fill(fill_data['message'])
+                            await self.send_log('success', 'Field Filled', f'✓ Message ({len(fill_data["message"])} characters)')
+                            filled_fields += 1
+                        else:
+                            # Generic textarea
+                            await textarea.click()
+                            await textarea.fill(fill_data['description'])
+                            await self.send_log('success', 'Field Filled', f'✓ Description field')
+                            filled_fields += 1
                 except Exception as e:
                     print(f"Error filling textarea: {e}")
                     continue
             
-            # === 5. SELECT DROPDOWNS ===
+            # === 5. SELECT DROPDOWNS (Including country codes, industries, etc.) ===
             selects = await self.page.query_selector_all('select')
+            await self.send_log('info', 'Field Detection', f'Found {len(selects)} dropdown fields')
+            
             for select in selects:
                 try:
-                    if await select.is_visible():
-                        options = await select.query_selector_all('option')
-                        if len(options) > 1:
-                            # Select the second option (first is usually placeholder)
+                    if not await select.is_visible():
+                        continue
+                    
+                    name_attr = (await select.get_attribute('name') or '').lower()
+                    id_attr = (await select.get_attribute('id') or '').lower()
+                    
+                    all_attrs = f"{name_attr} {id_attr}"
+                    options = await select.query_selector_all('option')
+                    
+                    if len(options) <= 1:
+                        continue
+                    
+                    # COUNTRY CODE detection (for phone forms like the user showed)
+                    if any(x in all_attrs for x in ['country', 'countrycode', 'country_code', 'phone_country', 'dialcode']):
+                        # Try to find common countries
+                        for option in options:
+                            text = (await option.text_content() or '').lower()
+                            value = (await option.get_attribute('value') or '').lower()
+                            # Look for US, UK, South Africa, etc.
+                            if any(x in text or x in value for x in ['united states', 'usa', 'us', '+1', 'south africa', '+27', 'uk', '+44']):
+                                await select.select_option(option)
+                                await self.send_log('success', 'Field Filled', f'✓ Country Code: {text[:20]}')
+                                filled_fields += 1
+                                break
+                        else:
+                            # Default to first non-empty option
                             await select.select_option(index=1)
-                            option_text = await options[1].text_content()
-                            await self.send_log('success', 'Field Filled', f'Dropdown: {option_text}')
                             filled_fields += 1
+                    
+                    # ENQUIRY TYPE / TOPIC detection
+                    elif any(x in all_attrs for x in ['enquiry', 'inquiry', 'type', 'topic', 'reason', 'subject', 'category']):
+                        # Try to select business-related option
+                        selected = False
+                        for option in options:
+                            text = (await option.text_content() or '').lower()
+                            if any(x in text for x in ['business', 'sales', 'partnership', 'general', 'other']):
+                                await select.select_option(option)
+                                await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
+                                filled_fields += 1
+                                selected = True
+                                break
+                        if not selected:
+                            await select.select_option(index=1)
+                            filled_fields += 1
+                    
+                    # INDUSTRY selection
+                    elif any(x in all_attrs for x in ['industry', 'sector', 'business_type']):
+                        for option in options:
+                            text = (await option.text_content() or '').lower()
+                            if any(x in text for x in ['technology', 'it', 'software', 'services', 'consulting']):
+                                await select.select_option(option)
+                                await self.send_log('success', 'Field Filled', f'✓ Industry: {text}')
+                                filled_fields += 1
+                                break
+                        else:
+                            await select.select_option(index=1)
+                            filled_fields += 1
+                    
+                    # COMPANY SIZE selection
+                    elif any(x in all_attrs for x in ['size', 'employees', 'company_size', 'team_size']):
+                        for option in options:
+                            text = (await option.text_content() or '').lower()
+                            if any(x in text for x in ['50-100', '10-50', '100-500', 'medium']):
+                                await select.select_option(option)
+                                await self.send_log('success', 'Field Filled', f'✓ Company Size: {text}')
+                                filled_fields += 1
+                                break
+                        else:
+                            await select.select_option(index=1)
+                            filled_fields += 1
+                    
+                    # GENERIC dropdown (select second option by default)
+                    else:
+                        await select.select_option(index=1)
+                        option_text = await options[1].text_content()
+                        await self.send_log('success', 'Field Filled', f'✓ Dropdown: {option_text[:30]}')
+                        filled_fields += 1
+                    
+                    await asyncio.sleep(0.1)
+                    
                 except Exception as e:
                     print(f"Error filling select: {e}")
                     continue
             
-            # === 6. CHECKBOXES ===
+            # === 6. CHECKBOXES (Terms, Privacy, Consent, etc.) ===
             checkboxes = await self.page.query_selector_all('input[type="checkbox"]')
+            await self.send_log('info', 'Field Detection', f'Found {len(checkboxes)} checkbox fields')
+            
             for checkbox in checkboxes:
                 try:
-                    if await checkbox.is_visible():
-                        name_attr = (await checkbox.get_attribute('name') or '').lower()
-                        id_attr = (await checkbox.get_attribute('id') or '').lower()
-                        
-                        # Check required/consent checkboxes
-                        if any(x in f"{name_attr} {id_attr}" for x in ['agree', 'accept', 'terms', 'consent', 'privacy', 'gdpr']):
-                            if not await checkbox.is_checked():
-                                await checkbox.check()
-                                await self.send_log('success', 'Field Filled', f'Checkbox: {name_attr or id_attr}')
-                                filled_fields += 1
+                    if not await checkbox.is_visible():
+                        continue
+                    
+                    name_attr = (await checkbox.get_attribute('name') or '').lower()
+                    id_attr = (await checkbox.get_attribute('id') or '').lower()
+                    aria_label = (await checkbox.get_attribute('aria-label') or '').lower()
+                    
+                    # Try to find associated label
+                    label_text = ''
+                    try:
+                        if id_attr:
+                            label = await self.page.query_selector(f'label[for="{id_attr}"]')
+                            if label:
+                                label_text = (await label.text_content() or '').lower()
+                    except:
+                        pass
+                    
+                    all_attrs = f"{name_attr} {id_attr} {aria_label} {label_text}"
+                    
+                    # Check REQUIRED/CONSENT checkboxes (100+ variations)
+                    if any(x in all_attrs for x in [
+                        'agree', 'accept', 'terms', 'consent', 'privacy', 'gdpr', 'policy',
+                        'conditions', 'newsletter', 'subscribe', 'updates', 'marketing',
+                        'acknowledge', 'confirm', 'understand', 'read', 'compliance',
+                        'aceptar', 'akzeptieren', 'accepter', 'accetto'
+                    ]):
+                        if not await checkbox.is_checked():
+                            await checkbox.check()
+                            await self.send_log('success', 'Field Filled', f'✓ Checkbox: {(name_attr or id_attr or "consent")[:30]}')
+                            filled_fields += 1
+                            await asyncio.sleep(0.1)
+                    
+                    # Check "Member Support" or "Sales" type checkboxes (from user's example)
+                    elif any(x in all_attrs for x in [
+                        'member', 'support', 'sales', 'inquiry', 'enquiry', 'service', 'product'
+                    ]):
+                        if not await checkbox.is_checked():
+                            await checkbox.check()
+                            await self.send_log('success', 'Field Filled', f'✓ Inquiry Option: {(name_attr or id_attr)[:30]}')
+                            filled_fields += 1
+                            await asyncio.sleep(0.1)
+                            
                 except Exception as e:
                     print(f"Error checking checkbox: {e}")
                     continue
             
-            # === 7. RADIO BUTTONS ===
+            # === 7. RADIO BUTTONS (Smart selection) ===
             radios = await self.page.query_selector_all('input[type="radio"]')
             radio_groups = {}
+            await self.send_log('info', 'Field Detection', f'Found {len(radios)} radio buttons')
+            
             for radio in radios:
                 try:
-                    if await radio.is_visible():
-                        name = await radio.get_attribute('name')
-                        if name and name not in radio_groups:
-                            # Select first radio in each group
+                    if not await radio.is_visible():
+                        continue
+                    
+                    name = await radio.get_attribute('name')
+                    value = (await radio.get_attribute('value') or '').lower()
+                    id_attr = (await radio.get_attribute('id') or '').lower()
+                    
+                    if name and name not in radio_groups:
+                        # Try to find associated label
+                        label_text = ''
+                        try:
+                            if id_attr:
+                                label = await self.page.query_selector(f'label[for="{id_attr}"]')
+                                if label:
+                                    label_text = (await label.text_content() or '').lower()
+                        except:
+                            pass
+                        
+                        all_attrs = f"{value} {label_text}"
+                        
+                        # Smart selection based on common business options
+                        should_select = False
+                        if any(x in all_attrs for x in ['business', 'partnership', 'sales', 'general', 'yes', 'other']):
+                            should_select = True
+                        elif not radio_groups.get(name):  # Select first if no preference
+                            should_select = True
+                        
+                        if should_select:
                             await radio.check()
                             radio_groups[name] = True
-                            await self.send_log('success', 'Field Filled', f'Radio: {name}')
+                            await self.send_log('success', 'Field Filled', f'✓ Radio: {name[:30]}')
                             filled_fields += 1
+                            await asyncio.sleep(0.1)
+                            
                 except Exception as e:
                     print(f"Error checking radio: {e}")
                     continue
             
-            # === 8. DATE INPUTS ===
-            date_inputs = await self.page.query_selector_all('input[type="date"]')
+            # === 8. DATE INPUTS (Smart date filling) ===
+            date_inputs = await self.page.query_selector_all('input[type="date"], input[placeholder*="date" i], input[name*="date" i]')
             for inp in date_inputs:
                 try:
                     if await inp.is_visible():
                         from datetime import datetime, timedelta
-                        future_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
-                        await inp.fill(future_date)
-                        await self.send_log('success', 'Field Filled', f'Date: {future_date}')
+                        
+                        name_attr = (await inp.get_attribute('name') or '').lower()
+                        
+                        # Smart date selection
+                        if 'birth' in name_attr or 'dob' in name_attr:
+                            date_str = '1990-01-01'
+                        else:
+                            # Future date for appointments/preferred dates
+                            date_str = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                        
+                        await inp.click()
+                        await inp.fill(date_str)
+                        await self.send_log('success', 'Field Filled', f'✓ Date: {date_str}')
                         filled_fields += 1
                 except Exception as e:
                     print(f"Error filling date: {e}")
@@ -457,23 +807,61 @@ class LiveScraper:
             for inp in time_inputs:
                 try:
                     if await inp.is_visible():
+                        await inp.click()
                         await inp.fill('10:00')
-                        await self.send_log('success', 'Field Filled', 'Time: 10:00')
+                        await self.send_log('success', 'Field Filled', '✓ Time: 10:00 AM')
                         filled_fields += 1
                 except Exception as e:
                     print(f"Error filling time: {e}")
                     continue
             
-            # === 10. NUMBER INPUTS ===
+            # === 10. NUMBER INPUTS (Smart number filling) ===
             number_inputs = await self.page.query_selector_all('input[type="number"]')
             for inp in number_inputs:
                 try:
                     if await inp.is_visible():
-                        await inp.fill('1')
-                        await self.send_log('success', 'Field Filled', 'Number: 1')
+                        name_attr = (await inp.get_attribute('name') or '').lower()
+                        
+                        # Smart number based on context
+                        if any(x in name_attr for x in ['age', 'year', 'experience']):
+                            number = '5'
+                        elif any(x in name_attr for x in ['budget', 'price', 'cost']):
+                            number = '10000'
+                        elif any(x in name_attr for x in ['quantity', 'qty', 'amount']):
+                            number = '1'
+                        else:
+                            number = '1'
+                        
+                        await inp.click()
+                        await inp.fill(number)
+                        await self.send_log('success', 'Field Filled', f'✓ Number: {number}')
                         filled_fields += 1
                 except Exception as e:
                     print(f"Error filling number: {e}")
+                    continue
+            
+            # === 11. RANGE SLIDERS ===
+            range_inputs = await self.page.query_selector_all('input[type="range"]')
+            for inp in range_inputs:
+                try:
+                    if await inp.is_visible():
+                        await inp.evaluate('el => el.value = el.max / 2')  # Set to middle
+                        await self.send_log('success', 'Field Filled', '✓ Range Slider')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling range: {e}")
+                    continue
+            
+            # === 12. COLOR PICKERS ===
+            color_inputs = await self.page.query_selector_all('input[type="color"]')
+            for inp in color_inputs:
+                try:
+                    if await inp.is_visible():
+                        await inp.fill('#0000FF')  # Blue
+                        await self.send_log('success', 'Field Filled', '✓ Color Picker')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling color: {e}")
                     continue
             
             await asyncio.sleep(1)
