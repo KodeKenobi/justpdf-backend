@@ -69,8 +69,16 @@ def register_websocket_routes(sock):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
+            # Run scraper async
             result = loop.run_until_complete(scraper.scrape_and_submit())
             loop.close()
+            
+            # If cancelled, don't send completion
+            if result.get('cancelled'):
+                print(f"[CANCEL] Process was cancelled, not sending completion message")
+                company.status = 'cancelled'
+                db.session.commit()
+                return
             
             # Send final result
             ws.send(json.dumps({

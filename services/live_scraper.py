@@ -25,7 +25,19 @@ class LiveScraper:
         self.page = None
         self.streaming = True
         self.screenshot_url = None  # Store uploaded screenshot URL
+        self.cancelled = False  # Track if user cancelled
         
+    def cancel(self):
+        """Cancel the scraping process"""
+        self.cancelled = True
+        print("[CANCEL] Scraping process cancelled by user")
+    
+    async def check_cancelled(self):
+        """Check if process was cancelled, raise exception if so"""
+        if self.cancelled:
+            print("[CANCEL] Process cancelled, stopping...")
+            raise Exception("Process cancelled by user")
+    
     async def send_log(self, status, action, message, details=None):
         """Send log message via WebSocket"""
         try:
@@ -41,6 +53,9 @@ class LiveScraper:
             }))
         except Exception as e:
             print(f"Error sending log: {e}")
+            # If WebSocket is dead, mark as cancelled
+            if "Connection" in str(e) or "closed" in str(e).lower():
+                self.cancelled = True
     
     async def capture_form_preview(self):
         """Capture screenshot and upload to Supabase Storage"""
@@ -119,6 +134,7 @@ class LiveScraper:
                     return {'success': False, 'error': 'Website connection failed'}
                 
                 await asyncio.sleep(2)  # Let user see the page
+                await self.check_cancelled()  # Check if user cancelled
                 
                 # Handle cookie consent
                 await self.send_log('info', 'Cookie Consent', 'Checking for cookie modals...')
@@ -126,6 +142,8 @@ class LiveScraper:
                 if cookie_handled:
                     await self.send_log('success', 'Cookie Consent', 'Cookie modal handled')
                     await asyncio.sleep(1)
+                
+                await self.check_cancelled()  # Check if user cancelled
                 
                 # Find contact page
                 await self.send_log('info', 'Contact Page', 'Searching for contact page...')
@@ -139,6 +157,8 @@ class LiveScraper:
                 else:
                     await self.send_log('warning', 'Contact Page', 'No contact page found, staying on homepage')
                 
+                await self.check_cancelled()  # Check if user cancelled
+                
                 # Find and fill form
                 await self.send_log('info', 'Form Detection', 'Looking for contact form...')
                 form_filled = await self.fill_contact_form()
@@ -147,9 +167,13 @@ class LiveScraper:
                     await self.send_log('success', 'Form Filled', 'Contact form filled successfully')
                     await asyncio.sleep(2)
                     
+                    await self.check_cancelled()  # Check if user cancelled
+                    
                     # Capture screenshot of filled form BEFORE submission
                     await self.capture_form_preview()
                     await asyncio.sleep(2)  # Give user time to see the preview
+                    
+                    await self.check_cancelled()  # Check if user cancelled before submission
                     
                     # Submit form
                     await self.send_log('info', 'Submitting', 'Submitting contact form...')
@@ -171,11 +195,29 @@ class LiveScraper:
                 return result
                 
         except Exception as e:
+            # Check if this was a user cancellation
+            if self.cancelled or "cancelled by user" in str(e).lower():
+                print(f"[CANCEL] Process cancelled by user")
+                try:
+                    await self.send_log('info', 'Cancelled', 'Process cancelled by user')
+                except:
+                    pass
+                if self.browser:
+                    try:
+                        await self.browser.close()
+                    except:
+                        pass
+                return {'success': False, 'error': 'Cancelled by user', 'cancelled': True}
+            
+            # Regular error
             error_message = 'An unexpected error occurred while processing this website'
             print(f"Technical error (hidden from user): {str(e)}")  # Log for debugging
             import traceback
             traceback.print_exc()  # Print full stack trace for debugging
-            await self.send_log('failed', 'Processing Error', error_message)
+            try:
+                await self.send_log('failed', 'Processing Error', error_message)
+            except:
+                pass
             if self.browser:
                 try:
                     await self.browser.close()
