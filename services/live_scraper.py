@@ -72,13 +72,18 @@ class LiveScraper:
                     # Continue processing - screenshot is optional
             
             # Send as special 'form_preview' type (not continuous stream)
-            self.ws.send(json.dumps({
-                'type': 'form_preview',
-                'data': {
-                    'image': f'data:image/jpeg;base64,{screenshot_base64}',
-                    'timestamp': datetime.utcnow().isoformat()
-                }
-            }))
+            try:
+                self.ws.send(json.dumps({
+                    'type': 'form_preview',
+                    'data': {
+                        'image': f'data:image/jpeg;base64,{screenshot_base64}',
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                }))
+                print(f"Form preview sent via WebSocket: {len(screenshot_base64)} bytes")
+            except Exception as ws_error:
+                print(f"Non-critical: Failed to send preview via WebSocket: {ws_error}")
+                # Continue - the screenshot is saved to Supabase anyway
             
             await self.send_log('success', 'Preview Ready', 'Form preview captured - verify fields are filled correctly')
             print(f"Form preview captured: {len(screenshot_base64)} bytes")
@@ -170,6 +175,8 @@ class LiveScraper:
         except Exception as e:
             error_message = 'An unexpected error occurred while processing this website'
             print(f"Technical error (hidden from user): {str(e)}")  # Log for debugging
+            import traceback
+            traceback.print_exc()  # Print full stack trace for debugging
             await self.send_log('failed', 'Processing Error', error_message)
             if self.browser:
                 try:
@@ -445,19 +452,20 @@ class LiveScraper:
     
     async def submit_form(self):
         """Submit the contact form and verify submission"""
-        submit_selectors = [
-            'button[type="submit"]',
-            'input[type="submit"]',
-            'button:has-text("Send")',
-            'button:has-text("Submit")',
-            'button:has-text("Contact Us")',
-            'button:has-text("Send Message")',
-            'button[class*="submit"]',
-            'button[id*="submit"]',
-            'form button:last-of-type'
-        ]
-        
-        for selector in submit_selectors:
+        try:
+            submit_selectors = [
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button:has-text("Send")',
+                'button:has-text("Submit")',
+                'button:has-text("Contact Us")',
+                'button:has-text("Send Message")',
+                'button[class*="submit"]',
+                'button[id*="submit"]',
+                'form button:last-of-type'
+            ]
+            
+            for selector in submit_selectors:
             try:
                 button = await self.page.query_selector(selector)
                 if button:
@@ -518,8 +526,16 @@ class LiveScraper:
                     await self.send_log('warning', 'Submitted', 'Form submitted but no confirmation message was detected. The message may still have been received.')
                     return True
                     
-            except Exception as e:
-                print(f"Technical error with selector {selector} (hidden from user): {e}")
-                continue
-        
-        return False
+                except Exception as e:
+                    print(f"Technical error with selector {selector} (hidden from user): {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            return False
+        except Exception as e:
+            print(f"Critical error in submit_form: {e}")
+            import traceback
+            traceback.print_exc()
+            await self.send_log('failed', 'Submit Error', f'Failed to submit form: {str(e)}')
+            return False
