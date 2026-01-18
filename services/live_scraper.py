@@ -58,15 +58,18 @@ class LiveScraper:
             )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            # Upload to Supabase Storage
+            # Upload to Supabase Storage (non-blocking, won't crash if bucket doesn't exist)
             if self.campaign_id and self.company_id:
                 try:
                     public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
                     if public_url:
                         self.screenshot_url = public_url
                         print(f"Screenshot saved to Supabase: {public_url}")
+                    else:
+                        print(f"Screenshot upload returned None - bucket might not exist yet")
                 except Exception as upload_error:
-                    print(f"Failed to upload screenshot to Supabase: {upload_error}")
+                    print(f"Non-critical: Failed to upload screenshot to Supabase: {upload_error}")
+                    # Continue processing - screenshot is optional
             
             # Send as special 'form_preview' type (not continuous stream)
             self.ws.send(json.dumps({
