@@ -43,50 +43,48 @@ class LiveScraper:
             print(f"Error sending log: {e}")
     
     async def capture_form_preview(self):
-        """Capture ONE full-width screenshot of filled form before submission"""
+        """Capture screenshot and upload to Supabase Storage"""
         if not self.page:
             return
             
         try:
             await self.send_log('info', 'Capturing', 'Taking screenshot of filled form...')
             
-            # Full viewport screenshot - NO CROPPING
+            # Full viewport screenshot
             screenshot = await self.page.screenshot(
                 type='jpeg',
-                quality=85,  # High quality for verification
-                full_page=False  # Just viewport, not entire scrollable page
+                quality=85,
+                full_page=False
             )
-            screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            # Upload to Supabase Storage (non-blocking, won't crash if bucket doesn't exist)
+            # Upload to Supabase Storage (REQUIRED)
             if self.campaign_id and self.company_id:
                 try:
                     public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
                     if public_url:
                         self.screenshot_url = public_url
-                        print(f"Screenshot saved to Supabase: {public_url}")
+                        print(f"[OK] Screenshot uploaded to Supabase: {public_url}")
+                        
+                        # Send only the URL to frontend (not the huge base64 image)
+                        self.ws.send(json.dumps({
+                            'type': 'screenshot_ready',
+                            'data': {
+                                'url': public_url,
+                                'timestamp': datetime.utcnow().isoformat()
+                            }
+                        }))
+                        await self.send_log('success', 'Preview Ready', f'Screenshot saved - view at: {public_url}')
                     else:
-                        print(f"Screenshot upload returned None - bucket might not exist yet")
+                        print(f"[WARN] Screenshot upload returned None")
+                        await self.send_log('warning', 'Preview Failed', 'Could not save screenshot')
                 except Exception as upload_error:
-                    print(f"Non-critical: Failed to upload screenshot to Supabase: {upload_error}")
-                    # Continue processing - screenshot is optional
-            
-            # Send as special 'form_preview' type (not continuous stream)
-            try:
-                self.ws.send(json.dumps({
-                    'type': 'form_preview',
-                    'data': {
-                        'image': f'data:image/jpeg;base64,{screenshot_base64}',
-                        'timestamp': datetime.utcnow().isoformat()
-                    }
-                }))
-                print(f"Form preview sent via WebSocket: {len(screenshot_base64)} bytes")
-            except Exception as ws_error:
-                print(f"Non-critical: Failed to send preview via WebSocket: {ws_error}")
-                # Continue - the screenshot is saved to Supabase anyway
-            
-            await self.send_log('success', 'Preview Ready', 'Form preview captured - verify fields are filled correctly')
-            print(f"Form preview captured: {len(screenshot_base64)} bytes")
+                    print(f"[ERROR] Failed to upload screenshot: {upload_error}")
+                    import traceback
+                    traceback.print_exc()
+                    await self.send_log('warning', 'Preview Failed', 'Could not save screenshot to storage')
+            else:
+                print(f"[WARN] Missing campaign_id or company_id for screenshot upload")
+                await self.send_log('warning', 'Preview Skipped', 'Missing IDs for screenshot')
         except Exception as e:
             print(f"Error capturing form preview: {e}")
             await self.send_log('warning', 'Preview Failed', 'Could not capture form preview')
