@@ -18,7 +18,6 @@ class LiveScraper:
     def __init__(self, websocket, company_data, message_template, campaign_id=None, company_id=None):
         self.ws = websocket
         self.company = company_data
-        self.message_template = message_template
         self.campaign_id = campaign_id
         self.company_id = company_id
         self.browser = None
@@ -26,6 +25,28 @@ class LiveScraper:
         self.streaming = True
         self.screenshot_url = None  # Store uploaded screenshot URL
         self.cancelled = False  # Track if user cancelled
+        
+        # Parse message_template (can be JSON with form data or plain text)
+        try:
+            form_data = json.loads(message_template)
+            self.form_data = {
+                'sender_name': form_data.get('sender_name', 'Sender'),
+                'sender_email': form_data.get('sender_email', 'sender@example.com'),
+                'sender_phone': form_data.get('sender_phone', '+1 555-0000'),
+                'sender_address': form_data.get('sender_address', ''),
+                'subject': form_data.get('subject', 'Inquiry'),
+                'message': form_data.get('message', 'Hello, I would like to connect.')
+            }
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to plain text message
+            self.form_data = {
+                'sender_name': 'Sender',
+                'sender_email': 'sender@example.com',
+                'sender_phone': '+1 555-0000',
+                'sender_address': '',
+                'subject': 'Inquiry',
+                'message': message_template or 'Hello, I would like to connect.'
+            }
         
     def cancel(self):
         """Cancel the scraping process"""
@@ -286,36 +307,44 @@ class LiveScraper:
         try:
             await self.send_log('info', 'Form Scanning', 'Analyzing page for all possible form fields...')
             
-            # Comprehensive fill data with variations
+            # Comprehensive fill data with variations from user-provided form data
+            sender_name_parts = self.form_data['sender_name'].split(' ', 1)
+            first_name = sender_name_parts[0] if sender_name_parts else 'Sender'
+            last_name = sender_name_parts[1] if len(sender_name_parts) > 1 else ''
+            
             fill_data = {
-                'first_name': self.company.get('company_name', 'John').split()[0],
-                'last_name': 'Doe',
-                'full_name': self.company.get('company_name', 'John Doe'),
-                'email': self.company.get('contact_email', 'contact@business.com'),
-                'phone': self.company.get('phone', '+1 555-123-4567'),
-                'mobile': '+1 555-123-4567',
+                'first_name': first_name,
+                'last_name': last_name,
+                'full_name': self.form_data['sender_name'],
+                'email': self.form_data['sender_email'],
+                'phone': self.form_data['sender_phone'],
+                'mobile': self.form_data['sender_phone'],
                 'company': self.company.get('company_name', 'Business Inc'),
                 'organization': self.company.get('company_name', 'Business Inc'),
                 'website': self.company.get('website_url', 'https://business.com'),
-                'address': '123 Business Street',
-                'city': 'New York',
+                'address': self.form_data['sender_address'] or '123 Business Street',
+                'city': self.form_data['sender_address'].split(',')[1].strip() if ',' in self.form_data['sender_address'] else 'New York',
                 'state': 'NY',
                 'zip': '10001',
                 'country': 'United States',
-                'subject': 'Business Partnership Inquiry',
-                'topic': 'Partnership Opportunity',
-                'message': self.message_template,
-                'comment': self.message_template,
-                'description': 'Interested in your services',
+                'subject': self.form_data['subject'],
+                'topic': self.form_data['subject'],
+                'message': self.form_data['message'],
+                'comment': self.form_data['message'],
+                'description': self.form_data['message'],
                 'budget': '10000',
                 'company_size': '50-100',
                 'industry': 'Technology'
             }
             
-            # Personalize message
+            # Personalize message with company data (replace {company_name}, etc.)
             for key, value in self.company.items():
-                if value and key in fill_data['message']:
+                if value and isinstance(fill_data['message'], str) and f'{{{key}}}' in fill_data['message']:
                     fill_data['message'] = fill_data['message'].replace(f'{{{key}}}', str(value))
+                if value and isinstance(fill_data['comment'], str) and f'{{{key}}}' in fill_data['comment']:
+                    fill_data['comment'] = fill_data['comment'].replace(f'{{{key}}}', str(value))
+                if value and isinstance(fill_data['description'], str) and f'{{{key}}}' in fill_data['description']:
+                    fill_data['description'] = fill_data['description'].replace(f'{{{key}}}', str(value))
             
             filled_fields = 0
             await asyncio.sleep(0.5)
