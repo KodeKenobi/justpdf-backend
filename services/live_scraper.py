@@ -92,15 +92,16 @@ class LiveScraper:
                 self.page = await context.new_page()
                 
                 # Start streaming task
-                streaming_task = asyncio.create_task(self.start_streaming_loop())
+                # DISABLED: Screenshots crash WebSocket due to large payload size
+                # streaming_task = asyncio.create_task(self.start_streaming_loop())
                 
                 # Navigate to website
                 website_url = self.company['website_url']
-                await self.send_log('info', 'Navigating', f'Visiting {website_url}')
+                await self.send_log('info', 'Navigating', f'Visiting {website_url}', {'url': website_url})
                 
                 try:
                     await self.page.goto(website_url, wait_until='networkidle', timeout=30000)
-                    await self.send_log('success', 'Loaded', f'Successfully loaded homepage')
+                    await self.send_log('success', 'Loaded', f'Successfully loaded homepage', {'url': self.page.url})
                 except Exception as e:
                     await self.send_log('failed', 'Connection Error', 'Unable to connect to website. The site may be down or blocking automated access.')
                     return {'success': False, 'error': 'Website connection failed'}
@@ -119,8 +120,9 @@ class LiveScraper:
                 contact_url = await self.find_contact_page()
                 
                 if contact_url:
-                    await self.send_log('success', 'Contact Page', f'Found contact page: {contact_url}')
+                    await self.send_log('success', 'Contact Page', f'Found contact page: {contact_url}', {'url': contact_url})
                     await self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
+                    await self.send_log('info', 'Loaded', f'Contact page loaded', {'url': self.page.url})
                     await asyncio.sleep(2)
                 else:
                     await self.send_log('warning', 'Contact Page', 'No contact page found, staying on homepage')
@@ -150,8 +152,9 @@ class LiveScraper:
                 await asyncio.sleep(3)  # Let user see final result
                 
                 # Stop streaming
-                self.streaming = False
-                await streaming_task
+                # DISABLED: Screenshot streaming disabled to prevent WebSocket crashes
+                # self.streaming = False
+                # await streaming_task
                 
                 await self.browser.close()
                 return result
@@ -397,7 +400,7 @@ class LiveScraper:
                     
                     # Check if URL changed (redirect to thank you page)
                     if self.page.url != current_url:
-                        await self.send_log('success', 'Verified', f'URL changed to {self.page.url}')
+                        await self.send_log('success', 'Verified', f'URL changed to {self.page.url}', {'url': self.page.url})
                         return True
                     
                     # If we got here, submission probably worked but no clear confirmation
