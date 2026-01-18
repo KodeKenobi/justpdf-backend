@@ -657,33 +657,69 @@ class LiveScraper:
                     
                     # ENQUIRY TYPE / TOPIC detection
                     elif any(x in all_attrs for x in ['enquiry', 'inquiry', 'type', 'topic', 'reason', 'subject', 'category']):
-                        # First, try to match the user's actual subject text
-                        user_subject = fill_data['subject'].lower()
+                        user_subject = fill_data['subject'].lower().strip()
                         selected = False
                         
-                        # Try exact or partial match with user's subject
-                        for option in options:
-                            text = (await option.text_content() or '').lower()
-                            if user_subject in text or text in user_subject:
-                                await select.select_option(option)
-                                await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
+                        # Check if user provided a custom subject (not default)
+                        has_custom_subject = user_subject and user_subject not in ['inquiry', 'enquiry', '']
+                        
+                        if has_custom_subject:
+                            # User typed a specific subject - try to match it exactly
+                            # Split into words for better matching
+                            user_words = set(user_subject.split())
+                            
+                            best_match = None
+                            best_match_score = 0
+                            
+                            for option in options:
+                                text = (await option.text_content() or '').lower().strip()
+                                if not text or text == 'select' or text.startswith('--'):
+                                    continue
+                                
+                                option_words = set(text.split())
+                                # Count how many words match
+                                match_score = len(user_words.intersection(option_words))
+                                
+                                # Exact match is best
+                                if user_subject == text:
+                                    best_match = option
+                                    best_match_score = 1000
+                                    break
+                                elif match_score > best_match_score:
+                                    best_match = option
+                                    best_match_score = match_score
+                            
+                            # If we found a good match (at least one word matches), use it
+                            if best_match and best_match_score > 0:
+                                await select.select_option(best_match)
+                                matched_text = await best_match.text_content()
+                                await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {matched_text}')
                                 filled_fields += 1
                                 selected = True
-                                break
                         
-                        # If no match, try business-related keywords
+                        # If user didn't provide custom subject OR no match found, use smart fallback
                         if not selected:
-                            for option in options:
-                                text = (await option.text_content() or '').lower()
-                                if any(x in text for x in ['business', 'sales', 'partnership', 'general', 'other', 'inquiry']):
-                                    await select.select_option(option)
-                                    await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
-                                    filled_fields += 1
-                                    selected = True
-                                    break
-                        if not selected:
-                            await select.select_option(index=1)
-                            filled_fields += 1
+                            # Only use generic keywords if user didn't specify custom subject
+                            if not has_custom_subject:
+                                for option in options:
+                                    text = (await option.text_content() or '').lower()
+                                    if any(x in text for x in ['general', 'other', 'sales', 'business']):
+                                        await select.select_option(option)
+                                        await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
+                                        filled_fields += 1
+                                        selected = True
+                                        break
+                            
+                            # Last resort: select first non-placeholder option
+                            if not selected:
+                                for i, opt in enumerate(options):
+                                    text = (await opt.text_content() or '').strip()
+                                    if text and i > 0 and text.lower() not in ['select', '--', 'please select']:
+                                        await select.select_option(index=i)
+                                        await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
+                                        filled_fields += 1
+                                        selected = True
+                                        break
                     
                     # INDUSTRY selection
                     elif any(x in all_attrs for x in ['industry', 'sector', 'business_type']):
