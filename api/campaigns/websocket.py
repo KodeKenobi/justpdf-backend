@@ -99,6 +99,10 @@ def register_websocket_routes(sock):
             
             db.session.commit()
             
+            # Wait 5 seconds before closing so frontend can display results
+            import time
+            time.sleep(5)
+            
         except Exception as e:
             print(f"[WebSocket Error] {e}")
             import traceback
