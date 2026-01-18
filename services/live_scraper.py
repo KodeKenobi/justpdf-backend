@@ -226,109 +226,212 @@ class LiveScraper:
         return None
     
     async def fill_contact_form(self):
-        """Fill contact form with message - comprehensive field detection"""
+        """COMPREHENSIVE form filling - handles ALL possible field types"""
         try:
-            # Comprehensive name field selectors
-            name_selectors = [
-                'input[name*="name" i]',
-                'input[id*="name" i]',
-                'input[placeholder*="name" i]',
-                'input[aria-label*="name" i]',
-                'input[type="text"]'
-            ]
+            await self.send_log('info', 'Form Scanning', 'Detecting all form fields...')
             
-            # Comprehensive email field selectors
-            email_selectors = [
-                'input[type="email"]',
-                'input[name*="email" i]',
-                'input[id*="email" i]',
-                'input[placeholder*="email" i]',
-                'input[aria-label*="email" i]'
-            ]
+            # Get all form elements on the page
+            forms = await self.page.query_selector_all('form')
+            if not forms:
+                await self.send_log('warning', 'No Forms', 'No form elements found, scanning entire page...')
             
-            # Comprehensive message field selectors
-            message_selectors = [
-                'textarea[name*="message" i]',
-                'textarea[id*="message" i]',
-                'textarea[placeholder*="message" i]',
-                'textarea[aria-label*="message" i]',
-                'textarea[name*="comment" i]',
-                'textarea[id*="comment" i]',
-                'textarea',  # Any textarea as fallback
-                'input[name*="message" i]',
-                'input[id*="message" i]'
-            ]
+            # Data to fill
+            fill_data = {
+                'name': self.company.get('company_name', 'Business Development'),
+                'email': self.company.get('contact_email', 'contact@business.com'),
+                'phone': '+1 (555) 123-4567',
+                'company': self.company.get('company_name', 'Business Development'),
+                'website': self.company.get('website_url', 'https://business.com'),
+                'subject': 'Business Inquiry',
+                'message': self.message_template
+            }
             
-            # Find fields
-            name_field = None
-            email_field = None
-            message_field = None
+            # Personalize message
+            for key, value in self.company.items():
+                if value and key in fill_data['message']:
+                    fill_data['message'] = fill_data['message'].replace(f'{{{key}}}', str(value))
             
-            for selector in name_selectors:
+            filled_fields = 0
+            
+            # === 1. TEXT INPUTS ===
+            text_inputs = await self.page.query_selector_all('input[type="text"], input:not([type])')
+            for inp in text_inputs:
                 try:
-                    field = await self.page.query_selector(selector)
-                    if field and await field.is_visible():
-                        name_field = field
-                        break
-                except:
+                    if not await inp.is_visible():
+                        continue
+                    
+                    name_attr = (await inp.get_attribute('name') or '').lower()
+                    id_attr = (await inp.get_attribute('id') or '').lower()
+                    placeholder = (await inp.get_attribute('placeholder') or '').lower()
+                    aria_label = (await inp.get_attribute('aria-label') or '').lower()
+                    
+                    all_attrs = f"{name_attr} {id_attr} {placeholder} {aria_label}"
+                    
+                    # Determine what to fill based on attributes
+                    if any(x in all_attrs for x in ['name', 'full', 'fname', 'first', 'contact']):
+                        await inp.click()
+                        await inp.fill(fill_data['name'])
+                        await self.send_log('success', 'Field Filled', f'Name: {fill_data["name"]}')
+                        filled_fields += 1
+                    elif any(x in all_attrs for x in ['subject', 'title', 'topic', 'regarding']):
+                        await inp.click()
+                        await inp.fill(fill_data['subject'])
+                        await self.send_log('success', 'Field Filled', f'Subject: {fill_data["subject"]}')
+                        filled_fields += 1
+                    elif any(x in all_attrs for x in ['company', 'organization', 'business']):
+                        await inp.click()
+                        await inp.fill(fill_data['company'])
+                        await self.send_log('success', 'Field Filled', f'Company: {fill_data["company"]}')
+                        filled_fields += 1
+                    elif any(x in all_attrs for x in ['website', 'url', 'site']):
+                        await inp.click()
+                        await inp.fill(fill_data['website'])
+                        await self.send_log('success', 'Field Filled', f'Website: {fill_data["website"]}')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling text input: {e}")
                     continue
             
-            for selector in email_selectors:
+            # === 2. EMAIL INPUTS ===
+            email_inputs = await self.page.query_selector_all('input[type="email"]')
+            for inp in email_inputs:
                 try:
-                    field = await self.page.query_selector(selector)
-                    if field and await field.is_visible():
-                        email_field = field
-                        break
-                except:
+                    if await inp.is_visible():
+                        await inp.click()
+                        await inp.fill(fill_data['email'])
+                        await self.send_log('success', 'Field Filled', f'Email: {fill_data["email"]}')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling email: {e}")
                     continue
             
-            for selector in message_selectors:
+            # === 3. PHONE INPUTS ===
+            phone_inputs = await self.page.query_selector_all('input[type="tel"], input[name*="phone" i], input[id*="phone" i]')
+            for inp in phone_inputs:
                 try:
-                    field = await self.page.query_selector(selector)
-                    if field and await field.is_visible():
-                        message_field = field
-                        break
-                except:
+                    if await inp.is_visible():
+                        await inp.click()
+                        await inp.fill(fill_data['phone'])
+                        await self.send_log('success', 'Field Filled', f'Phone: {fill_data["phone"]}')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling phone: {e}")
                     continue
             
-            # Message field is required
-            if not message_field:
-                await self.send_log('failed', 'No Form Found', 'This website does not have a standard message field on this page.')
+            # === 4. TEXTAREAS (Message) ===
+            textareas = await self.page.query_selector_all('textarea')
+            for textarea in textareas:
+                try:
+                    if await textarea.is_visible():
+                        await textarea.click()
+                        await textarea.fill(fill_data['message'])
+                        await self.send_log('success', 'Field Filled', f'Message ({len(fill_data["message"])} chars)')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling textarea: {e}")
+                    continue
+            
+            # === 5. SELECT DROPDOWNS ===
+            selects = await self.page.query_selector_all('select')
+            for select in selects:
+                try:
+                    if await select.is_visible():
+                        options = await select.query_selector_all('option')
+                        if len(options) > 1:
+                            # Select the second option (first is usually placeholder)
+                            await select.select_option(index=1)
+                            option_text = await options[1].text_content()
+                            await self.send_log('success', 'Field Filled', f'Dropdown: {option_text}')
+                            filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling select: {e}")
+                    continue
+            
+            # === 6. CHECKBOXES ===
+            checkboxes = await self.page.query_selector_all('input[type="checkbox"]')
+            for checkbox in checkboxes:
+                try:
+                    if await checkbox.is_visible():
+                        name_attr = (await checkbox.get_attribute('name') or '').lower()
+                        id_attr = (await checkbox.get_attribute('id') or '').lower()
+                        
+                        # Check required/consent checkboxes
+                        if any(x in f"{name_attr} {id_attr}" for x in ['agree', 'accept', 'terms', 'consent', 'privacy', 'gdpr']):
+                            if not await checkbox.is_checked():
+                                await checkbox.check()
+                                await self.send_log('success', 'Field Filled', f'Checkbox: {name_attr or id_attr}')
+                                filled_fields += 1
+                except Exception as e:
+                    print(f"Error checking checkbox: {e}")
+                    continue
+            
+            # === 7. RADIO BUTTONS ===
+            radios = await self.page.query_selector_all('input[type="radio"]')
+            radio_groups = {}
+            for radio in radios:
+                try:
+                    if await radio.is_visible():
+                        name = await radio.get_attribute('name')
+                        if name and name not in radio_groups:
+                            # Select first radio in each group
+                            await radio.check()
+                            radio_groups[name] = True
+                            await self.send_log('success', 'Field Filled', f'Radio: {name}')
+                            filled_fields += 1
+                except Exception as e:
+                    print(f"Error checking radio: {e}")
+                    continue
+            
+            # === 8. DATE INPUTS ===
+            date_inputs = await self.page.query_selector_all('input[type="date"]')
+            for inp in date_inputs:
+                try:
+                    if await inp.is_visible():
+                        from datetime import datetime, timedelta
+                        future_date = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d')
+                        await inp.fill(future_date)
+                        await self.send_log('success', 'Field Filled', f'Date: {future_date}')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling date: {e}")
+                    continue
+            
+            # === 9. TIME INPUTS ===
+            time_inputs = await self.page.query_selector_all('input[type="time"]')
+            for inp in time_inputs:
+                try:
+                    if await inp.is_visible():
+                        await inp.fill('10:00')
+                        await self.send_log('success', 'Field Filled', 'Time: 10:00')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling time: {e}")
+                    continue
+            
+            # === 10. NUMBER INPUTS ===
+            number_inputs = await self.page.query_selector_all('input[type="number"]')
+            for inp in number_inputs:
+                try:
+                    if await inp.is_visible():
+                        await inp.fill('1')
+                        await self.send_log('success', 'Field Filled', 'Number: 1')
+                        filled_fields += 1
+                except Exception as e:
+                    print(f"Error filling number: {e}")
+                    continue
+            
+            await asyncio.sleep(1)
+            
+            if filled_fields == 0:
+                await self.send_log('failed', 'No Fields Filled', 'Could not find or fill any form fields')
                 return False
             
-            # Fill name field
-            if name_field:
-                await name_field.click()  # Focus first
-                await name_field.fill(self.company.get('company_name', 'Business Development'))
-                await self.send_log('info', 'Field Filled', 'Name field filled')
-            
-            # Fill email field (required for most forms)
-            if email_field:
-                await email_field.click()
-                await email_field.fill(self.company.get('contact_email', 'contact@business.com'))
-                await self.send_log('info', 'Field Filled', 'Email field filled')
-            else:
-                await self.send_log('warning', 'Missing Field', 'No email field found')
-            
-            # Fill message field
-            if message_field:
-                await message_field.click()
-                
-                # Personalize message
-                message = self.message_template
-                for key, value in self.company.items():
-                    if value:
-                        message = message.replace(f'{{{key}}}', str(value))
-                
-                await message_field.fill(message)
-                await self.send_log('success', 'Field Filled', 'Message field filled')
-            
-            await asyncio.sleep(1)  # Let any validation run
+            await self.send_log('success', 'Form Complete', f'Successfully filled {filled_fields} fields')
             return True
             
         except Exception as e:
-            await self.send_log('failed', 'Form Error', 'Unable to fill out the contact form. The form structure may be non-standard.')
-            print(f"Technical error filling form (hidden from user): {e}")
+            await self.send_log('failed', 'Form Error', 'Unable to fill out the contact form.')
+            print(f"Technical error filling form: {e}")
             return False
     
     async def submit_form(self):
