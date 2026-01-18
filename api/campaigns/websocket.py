@@ -92,13 +92,22 @@ def register_websocket_routes(sock):
             db.session.commit()
             
         except Exception as e:
-            print(f"Technical WebSocket error (hidden from user): {e}")
+            print(f"[WebSocket Error] {e}")
             import traceback
-            traceback.print_exc()  # Log for debugging
+            traceback.print_exc()
+            
+            # Send detailed error to frontend for debugging
+            error_message = str(e)
+            error_type = type(e).__name__
+            
             try:
                 ws.send(json.dumps({
                     'type': 'error',
-                    'data': {'message': 'Unable to process this request. Please try again or contact support.'}
+                    'data': {
+                        'message': f'{error_type}: {error_message}',
+                        'error_type': error_type,
+                        'details': error_message
+                    }
                 }))
             except:
                 pass
