@@ -7,7 +7,7 @@ from datetime import datetime
 
 # Supabase credentials
 SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://pqdxqvxyrahvongbhtdb.supabase.co')
-SUPABASE_KEY = os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxZHhxdnh5cmFodm9uZ2JodGRiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMTk0NzE5MiwiZXhwIjoyMDQ3NTIzMTkyfQ.5WnRaHqAl0EcNzwMuY_dFYMaW5F8xfv6bj31gPGdgLs')
+SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxZHhxdnh5cmFodm9uZ2JodGRiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMTk0NzE5MiwiZXhwIjoyMDQ3NTIzMTkyfQ.5WnRaHqAl0EcNzwMuY_dFYMaW5F8xfv6bj31gPGdgLs')
 
 # Initialize Supabase client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -39,9 +39,9 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
             filename,
             screenshot_bytes,
             {
-                'content-type': 'image/jpeg',
-                'cache-control': '3600',
-                'upsert': 'true'  # Overwrite if exists
+                'content_type': 'image/jpeg',  # underscore, not hyphen
+                'cache_control': '3600',       # underscore, not hyphen
+                'upsert': True  # boolean True, not string 'true'
             }
         )
         
