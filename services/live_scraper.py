@@ -36,21 +36,22 @@ class LiveScraper:
             print(f"Error sending log: {e}")
     
     async def stream_screenshot(self):
-        """Capture and stream screenshot (full width, optimized quality)"""
+        """Capture and stream screenshot (TINY size to prevent WebSocket crashes)"""
         if not self.page or not self.streaming:
             return
             
         try:
-            # Full viewport screenshot with optimized JPEG compression
+            # Ultra-low quality screenshot to keep size minimal
             screenshot = await self.page.screenshot(
                 type='jpeg',
-                quality=60,  # Balanced quality (good enough to see content)
-                full_page=False  # Just the viewport, not full scrollable page
+                quality=15,  # Very low quality but visible (was 60)
+                full_page=False,
+                clip={'x': 0, 'y': 0, 'width': 960, 'height': 540}  # Half HD resolution
             )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
             
-            # Only send if data is reasonable size (< 300KB base64)
-            if len(screenshot_base64) < 300000:
+            # Only send if data is reasonable size (< 50KB base64 = ~37KB raw)
+            if len(screenshot_base64) < 50000:
                 self.ws.send(json.dumps({
                     'type': 'screenshot',
                     'data': {
@@ -91,9 +92,8 @@ class LiveScraper:
                 
                 self.page = await context.new_page()
                 
-                # Start streaming task
-                # DISABLED: Screenshots crash WebSocket due to large payload size
-                # streaming_task = asyncio.create_task(self.start_streaming_loop())
+                # Start streaming task (ultra-low quality to prevent crashes)
+                streaming_task = asyncio.create_task(self.start_streaming_loop())
                 
                 # Navigate to website
                 website_url = self.company['website_url']
@@ -152,9 +152,8 @@ class LiveScraper:
                 await asyncio.sleep(3)  # Let user see final result
                 
                 # Stop streaming
-                # DISABLED: Screenshot streaming disabled to prevent WebSocket crashes
-                # self.streaming = False
-                # await streaming_task
+                self.streaming = False
+                await streaming_task
                 
                 await self.browser.close()
                 return result
