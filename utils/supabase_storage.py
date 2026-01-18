@@ -35,13 +35,14 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
         print(f"[INFO] Attempting to upload screenshot: {filename} ({len(screenshot_bytes)} bytes)")
         
         # Upload to Supabase Storage
+        # Python SDK uses hyphens and string values
         response = supabase.storage.from_(SCREENSHOT_BUCKET).upload(
             filename,
             screenshot_bytes,
-            {
-                'content_type': 'image/jpeg',  # underscore, not hyphen
-                'cache_control': '3600',       # underscore, not hyphen
-                'upsert': True  # boolean True, not string 'true'
+            file_options={
+                'content-type': 'image/jpeg',
+                'cache-control': '3600',
+                'upsert': 'true'
             }
         )
         
