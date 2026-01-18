@@ -32,6 +32,8 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         filename = f"campaign_{campaign_id}/company_{company_id}_{timestamp}.jpg"
         
+        print(f"[INFO] Attempting to upload screenshot: {filename} ({len(screenshot_bytes)} bytes)")
+        
         # Upload to Supabase Storage
         response = supabase.storage.from_(SCREENSHOT_BUCKET).upload(
             filename,
@@ -43,14 +45,19 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
             }
         )
         
+        print(f"[DEBUG] Upload response: {response}")
+        
         # Get public URL
         public_url = supabase.storage.from_(SCREENSHOT_BUCKET).get_public_url(filename)
         
         print(f"[OK] Screenshot uploaded to Supabase: {filename}")
+        print(f"[OK] Public URL: {public_url}")
         return public_url
         
     except Exception as e:
         print(f"[ERROR] Failed to upload screenshot to Supabase: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def delete_screenshot(screenshot_url: str) -> bool:
