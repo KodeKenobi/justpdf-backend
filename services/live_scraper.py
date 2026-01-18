@@ -657,16 +657,30 @@ class LiveScraper:
                     
                     # ENQUIRY TYPE / TOPIC detection
                     elif any(x in all_attrs for x in ['enquiry', 'inquiry', 'type', 'topic', 'reason', 'subject', 'category']):
-                        # Try to select business-related option
+                        # First, try to match the user's actual subject text
+                        user_subject = fill_data['subject'].lower()
                         selected = False
+                        
+                        # Try exact or partial match with user's subject
                         for option in options:
                             text = (await option.text_content() or '').lower()
-                            if any(x in text for x in ['business', 'sales', 'partnership', 'general', 'other']):
+                            if user_subject in text or text in user_subject:
                                 await select.select_option(option)
                                 await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
                                 filled_fields += 1
                                 selected = True
                                 break
+                        
+                        # If no match, try business-related keywords
+                        if not selected:
+                            for option in options:
+                                text = (await option.text_content() or '').lower()
+                                if any(x in text for x in ['business', 'sales', 'partnership', 'general', 'other', 'inquiry']):
+                                    await select.select_option(option)
+                                    await self.send_log('success', 'Field Filled', f'✓ Inquiry Type: {text}')
+                                    filled_fields += 1
+                                    selected = True
+                                    break
                         if not selected:
                             await select.select_option(index=1)
                             filled_fields += 1
