@@ -99,6 +99,23 @@ def register_websocket_routes(sock):
             
             db.session.commit()
             
+            # Update campaign statistics and status
+            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+            campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
+            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
+            
+            # Check if all companies are processed
+            total_companies = campaign.total_companies
+            if campaign.processed_count >= total_companies:
+                # All companies processed, mark campaign as completed
+                campaign.status = 'completed'
+                from datetime import datetime
+                campaign.completed_at = datetime.utcnow()
+                print(f"[Campaign {campaign_id}] All {total_companies} companies processed. Marking campaign as completed.")
+            
+            db.session.commit()
+            
             # Wait 5 seconds before closing so frontend can display results
             import time
             time.sleep(5)
