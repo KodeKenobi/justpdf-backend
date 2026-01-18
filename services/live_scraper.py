@@ -7,17 +7,24 @@ import base64
 from playwright.async_api import async_playwright
 from datetime import datetime
 import json
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.supabase_storage import upload_screenshot
 
 class LiveScraper:
     """Scrapes websites with live video streaming to frontend"""
     
-    def __init__(self, websocket, company_data, message_template):
+    def __init__(self, websocket, company_data, message_template, campaign_id=None, company_id=None):
         self.ws = websocket
         self.company = company_data
         self.message_template = message_template
+        self.campaign_id = campaign_id
+        self.company_id = company_id
         self.browser = None
         self.page = None
         self.streaming = True
+        self.screenshot_url = None  # Store uploaded screenshot URL
         
     async def send_log(self, status, action, message, details=None):
         """Send log message via WebSocket"""
@@ -50,6 +57,16 @@ class LiveScraper:
                 full_page=False  # Just viewport, not entire scrollable page
             )
             screenshot_base64 = base64.b64encode(screenshot).decode('utf-8')
+            
+            # Upload to Supabase Storage
+            if self.campaign_id and self.company_id:
+                try:
+                    public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
+                    if public_url:
+                        self.screenshot_url = public_url
+                        print(f"Screenshot saved to Supabase: {public_url}")
+                except Exception as upload_error:
+                    print(f"Failed to upload screenshot to Supabase: {upload_error}")
             
             # Send as special 'form_preview' type (not continuous stream)
             self.ws.send(json.dumps({
@@ -134,13 +151,13 @@ class LiveScraper:
                     
                     if submitted:
                         await self.send_log('success', 'Completed', 'Message sent successfully!')
-                        result = {'success': True}
+                        result = {'success': True, 'screenshot_url': self.screenshot_url}
                     else:
                         await self.send_log('failed', 'Unable to Submit', 'Could not submit the contact form. The website may have protection measures in place.')
-                        result = {'success': False, 'error': 'Unable to submit form'}
+                        result = {'success': False, 'error': 'Unable to submit form', 'screenshot_url': self.screenshot_url}
                 else:
                     await self.send_log('failed', 'No Contact Form', 'This website does not have a standard contact form or it could not be detected.')
-                    result = {'success': False, 'error': 'Contact form not found'}
+                    result = {'success': False, 'error': 'Contact form not found', 'screenshot_url': self.screenshot_url}
                 
                 await asyncio.sleep(3)  # Let user see final result
                 

@@ -60,7 +60,7 @@ def register_websocket_routes(sock):
             
             # Run the scraper with live streaming
             from services.live_scraper import LiveScraper
-            scraper = LiveScraper(ws, company_data, campaign.message_template)
+            scraper = LiveScraper(ws, company_data, campaign.message_template, campaign_id, company_id)
             
             # Run async scraper in sync context
             import nest_asyncio
@@ -84,6 +84,10 @@ def register_websocket_routes(sock):
             else:
                 company.status = 'failed'
                 company.error_message = result.get('error')
+            
+            # Save screenshot URL if available
+            if result.get('screenshot_url'):
+                company.screenshot_url = result.get('screenshot_url')
             
             db.session.commit()
             
