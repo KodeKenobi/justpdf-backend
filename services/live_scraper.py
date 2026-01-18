@@ -936,17 +936,20 @@ class LiveScraper:
                         # Record current URL before submission
                         current_url = self.page.url
                         
-                        # Click submit and wait for navigation or network idle
+                        # IMPORTANT: Click submit button ONLY ONCE
+                        # Try waiting for navigation (if form redirects)
+                        navigation_occurred = False
                         try:
-                            # Try waiting for navigation (if form redirects)
                             async with self.page.expect_navigation(timeout=5000, wait_until='networkidle'):
                                 await button.click()
+                            navigation_occurred = True
                             await self.send_log('success', 'Navigation', 'Form submitted - page redirected')
-                            return True
                         except:
-                            # If no navigation, just click and wait for network
-                            await button.click()
-                            await self.page.wait_for_load_state('networkidle', timeout=5000)
+                            # No navigation, but button was clicked - wait for network to settle
+                            try:
+                                await self.page.wait_for_load_state('networkidle', timeout=5000)
+                            except:
+                                pass  # Network might not idle, that's ok
                         
                         # Wait a bit for any success messages to appear
                         await asyncio.sleep(2)
@@ -981,7 +984,7 @@ class LiveScraper:
                         
                         # If we got here, submission probably worked but no clear confirmation
                         await self.send_log('warning', 'Submitted', 'Form submitted but no confirmation message was detected. The message may still have been received.')
-                        return True
+                        return True  # Return immediately after ONE submit attempt
                         
                 except Exception as e:
                     print(f"Technical error with selector {selector} (hidden from user): {e}")
