@@ -109,7 +109,7 @@ class LiveScraper:
                                 'timestamp': datetime.utcnow().isoformat()
                             }
                         }))
-                        await self.send_log('success', 'Preview Ready', f'Screenshot saved - view at: {public_url}')
+                        await self.send_log('success', 'Preview Ready', f'Screenshot saved successfully')
                     else:
                         print("Screenshot could not be saved")
                         await self.send_log('warning', 'Preview Failed', 'Could not save screenshot')

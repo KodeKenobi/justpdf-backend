@@ -1,9 +1,28 @@
 from flask import Blueprint, request, jsonify
-from sqlalchemy import desc, or_
+from sqlalchemy import desc, or_, func
 from datetime import datetime
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
 # Create Blueprint - All endpoints are public, no authentication required
 campaigns_api = Blueprint('campaigns_api', __name__, url_prefix='/api/campaigns')
+
+# Campaign company limits by subscription tier
+CAMPAIGN_LIMITS = {
+    'guest': 5,        # Anonymous users
+    'free': 50,        # Signed up free users
+    'testing': 50,     # Testing tier (same as free)
+    'premium': 100,    # Production ($9/mo)
+    'enterprise': -1,  # Unlimited ($19/mo)
+    'client': -1,      # Unlimited (client tier)
+}
+
+def get_campaign_limit(user_tier=None):
+    """Get campaign company limit for a given user tier"""
+    if not user_tier or user_tier not in CAMPAIGN_LIMITS:
+        return CAMPAIGN_LIMITS['guest']
+    
+    limit = CAMPAIGN_LIMITS[user_tier]
+    return float('inf') if limit == -1 else limit
 
 @campaigns_api.before_request
 def handle_options():
@@ -102,11 +121,15 @@ const detector = new CompanyDetector();
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('', methods=['POST'])
+@jwt_required(optional=True)
 def create_campaign():
-    """Create a new campaign (public endpoint - no auth required)"""
+    """Create a new campaign (supports both authenticated and guest users)"""
     try:
         from models import Campaign, Company
         from database import db
+        
+        # Get user ID if authenticated, otherwise None for guest
+        current_user_id = get_jwt_identity()
         
         data = request.get_json()
         name = data.get('name')
@@ -147,9 +170,9 @@ def create_campaign():
                         except:
                             company_data['company_name'] = url
         
-        # Create campaign (no user required - public)
+        # Create campaign with user_id (will be None for guests)
         campaign = Campaign(
-            user_id=None,  # Public campaign, no user association
+            user_id=current_user_id,  # Will be None for guests, user ID for authenticated users
             name=name,
             message_template=message_template,
             status='draft',
@@ -559,4 +582,326 @@ def get_queued_campaigns_internal():
         print(f"Error fetching queued campaigns: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/my-campaigns', methods=['GET'])
+@jwt_required()
+def get_user_campaigns():
+    """Get campaigns for the authenticated user"""
+    try:
+        from models import Campaign
+        from database import db
+        
+        current_user_id = get_jwt_identity()
+        
+        # Pagination
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        
+        # Get user's campaigns
+        query = Campaign.query.filter_by(user_id=current_user_id).order_by(desc(Campaign.created_at))
+        
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        campaigns = pagination.items
+        
+        return jsonify({
+            'success': True,
+            'campaigns': [campaign.to_dict() for campaign in campaigns],
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching user campaigns: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/stats', methods=['GET'])
+@jwt_required()
+def get_campaign_stats():
+    """Get campaign statistics for the authenticated user"""
+    try:
+        from models import Campaign, Company
+        from database import db
+        
+        current_user_id = get_jwt_identity()
+        
+        # Total campaigns for user
+        total_campaigns = Campaign.query.filter_by(user_id=current_user_id).count()
+        
+        # Active campaigns
+        active_campaigns = Campaign.query.filter_by(
+            user_id=current_user_id,
+            status='processing'
+        ).count()
+        
+        # Calculate today's processed companies
+        today = datetime.utcnow().date()
+        processed_today = db.session.query(func.count(Company.id)).join(Campaign).filter(
+            Campaign.user_id == current_user_id,
+            func.date(Company.processed_at) == today
+        ).scalar() or 0
+        
+        # Success rate calculation
+        user_campaigns = Campaign.query.filter_by(user_id=current_user_id).all()
+        total_processed = sum(c.processed_count for c in user_campaigns)
+        total_success = sum(c.success_count for c in user_campaigns)
+        success_rate = round((total_success / total_processed * 100) if total_processed > 0 else 0, 1)
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total': total_campaigns,
+                'active': active_campaigns,
+                'processedToday': processed_today,
+                'successRate': success_rate,
+                'totalProcessed': total_processed,
+                'totalSuccess': total_success
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching campaign stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/admin/all', methods=['GET'])
+@jwt_required()
+def get_all_campaigns_admin():
+    """Get all campaigns across all users (admin only)"""
+    try:
+        from models import Campaign, User
+        from database import db
+        
+        # TODO: Add admin role check here
+        # For now, allow any authenticated user (should verify admin role)
+        
+        # Pagination
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        
+        # Filters
+        status = request.args.get('status')
+        user_id = request.args.get('user_id', type=int)
+        
+        # Build query
+        query = Campaign.query
+        
+        if status:
+            query = query.filter_by(status=status)
+        if user_id:
+            query = query.filter_by(user_id=user_id)
+        
+        # Order by most recent
+        query = query.order_by(desc(Campaign.created_at))
+        
+        # Paginate
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        campaigns = pagination.items
+        
+        # Enrich with user info
+        campaigns_data = []
+        for campaign in campaigns:
+            campaign_dict = campaign.to_dict()
+            if campaign.user_id:
+                user = User.query.get(campaign.user_id)
+                if user:
+                    campaign_dict['user_email'] = user.email
+                    campaign_dict['user_tier'] = user.subscription_tier
+            campaigns_data.append(campaign_dict)
+        
+        return jsonify({
+            'success': True,
+            'campaigns': campaigns_data,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total': pagination.total,
+                'pages': pagination.pages
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching all campaigns (admin): {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/admin/stats', methods=['GET'])
+@jwt_required()
+def get_admin_campaign_stats():
+    """Get comprehensive campaign statistics for admin"""
+    try:
+        from models import Campaign, Company, User
+        from database import db
+        
+        # TODO: Add admin role check
+        
+        # Total campaigns across all users
+        total_campaigns = Campaign.query.count()
+        
+        # Campaigns by status
+        active_campaigns = Campaign.query.filter_by(status='processing').count()
+        completed_campaigns = Campaign.query.filter_by(status='completed').count()
+        failed_campaigns = Campaign.query.filter_by(status='failed').count()
+        draft_campaigns = Campaign.query.filter_by(status='draft').count()
+        
+        # Today's activity
+        today = datetime.utcnow().date()
+        campaigns_today = Campaign.query.filter(
+            func.date(Campaign.created_at) == today
+        ).count()
+        
+        processed_today = db.session.query(func.count(Company.id)).filter(
+            func.date(Company.processed_at) == today
+        ).scalar() or 0
+        
+        # Campaigns by user tier
+        campaigns_by_tier = db.session.query(
+            User.subscription_tier,
+            func.count(Campaign.id)
+        ).join(Campaign, Campaign.user_id == User.id).group_by(User.subscription_tier).all()
+        
+        tier_breakdown = {tier: count for tier, count in campaigns_by_tier}
+        
+        # Guest campaigns (no user)
+        guest_campaigns = Campaign.query.filter_by(user_id=None).count()
+        tier_breakdown['guest'] = guest_campaigns
+        
+        # Overall success rate
+        all_campaigns = Campaign.query.all()
+        total_processed = sum(c.processed_count for c in all_campaigns)
+        total_success = sum(c.success_count for c in all_campaigns)
+        success_rate = round((total_success / total_processed * 100) if total_processed > 0 else 0, 1)
+        
+        # Top users by campaign count
+        top_users = db.session.query(
+            User.email,
+            User.subscription_tier,
+            func.count(Campaign.id).label('campaign_count')
+        ).join(Campaign, Campaign.user_id == User.id).group_by(User.id, User.email, User.subscription_tier).order_by(desc('campaign_count')).limit(10).all()
+        
+        top_users_data = [
+            {
+                'email': email,
+                'tier': tier,
+                'campaign_count': count
+            }
+            for email, tier, count in top_users
+        ]
+        
+        return jsonify({
+            'success': True,
+            'stats': {
+                'total': total_campaigns,
+                'active': active_campaigns,
+                'completed': completed_campaigns,
+                'failed': failed_campaigns,
+                'draft': draft_campaigns,
+                'createdToday': campaigns_today,
+                'processedToday': processed_today,
+                'successRate': success_rate,
+                'totalProcessed': total_processed,
+                'totalSuccess': total_success,
+                'byTier': tier_breakdown,
+                'topUsers': top_users_data
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching admin campaign stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/admin/<int:campaign_id>/pause', methods=['POST'])
+@jwt_required()
+def admin_pause_campaign(campaign_id):
+    """Pause a campaign (admin action)"""
+    try:
+        from models import Campaign
+        from database import db
+        
+        # TODO: Add admin role check
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        campaign.status = 'paused'
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Campaign paused successfully',
+            'campaign': campaign.to_dict()
+        }), 200
+        
+    except Exception as e:
+        print(f"Error pausing campaign: {e}")
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/admin/<int:campaign_id>/resume', methods=['POST'])
+@jwt_required()
+def admin_resume_campaign(campaign_id):
+    """Resume a paused campaign (admin action)"""
+    try:
+        from models import Campaign
+        from database import db
+        
+        # TODO: Add admin role check
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        if campaign.status == 'paused':
+            campaign.status = 'queued'
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Campaign resumed successfully',
+            'campaign': campaign.to_dict()
+        }), 200
+        
+    except Exception as e:
+        print(f"Error resuming campaign: {e}")
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/admin/<int:campaign_id>/cancel', methods=['POST'])
+@jwt_required()
+def admin_cancel_campaign(campaign_id):
+    """Cancel a campaign (admin action)"""
+    try:
+        from models import Campaign
+        from database import db
+        
+        # TODO: Add admin role check
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        campaign.status = 'failed'
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Campaign cancelled successfully',
+            'campaign': campaign.to_dict()
+        }), 200
+        
+    except Exception as e:
+        print(f"Error cancelling campaign: {e}")
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
