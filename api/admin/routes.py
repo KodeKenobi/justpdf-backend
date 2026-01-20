@@ -4,6 +4,14 @@ from datetime import datetime, timedelta
 from api_auth import require_api_key, get_user_stats
 import secrets
 
+# Import service routes
+try:
+    from .backup_routes import backup_admin_api
+    from .ad_service_routes import ad_service_admin_api
+except ImportError:
+    backup_admin_api = None
+    ad_service_admin_api = None
+
 # Create Blueprint
 admin_api = Blueprint('admin_api', __name__, url_prefix='/api/admin')
 

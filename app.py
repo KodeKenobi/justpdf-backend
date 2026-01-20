@@ -5186,9 +5186,25 @@ if __name__ == "__main__":
     # Database is already initialized above
     
     print(f"[OK] All dependencies loaded successfully")
-    
+
+    # Initialize automated services
+    try:
+        from backup_service import schedule_daily_backups
+        print("[BACKUP] Starting daily backup scheduler...")
+        schedule_daily_backups()
+    except Exception as e:
+        print(f"[WARN] Failed to start backup service: {e}")
+
+    # Register additional admin blueprints
+    if backup_admin_api:
+        app.register_blueprint(backup_admin_api)
+        print("[OK] Backup admin routes registered")
+    if ad_service_admin_api:
+        app.register_blueprint(ad_service_admin_api)
+        print("[OK] Ad service admin routes registered")
+
     # Get port from environment variable (Railway provides this)
     port = int(os.getenv('PORT', 5000))
     print(f" Starting server on port {port}")
-    
+
     app.run(debug=False, host='0.0.0.0', port=port)
