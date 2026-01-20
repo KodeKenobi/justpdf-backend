@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, g
 from sqlalchemy import func, desc, or_
 from datetime import datetime, timedelta
 from api_auth import require_api_key, get_user_stats
+import secrets
 
 # Create Blueprint
 admin_api = Blueprint('admin_api', __name__, url_prefix='/api/admin')
@@ -863,12 +864,29 @@ def create_free_tier_key():
             except:
                 return jsonify({'error': 'Invalid expiration date format'}), 400
         
-        # Create a system user for free tier keys (or use a dedicated user)
-        # For now, we'll create keys associated with the admin user who creates them
-        # In production, you might want a dedicated system user
-        system_user = User.query.filter_by(role='super_admin').first()
+        # Create or find a dedicated system user for free tier keys
+        # This ensures free tier keys always have a valid user_id
+        system_user = User.query.filter_by(email='system@freetier.internal').first()
         if not system_user:
-            system_user = g.current_user
+            # Create dedicated system user for free tier keys
+            import bcrypt
+            system_user = User(
+                email='system@freetier.internal',
+                password_hash=bcrypt.hashpw(secrets.token_urlsafe(32).encode(), bcrypt.gensalt()).decode(),
+                role='user',  # Regular user role, not admin
+                is_active=True,  # Always active
+                subscription_tier='client',  # Special tier for system operations
+                monthly_call_limit=-1  # Unlimited for system user
+            )
+            db.session.add(system_user)
+            db.session.commit()
+            print(f"[ADMIN] Created system user for free tier keys: {system_user.id}")
+        
+        # Ensure system user is active
+        if not system_user.is_active:
+            system_user.is_active = True
+            db.session.commit()
+            print(f"[ADMIN] Reactivated system user for free tier keys: {system_user.id}")
         
         # Generate API key
         key_string = generate_api_key()

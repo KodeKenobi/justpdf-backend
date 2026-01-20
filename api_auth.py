@@ -48,6 +48,17 @@ def verify_api_key_with_key(api_key_string):
     if api_key.expires_at and api_key.expires_at < datetime.utcnow():
         return None, None
     
+    # Check if associated user exists and is active
+    # Free tier keys are special - they can work even if the system user has issues
+    if not api_key.is_free_tier:
+        if not api_key.user or not api_key.user.is_active:
+            return None, None
+    else:
+        # For free tier keys, verify the user exists but don't check is_active
+        # This allows free tier keys to work independently of the system user's status
+        if not api_key.user:
+            return None, None
+    
     # Update last used timestamp
     api_key.last_used = datetime.utcnow()
     db.session.commit()
