@@ -162,6 +162,13 @@ except Exception as e:
     rules_api = None
 
 try:
+    from api.enterprise.routes import enterprise_api
+    print("[OK] enterprise_api imported")
+except Exception as e:
+    print(f"[WARN] Failed to import enterprise_api: {e}")
+    enterprise_api = None
+
+try:
     from test_routes import test_bp
     print("[OK] test_bp imported")
 except Exception as e:
@@ -5150,6 +5157,10 @@ if campaigns_api:
 if rules_api:
     app.register_blueprint(rules_api)
     print("[OK] rules_api registered")
+
+if enterprise_api:
+    app.register_blueprint(enterprise_api)
+    print("[OK] enterprise_api registered")
 
 # Register WebSocket routes for live monitoring
 try:
