@@ -408,7 +408,7 @@ def get_token_from_session():
         
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')  # Optional - for backward compatibility only
-        role = data.get('role', 'user')
+        role = data.get('role', None)  # Don't default to 'user' - preserve existing role from DB
         
         if not email:
             return jsonify({'error': 'Email is required'}), 400
@@ -466,7 +466,8 @@ def get_token_from_session():
         old_id = user.id
         user.is_active = True
         
-        if role and user.role != role:
+        # Only update role if explicitly provided (not None)
+        if role is not None and user.role != role:
             user.role = role
         
         # Only update subscription_tier if explicitly provided AND different
