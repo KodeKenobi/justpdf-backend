@@ -424,6 +424,7 @@ class Campaign(db.Model):
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)  # Optional - for public campaigns
+    session_id = db.Column(db.String(100), nullable=True, index=True)  # For guest users - browser session identifier
     name = db.Column(db.String(200), nullable=False)
     message_template = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(20), default='draft', nullable=False)  # draft, queued, processing, completed, paused, failed

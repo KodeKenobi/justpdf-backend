@@ -31,11 +31,18 @@ def handle_options():
         return jsonify({}), 200
 
 @campaigns_api.route('', methods=['GET'])
+@jwt_required(optional=True)
 def list_campaigns():
-    """Get all campaigns (public endpoint - no auth required)"""
+    """Get campaigns filtered by user or session (supports both authenticated and guest users)"""
     try:
         from models import Campaign
         from database import db
+        
+        # Get user ID if authenticated
+        current_user_id = get_jwt_identity()
+        
+        # Get session_id from query params for guest users
+        session_id = request.args.get('session_id')
         
         # Pagination
         page = request.args.get('page', 1, type=int)
@@ -44,8 +51,28 @@ def list_campaigns():
         # Filters
         status = request.args.get('status')
         
-        # Build query - get all campaigns (public)
+        # Build query with proper filtering
         query = Campaign.query
+        
+        # Filter by user_id for authenticated users, or session_id for guests
+        if current_user_id:
+            # Authenticated user - show only their campaigns
+            query = query.filter_by(user_id=current_user_id)
+        elif session_id:
+            # Guest user - show only campaigns from their session
+            query = query.filter_by(session_id=session_id, user_id=None)
+        else:
+            # No user or session - return empty list for security
+            return jsonify({
+                'success': True,
+                'campaigns': [],
+                'pagination': {
+                    'page': 1,
+                    'per_page': per_page,
+                    'total': 0,
+                    'pages': 0
+                }
+            }), 200
         
         if status:
             query = query.filter_by(status=status)
@@ -136,6 +163,7 @@ def create_campaign():
         message_template = data.get('message_template')
         companies_data = data.get('companies', [])
         auto_detect_names = data.get('auto_detect_names', True)
+        session_id = data.get('session_id')  # For guest users
         
         # Validate input
         if not name or not message_template:
@@ -143,6 +171,10 @@ def create_campaign():
         
         if not companies_data or len(companies_data) == 0:
             return jsonify({'error': 'At least one company is required'}), 400
+        
+        # For guests, session_id is required
+        if not current_user_id and not session_id:
+            return jsonify({'error': 'Session ID is required for guest users'}), 400
         
         # Auto-detect missing company names if enabled
         if auto_detect_names:
@@ -170,9 +202,10 @@ def create_campaign():
                         except:
                             company_data['company_name'] = url
         
-        # Create campaign with user_id (will be None for guests)
+        # Create campaign with user_id or session_id
         campaign = Campaign(
             user_id=current_user_id,  # Will be None for guests, user ID for authenticated users
+            session_id=session_id if not current_user_id else None,  # Store session_id only for guests
             name=name,
             message_template=message_template,
             status='draft',
