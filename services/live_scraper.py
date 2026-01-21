@@ -1645,6 +1645,15 @@ class LiveScraper:
                 for idx, company in enumerate(companies, 1):
                     print(f"\n📤 [BATCH {idx}/{len(companies)}] Processing: {company.company_name}")
                     
+                    # Update database: Mark as processing (for real-time UI updates)
+                    try:
+                        from database import db
+                        company.status = 'processing'
+                        db.session.commit()
+                        print(f"📊 [{idx}/{len(companies)}] Status updated to 'processing'")
+                    except Exception as e:
+                        print(f"⚠️ [{idx}/{len(companies)}] DB update failed: {str(e)}")
+                    
                     try:
                         # Update form_data for this specific company
                         try:
@@ -1681,6 +1690,16 @@ class LiveScraper:
                                 'success': False,
                                 'error': 'No contact form found'
                             })
+                            
+                            # Update database: Mark as failed (real-time)
+                            try:
+                                company.status = 'failed'
+                                company.error_message = 'No contact form found'
+                                db.session.commit()
+                                print(f"❌ [{idx}/{len(companies)}] DB updated: no form found")
+                            except Exception as e:
+                                print(f"⚠️ [{idx}/{len(companies)}] DB update failed: {str(e)}")
+                            
                             continue
                         
                         print(f"✅ [{idx}/{len(companies)}] Form filled")
@@ -1707,6 +1726,16 @@ class LiveScraper:
                                 'success': True,
                                 'screenshot_url': screenshot_url
                             })
+                            
+                            # Update database: Mark as completed (real-time)
+                            try:
+                                company.status = 'completed'
+                                company.screenshot_url = screenshot_url
+                                company.error_message = None
+                                db.session.commit()
+                                print(f"✅ [{idx}/{len(companies)}] DB updated: completed")
+                            except Exception as e:
+                                print(f"⚠️ [{idx}/{len(companies)}] DB update failed: {str(e)}")
                         else:
                             print(f"❌ [{idx}/{len(companies)}] FAILED - Submission failed for {company.company_name}")
                             results.append({
@@ -1715,6 +1744,16 @@ class LiveScraper:
                                 'error': 'Form submission failed',
                                 'screenshot_url': screenshot_url
                             })
+                            
+                            # Update database: Mark as failed (real-time)
+                            try:
+                                company.status = 'failed'
+                                company.error_message = 'Form submission failed'
+                                company.screenshot_url = screenshot_url
+                                db.session.commit()
+                                print(f"❌ [{idx}/{len(companies)}] DB updated: failed")
+                            except Exception as e:
+                                print(f"⚠️ [{idx}/{len(companies)}] DB update failed: {str(e)}")
                         
                         # If not the last company, reload the page for next submission
                         if idx < len(companies):
@@ -1734,6 +1773,15 @@ class LiveScraper:
                             'success': False,
                             'error': str(e)
                         })
+                        
+                        # Update database: Mark as failed (real-time)
+                        try:
+                            company.status = 'failed'
+                            company.error_message = str(e)
+                            db.session.commit()
+                            print(f"❌ [{idx}/{len(companies)}] DB updated: error")
+                        except Exception as db_error:
+                            print(f"⚠️ [{idx}/{len(companies)}] DB update failed: {str(db_error)}")
                 
                 # Clean up
                 print("\n🧹 [BATCH SCRAPER] Cleaning up...")
