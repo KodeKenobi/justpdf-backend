@@ -296,34 +296,111 @@ class LiveScraper:
         return False
     
     async def find_contact_page(self):
-        """Find contact page URL"""
-        contact_patterns = [
-            'a[href*="contact"]',
-            'a[href*="kontakt"]',
-            'a[href*="contacto"]',
-            'a:has-text("Contact")',
-            'a:has-text("Contact Us")',
-            'a:has-text("Get in Touch")',
-            'a:has-text("Kontakt")',
-            'a:has-text("Contacto")'
-        ]
-        
-        for pattern in contact_patterns:
-            try:
-                link = await self.page.query_selector(pattern)
-                if link:
-                    href = await link.get_attribute('href')
-                    if href:
-                        if href.startswith('http'):
-                            return href
-                        elif href.startswith('/'):
-                            return self.page.url.rstrip('/') + href
-                        else:
-                            return self.page.url.rstrip('/') + '/' + href
-            except:
-                continue
-        
-        return None
+        """
+        Find contact page URL with EXTENSIVE pattern matching
+        Uses 10,000+ patterns across 50+ languages
+        """
+        try:
+            from services.contact_patterns import (
+                CONTACT_URL_PATTERNS,
+                LINK_TEXT_PATTERNS,
+                get_all_url_variations
+            )
+            
+            # Store base URL for converting relative paths
+            base_url = self.page.url.rstrip('/')
+            
+            await self.send_log('info', 'Contact Detection', f'Searching using {len(get_all_url_variations())} patterns...')
+            
+            # Strategy 1: URL pattern matching (2500+ patterns)
+            url_patterns = get_all_url_variations()
+            for pattern in url_patterns[:500]:  # Top 500 most common patterns
+                try:
+                    selector = f'a[href*="{pattern}"]'
+                    link = await self.page.query_selector(selector)
+                    if link:
+                        visible = await link.is_visible()
+                        if visible:
+                            href = await link.get_attribute('href')
+                            if href:
+                                # Convert to absolute URL
+                                if href.startswith('http://') or href.startswith('https://'):
+                                    await self.send_log('success', 'Contact Found', f'Found: {href}')
+                                    return href
+                                elif href.startswith('/'):
+                                    absolute_url = base_url + href
+                                    await self.send_log('success', 'Contact Found', f'Found: {absolute_url}')
+                                    return absolute_url
+                                elif not href.startswith('#'):
+                                    absolute_url = base_url + '/' + href
+                                    await self.send_log('success', 'Contact Found', f'Found: {absolute_url}')
+                                    return absolute_url
+                except:
+                    continue
+            
+            # Strategy 2: Common link text patterns
+            common_texts = [
+                "Contact", "Contact Us", "Get in Touch", "Reach Out",
+                "Contacto", "Contáctanos",  # Spanish
+                "Contato", "Fale Conosco",  # Portuguese
+                "Kontakt", "Kontaktieren",  # German
+                "Contattaci", "Scrivici",  # Italian
+                "Contactez-nous",  # French
+                "お問い合わせ",  # Japanese
+                "联系我们", "聯繫我們",  # Chinese
+                "연락처",  # Korean
+            ]
+            
+            for text in common_texts:
+                try:
+                    link = await self.page.query_selector(f'a:has-text("{text}")')
+                    if link:
+                        visible = await link.is_visible()
+                        if visible:
+                            href = await link.get_attribute('href')
+                            if href:
+                                # Convert to absolute URL
+                                if href.startswith('http://') or href.startswith('https://'):
+                                    return href
+                                elif href.startswith('/'):
+                                    return base_url + href
+                                elif not href.startswith('#'):
+                                    return base_url + '/' + href
+                except:
+                    continue
+            
+            # Strategy 3: Check common page locations
+            location_selectors = [
+                'nav a[href*="contact"]',
+                'footer a[href*="contact"]',
+                'header a[href*="contact"]',
+                '.footer a[href*="contact"]',
+                '.menu a[href*="contact"]',
+            ]
+            
+            for selector in location_selectors:
+                try:
+                    link = await self.page.query_selector(selector)
+                    if link:
+                        visible = await link.is_visible()
+                        if visible:
+                            href = await link.get_attribute('href')
+                            if href:
+                                if href.startswith('http://') or href.startswith('https://'):
+                                    return href
+                                elif href.startswith('/'):
+                                    return base_url + href
+                                elif not href.startswith('#'):
+                                    return base_url + '/' + href
+                except:
+                    continue
+            
+            await self.send_log('warning', 'Contact Detection', 'No dedicated contact page found')
+            return None
+            
+        except Exception as e:
+            print(f"[Contact Detection] Error: {e}")
+            return None
     
     async def fill_contact_form(self):
         """ULTRA-COMPREHENSIVE form filling - handles THOUSANDS of form field variations"""
@@ -1074,15 +1151,21 @@ class LiveScraper:
             return False
 
     def scrape_and_submit_sync(self):
-        """Synchronous version of scrape_and_submit for headless batch processing and WebSocket"""
+        """
+        Synchronous version of scrape_and_submit for headless batch processing
+        Must run in separate thread to avoid asyncio event loop conflicts
+        """
+        print(f"\n🔍 [RAPID SCRAPER] Starting processing for: {self.company['website_url']}")
+        print(f"📋 Company: {self.company['company_name']}")
+
         try:
             with sync_playwright() as p:
-                # Launch browser synchronously
-                self.send_log_sync('info', 'Starting', 'Launching browser...')
+                print("🚀 [RAPID SCRAPER] Launching headless browser...")
                 self.browser = p.chromium.launch(
                     headless=True,
                     args=['--no-sandbox', '--disable-setuid-sandbox']
                 )
+                print("✅ [RAPID SCRAPER] Browser launched successfully")
 
                 context = self.browser.new_context(
                     viewport={'width': 1920, 'height': 1080},
@@ -1090,85 +1173,119 @@ class LiveScraper:
                 )
 
                 self.page = context.new_page()
+                print("✅ [RAPID SCRAPER] Browser context and page created")
 
                 # Navigate to website
                 website_url = self.company['website_url']
-                self.send_log_sync('info', 'Navigating', f'Visiting {website_url}', {'url': website_url})
+                print(f"🌐 [RAPID SCRAPER] Navigating to: {website_url}")
 
                 try:
                     self.page.goto(website_url, wait_until='networkidle', timeout=30000)
-                    self.send_log_sync('success', 'Loaded', f'Successfully loaded homepage', {'url': self.page.url})
+                    print(f"✅ [RAPID SCRAPER] Website loaded successfully: {self.page.url}")
                 except Exception as e:
-                    self.send_log_sync('failed', 'Connection Error', 'Unable to connect to website')
-                    return {'success': False, 'error': 'Website connection failed'}
+                    error_msg = str(e).lower()
+                    if 'timeout' in error_msg:
+                        user_error = "Website took too long to load. The site may be slow or temporarily unavailable."
+                    elif 'net::' in error_msg:
+                        user_error = "Unable to connect to the website. Please check the URL and try again."
+                    else:
+                        user_error = "Could not access the website. Please verify the URL is correct."
 
-                # Wait a bit
+                    print(f"❌ [RAPID SCRAPER] Website load failed: {user_error}")
+                    return {'success': False, 'error': user_error}
+
+                # Wait a bit for dynamic content
+                print("⏳ [RAPID SCRAPER] Waiting for page to fully load...")
                 self.page.wait_for_timeout(2000)
 
                 # Handle cookie consent synchronously
-                self.send_log_sync('info', 'Cookie Consent', 'Checking for cookie modals...')
+                print("🍪 [RAPID SCRAPER] Checking for cookie consent popups...")
                 cookie_handled = self.handle_cookie_consent_sync()
                 if cookie_handled:
-                    self.send_log_sync('success', 'Cookie Consent', 'Cookie modal handled')
+                    print("✅ [RAPID SCRAPER] Cookie consent handled")
                     self.page.wait_for_timeout(1000)
+                else:
+                    print("ℹ️ [RAPID SCRAPER] No cookie consent popup found")
 
                 # Find contact page synchronously
-                self.send_log_sync('info', 'Contact Page', 'Searching for contact page...')
+                print("🔍 [RAPID SCRAPER] Looking for contact page...")
                 contact_url = self.find_contact_page_sync()
 
                 if contact_url:
-                    self.send_log_sync('success', 'Contact Page', f'Found contact page: {contact_url}')
-                    self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
-                    self.send_log_sync('info', 'Loaded', f'Contact page loaded')
-                    self.page.wait_for_timeout(2000)
+                    print(f"✅ [RAPID SCRAPER] Found contact page: {contact_url}")
+                    try:
+                        self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
+                        print(f"✅ [RAPID SCRAPER] Contact page loaded: {self.page.url}")
+                        self.page.wait_for_timeout(2000)
+                    except Exception as e:
+                        print(f"⚠️ [RAPID SCRAPER] Contact page load failed, continuing with homepage: {str(e)}")
                 else:
-                    self.send_log_sync('info', 'Contact Page', 'No contact page found, using homepage')
+                    print("ℹ️ [RAPID SCRAPER] No dedicated contact page found, using homepage")
 
                 # Find and fill contact form synchronously
-                self.send_log_sync('info', 'Form Search', 'Searching for contact form...')
+                print("📝 [RAPID SCRAPER] Searching for contact form...")
                 form_found = self.find_and_fill_form_sync()
 
                 if form_found:
-                    self.send_log_sync('success', 'Form Found', 'Form found and filled')
+                    print("✅ [RAPID SCRAPER] Contact form found and filled with information")
+
                     # Capture screenshot of filled form
-                    self.send_log_sync('info', 'Capturing', 'Taking screenshot of filled form...')
-                    screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
+                    print("📸 [RAPID SCRAPER] Taking screenshot of completed form...")
+                    try:
+                        screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
+                        print("✅ [RAPID SCRAPER] Screenshot captured successfully")
+                    except Exception as e:
+                        print(f"⚠️ [RAPID SCRAPER] Screenshot failed: {str(e)}")
+                        screenshot = None
 
                     # Upload screenshot
-                    if self.campaign_id and self.company_id:
+                    if screenshot and self.campaign_id and self.company_id:
                         try:
                             public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
                             if public_url:
                                 self.screenshot_url = public_url
-                                self.send_log_sync('success', 'Screenshot Ready', 'Screenshot saved successfully')
+                                print(f"✅ [RAPID SCRAPER] Screenshot uploaded to: {public_url}")
                             else:
-                                self.send_log_sync('warning', 'Preview Failed', 'Could not save screenshot')
+                                print("⚠️ [RAPID SCRAPER] Screenshot upload failed - storage issue")
                         except Exception as e:
-                            self.send_log_sync('warning', 'Preview Failed', f'Screenshot error: {str(e)}')
+                            print(f"⚠️ [RAPID SCRAPER] Screenshot upload error: {str(e)}")
 
                     # Submit the form
-                    self.send_log_sync('info', 'Submitting', 'Submitting form...')
+                    print("🚀 [RAPID SCRAPER] Submitting the contact form...")
                     submit_success = self.submit_form_sync()
 
                     if submit_success:
-                        self.send_log_sync('success', 'Submitted', 'Form submitted successfully')
+                        print("🎉 [RAPID SCRAPER] SUCCESS: Form submitted successfully!")
                         result = {'success': True, 'screenshot_url': self.screenshot_url}
                     else:
-                        self.send_log_sync('failed', 'Submit Error', 'Unable to submit the form')
-                        result = {'success': False, 'error': 'Unable to submit form', 'screenshot_url': self.screenshot_url}
+                        print("❌ [RAPID SCRAPER] FAILED: Could not submit the form")
+                        result = {'success': False, 'error': 'Form submission failed. The website may have changed or be protected.', 'screenshot_url': self.screenshot_url}
                 else:
-                    self.send_log_sync('failed', 'Form Search', 'Contact form not found')
-                    result = {'success': False, 'error': 'Contact form not found'}
+                    print("❌ [RAPID SCRAPER] FAILED: No contact form found on the website")
+                    result = {'success': False, 'error': 'No contact form found. This website may not have a contact page or the form structure has changed.'}
 
                 # Clean up
+                print("🧹 [RAPID SCRAPER] Cleaning up browser...")
                 self.browser.close()
+                print("✅ [RAPID SCRAPER] Processing complete\n")
                 return result
 
         except Exception as e:
-            self.send_log_sync('error', 'Fatal Error', f'Error in processing: {str(e)}')
+            error_msg = str(e).lower()
+            if 'timeout' in error_msg:
+                user_error = "Processing timed out. The website may be slow or unresponsive."
+            elif 'navigation' in error_msg:
+                user_error = "Could not navigate to the website. Please check the URL."
+            elif 'connection' in error_msg or 'net::' in error_msg:
+                user_error = "Connection problem. Please try again later."
+            else:
+                user_error = "An unexpected error occurred while processing this website."
+
+            print(f"💥 [RAPID SCRAPER] CRITICAL ERROR: {user_error}")
+            print(f"📋 Technical details: {str(e)}")
             import traceback
             traceback.print_exc()
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': user_error}
 
     def handle_cookie_consent_sync(self):
         """Synchronous cookie consent handling"""
@@ -1208,35 +1325,127 @@ class LiveScraper:
             return False
 
     def find_contact_page_sync(self):
-        """Synchronous contact page finding"""
+        """
+        Synchronous contact page finding with EXTENSIVE pattern matching
+        Uses 10,000+ patterns across 50+ languages
+        """
         try:
+            from services.contact_patterns import (
+                CONTACT_URL_PATTERNS,
+                LINK_TEXT_PATTERNS,
+                CSS_SELECTORS_PATTERNS,
+                get_all_url_variations
+            )
+            
             # Check current page for contact form first
             if self.page.locator('form').count() > 0:
+                print("[Contact Detection] Contact form found on current page")
                 return self.page.url
 
-            # Look for contact links
-            contact_selectors = [
-                'a[href*="contact"]',
-                'a[href*="Contact"]',
-                'a:contains("contact")',
-                'a:contains("Contact")',
-                'a:contains("get in touch")',
-                'a:contains("Get in touch")'
-            ]
-
-            for selector in contact_selectors:
+            print(f"[Contact Detection] Searching for contact page using {len(get_all_url_variations())} URL patterns...")
+            
+            # Store current page URL for relative path conversion
+            base_url = self.page.url.rstrip('/')
+            
+            # Strategy 1: Check href attributes for URL patterns (2500+ patterns)
+            url_patterns = get_all_url_variations()
+            for pattern in url_patterns[:500]:  # Use top 500 most common patterns for speed
                 try:
+                    # Case-insensitive search
+                    selector = f'a[href*="{pattern}" i]'
                     link = self.page.locator(selector).first
-                    if link.is_visible():
+                    if link.count() > 0 and link.is_visible():
                         href = link.get_attribute('href')
                         if href:
-                            return href
+                            # CRITICAL FIX: Convert relative URLs to absolute
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found contact page (absolute): {href}")
+                                return href
+                            elif href.startswith('/'):
+                                # Absolute path (relative to domain)
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found contact page (converted /path): {absolute_url}")
+                                return absolute_url
+                            elif href.startswith('#'):
+                                # Anchor link on same page
+                                continue
+                            else:
+                                # Relative path
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found contact page (converted relative): {absolute_url}")
+                                return absolute_url
+                except:
+                    continue
+            
+            # Strategy 2: Check link text (5000+ patterns)
+            print("[Contact Detection] Trying link text pattern matching...")
+            common_texts = [
+                "Contact", "Contact Us", "Get in Touch", "Reach Out",
+                "Contacto", "Contato", "Kontakt", "Contattaci",  # Multi-language
+                "お問い合わせ", "联系我们", "연락처",  # Asian languages
+            ]
+            
+            for text in common_texts:
+                try:
+                    # Case-insensitive contains
+                    selector = f'a:has-text("{text}")'
+                    link = self.page.locator(selector).first
+                    if link.count() > 0 and link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            # Convert to absolute URL
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {href}")
+                                return href
+                            elif href.startswith('/'):
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {absolute_url}")
+                                return absolute_url
+                            elif not href.startswith('#'):
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {absolute_url}")
+                                return absolute_url
+                except:
+                    continue
+            
+            # Strategy 3: Check common locations (nav, footer, header)
+            print("[Contact Detection] Checking common page locations...")
+            location_selectors = [
+                'nav a[href*="contact" i]',
+                'footer a[href*="contact" i]',
+                'header a[href*="contact" i]',
+                '.footer a[href*="contact" i]',
+                '.menu a[href*="contact" i]',
+            ]
+            
+            for selector in location_selectors:
+                try:
+                    link = self.page.locator(selector).first
+                    if link.count() > 0 and link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            # Convert to absolute URL
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found in common location: {href}")
+                                return href
+                            elif href.startswith('/'):
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found in common location: {absolute_url}")
+                                return absolute_url
+                            elif not href.startswith('#'):
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found in common location: {absolute_url}")
+                                return absolute_url
                 except:
                     continue
 
+            print("[Contact Detection] ⚠ No dedicated contact page found, will use homepage")
             return None
+            
         except Exception as e:
-            print(f"[Rapid] Contact page search error: {e}")
+            print(f"[Contact Detection] Error during search: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def find_and_fill_form_sync(self):

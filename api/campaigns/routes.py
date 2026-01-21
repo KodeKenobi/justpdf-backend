@@ -619,13 +619,16 @@ def get_queued_campaigns_internal():
 
 @campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
 def rapid_process_company(campaign_id, company_id):
-    """Process a single company quickly without WebSocket overhead (headless mode)"""
+    """
+    Process a single company quickly without WebSocket overhead (headless mode)
+    RUNS IN SEPARATE THREAD to avoid any asyncio event loop conflicts
+    """
     try:
         from models import Company, Campaign
         from database import db
         from services.live_scraper import LiveScraper
         import time
-        import asyncio
+        import threading
         
         company = Company.query.filter_by(
             id=company_id,
@@ -645,21 +648,56 @@ def rapid_process_company(campaign_id, company_id):
         
         start_time = time.time()
         
+        # Container for result from thread
+        result_container = {'result': None, 'error': None}
+        
+        def run_scraper_in_thread():
+            """
+            Run scraper in separate thread to ensure clean synchronous context
+            This prevents 'Playwright Sync API inside asyncio loop' errors
+            """
+            try:
+                # Prepare company data
+                company_data = {
+                    'id': company.id,
+                    'website_url': company.website_url,
+                    'company_name': company.company_name,
+                    'contact_email': company.contact_email,
+                    'phone': company.phone,
+                }
+
+                # Create scraper WITHOUT WebSocket (headless mode)
+                scraper = LiveScraper(None, company_data, campaign.message_template, campaign_id, company_id)
+
+                # Run scraper SYNCHRONOUSLY in clean thread (no event loop)
+                result_container['result'] = scraper.scrape_and_submit_sync()
+            except Exception as e:
+                result_container['error'] = str(e)
+                import traceback
+                traceback.print_exc()
+        
         try:
-            # Prepare company data
-            company_data = {
-                'id': company.id,
-                'website_url': company.website_url,
-                'company_name': company.company_name,
-                'contact_email': company.contact_email,
-                'phone': company.phone,
-            }
-
-            # Create scraper WITHOUT WebSocket (headless mode)
-            scraper = LiveScraper(None, company_data, campaign.message_template, campaign_id, company_id)
-
-            # Run scraper SYNCHRONOUSLY (no event loop issues with parallel processing)
-            result = scraper.scrape_and_submit_sync()
+            # Run in separate thread to avoid event loop conflicts
+            thread = threading.Thread(target=run_scraper_in_thread)
+            thread.start()
+            thread.join(timeout=120)  # 2 minute timeout
+            
+            if thread.is_alive():
+                # Thread still running - timeout
+                return jsonify({
+                    'success': False,
+                    'error': 'Processing timeout',
+                    'status': 'failed',
+                    'companyId': company_id,
+                }), 500
+            
+            # Check for errors
+            if result_container['error']:
+                raise Exception(result_container['error'])
+            
+            result = result_container['result']
+            if not result:
+                raise Exception('No result returned from scraper')
             
             processing_time = time.time() - start_time
             
