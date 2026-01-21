@@ -63,15 +63,28 @@ def register_websocket_routes(sock):
             scraper = LiveScraper(ws, company_data, campaign.message_template, campaign_id, company_id)
 
             # Run async scraper for WebSocket (real-time streaming)
-            import nest_asyncio
-            nest_asyncio.apply()
-
+            # ISOLATED EVENT LOOP: Save current loop, create new one, then restore
+            old_loop = None
+            try:
+                old_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                pass  # No event loop in current thread
+            
+            # Create new isolated event loop for this WebSocket session
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
-            # Run scraper async
-            result = loop.run_until_complete(scraper.scrape_and_submit())
-            loop.close()
+            
+            try:
+                # Run scraper async
+                result = loop.run_until_complete(scraper.scrape_and_submit())
+            finally:
+                # CRITICAL: Close loop and restore original event loop
+                loop.close()
+                if old_loop:
+                    asyncio.set_event_loop(old_loop)
+                else:
+                    # No loop existed before, clear it
+                    asyncio.set_event_loop(None)
             
             # If cancelled, don't send completion
             if result.get('cancelled'):
