@@ -617,6 +617,135 @@ def get_queued_campaigns_internal():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/<int:campaign_id>/rapid-process-batch', methods=['POST'])
+def rapid_process_batch(campaign_id):
+    """
+    Process multiple companies with the same website URL in ONE browser session
+    Visits website once, submits multiple forms sequentially
+    Example: 5 companies with same URL = 1 visit, 5 submissions
+    """
+    try:
+        from models import Company, Campaign
+        from database import db
+        from services.live_scraper import LiveScraper
+        import time
+        
+        data = request.get_json()
+        company_ids = data.get('company_ids', [])
+        
+        if not company_ids:
+            return jsonify({'error': 'No company IDs provided'}), 400
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        # Fetch all companies
+        companies = Company.query.filter(
+            Company.id.in_(company_ids),
+            Company.campaign_id == campaign_id
+        ).all()
+        
+        if not companies:
+            return jsonify({'error': 'No companies found'}), 404
+        
+        # Verify all companies have the same website URL
+        website_url = companies[0].website_url
+        if not all(c.website_url == website_url for c in companies):
+            return jsonify({'error': 'All companies must have the same website URL for batch processing'}), 400
+        
+        # Mark all as processing
+        for company in companies:
+            company.status = 'processing'
+        db.session.commit()
+        
+        start_time = time.time()
+        results = []
+        
+        try:
+            # Create scraper with first company data (just for navigation)
+            first_company_data = {
+                'id': companies[0].id,
+                'website_url': companies[0].website_url,
+                'company_name': companies[0].company_name,
+                'contact_email': companies[0].contact_email,
+                'phone': companies[0].phone,
+            }
+            
+            scraper = LiveScraper(None, first_company_data, campaign.message_template, campaign_id, companies[0].id)
+            
+            # Process each company in the batch (same browser session)
+            batch_result = scraper.scrape_and_submit_batch_sync(companies, campaign.message_template, campaign_id)
+            
+            processing_time = time.time() - start_time
+            
+            # Update each company based on results
+            for idx, company in enumerate(companies):
+                result = batch_result['results'][idx] if idx < len(batch_result['results']) else {'success': False, 'error': 'No result'}
+                
+                if result.get('success'):
+                    company.status = 'completed'
+                    company.error_message = None
+                else:
+                    error_msg = result.get('error', '').lower()
+                    if 'captcha' in error_msg or 'recaptcha' in error_msg or 'hcaptcha' in error_msg:
+                        company.status = 'captcha'
+                        company.error_message = 'CAPTCHA detected'
+                    else:
+                        company.status = 'failed'
+                        company.error_message = result.get('error', 'Processing failed')
+                
+                if result.get('screenshot_url'):
+                    company.screenshot_url = result.get('screenshot_url')
+                
+                results.append({
+                    'companyId': company.id,
+                    'success': result.get('success', False),
+                    'status': company.status,
+                    'errorMessage': company.error_message,
+                    'screenshotUrl': company.screenshot_url
+                })
+            
+            db.session.commit()
+            
+            # Update campaign stats
+            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+            campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
+            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
+            
+            if campaign.total_companies > 0:
+                campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100)
+            
+            db.session.commit()
+            
+            return jsonify({
+                'success': batch_result.get('success', False),
+                'websiteUrl': website_url,
+                'companiesProcessed': len(companies),
+                'processingTime': round(processing_time, 2),
+                'results': results
+            }), 200
+            
+        except Exception as e:
+            # Mark all as failed
+            for company in companies:
+                company.status = 'failed'
+                company.error_message = str(e)
+            db.session.commit()
+            
+            return jsonify({
+                'success': False,
+                'error': str(e),
+                'processingTime': time.time() - start_time
+            }), 200
+        
+    except Exception as e:
+        print(f"Error in rapid_process_batch: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
 def rapid_process_company(campaign_id, company_id):
     """

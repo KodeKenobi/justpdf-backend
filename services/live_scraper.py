@@ -1534,3 +1534,210 @@ class LiveScraper:
         except Exception as e:
             print(f"[Rapid] Form submission error: {e}")
             return False
+
+    def scrape_and_submit_batch_sync(self, companies, message_template, campaign_id):
+        """
+        BATCH PROCESSING: Visit website ONCE, submit multiple forms
+        For companies with same URL: 1 visit → N submissions
+        
+        Args:
+            companies: List of Company ORM objects with same website_url
+            message_template: JSON string with form data
+            campaign_id: Campaign ID for screenshot upload
+            
+        Returns:
+            {
+                'success': True/False,
+                'results': [
+                    {'companyId': 1, 'success': True, 'screenshot_url': '...'},
+                    {'companyId': 2, 'success': False, 'error': '...'},
+                    ...
+                ]
+            }
+        """
+        print(f"\n🔄 [BATCH SCRAPER] Starting BATCH processing for {len(companies)} companies")
+        print(f"🌐 Website URL: {companies[0].website_url}")
+        print(f"📦 Companies in batch: {[c.company_name for c in companies]}")
+        
+        results = []
+        
+        try:
+            with sync_playwright() as p:
+                print("🚀 [BATCH SCRAPER] Launching headless browser...")
+                self.browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox']
+                )
+                
+                context = self.browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+                
+                self.page = context.new_page()
+                print("✅ [BATCH SCRAPER] Browser ready")
+                
+                # Navigate to website (ONCE)
+                website_url = companies[0].website_url
+                print(f"🌐 [BATCH SCRAPER] Navigating to: {website_url}")
+                
+                try:
+                    self.page.goto(website_url, wait_until='networkidle', timeout=30000)
+                    print(f"✅ [BATCH SCRAPER] Website loaded: {self.page.url}")
+                except Exception as e:
+                    error_msg = "Unable to access website. Please verify the URL."
+                    print(f"❌ [BATCH SCRAPER] Navigation failed: {error_msg}")
+                    # Mark all companies as failed
+                    for company in companies:
+                        results.append({
+                            'companyId': company.id,
+                            'success': False,
+                            'error': error_msg
+                        })
+                    return {'success': False, 'error': error_msg, 'results': results}
+                
+                self.page.wait_for_timeout(2000)
+                
+                # Handle cookie consent (ONCE)
+                print("🍪 [BATCH SCRAPER] Handling cookie consent...")
+                self.handle_cookie_consent_sync()
+                self.page.wait_for_timeout(1000)
+                
+                # Find contact page (ONCE)
+                print("🔍 [BATCH SCRAPER] Looking for contact page...")
+                contact_url = self.find_contact_page_sync()
+                
+                if contact_url:
+                    print(f"✅ [BATCH SCRAPER] Contact page found: {contact_url}")
+                    try:
+                        self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
+                        print(f"✅ [BATCH SCRAPER] Contact page loaded")
+                        self.page.wait_for_timeout(2000)
+                    except Exception as e:
+                        print(f"⚠️ [BATCH SCRAPER] Contact page load failed: {str(e)}")
+                else:
+                    print("ℹ️ [BATCH SCRAPER] Using homepage for contact")
+                
+                # NOW PROCESS EACH COMPANY (submit form, refresh, repeat)
+                for idx, company in enumerate(companies, 1):
+                    print(f"\n📤 [BATCH {idx}/{len(companies)}] Processing: {company.company_name}")
+                    
+                    try:
+                        # Update form_data for this specific company
+                        try:
+                            form_data = json.loads(message_template)
+                            self.form_data = {
+                                'sender_name': form_data.get('sender_name', 'Sender'),
+                                'sender_email': form_data.get('sender_email', 'sender@example.com'),
+                                'sender_phone': form_data.get('sender_phone', '+1 555-0000'),
+                                'sender_address': form_data.get('sender_address', ''),
+                                'subject': form_data.get('subject', 'Inquiry'),
+                                'message': form_data.get('message', 'Hello')
+                            }
+                        except:
+                            self.form_data = {
+                                'sender_name': 'Sender',
+                                'sender_email': 'sender@example.com',
+                                'sender_phone': '+1 555-0000',
+                                'sender_address': '',
+                                'subject': 'Inquiry',
+                                'message': message_template or 'Hello'
+                            }
+                        
+                        # Update company_id for screenshot naming
+                        self.company_id = company.id
+                        
+                        # Find and fill form
+                        print(f"📝 [{idx}/{len(companies)}] Filling form for {company.company_name}...")
+                        form_found = self.find_and_fill_form_sync()
+                        
+                        if not form_found:
+                            print(f"❌ [{idx}/{len(companies)}] No form found")
+                            results.append({
+                                'companyId': company.id,
+                                'success': False,
+                                'error': 'No contact form found'
+                            })
+                            continue
+                        
+                        print(f"✅ [{idx}/{len(companies)}] Form filled")
+                        
+                        # Take screenshot
+                        screenshot_url = None
+                        try:
+                            screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
+                            public_url = upload_screenshot(screenshot, campaign_id, company.id)
+                            if public_url:
+                                screenshot_url = public_url
+                                print(f"📸 [{idx}/{len(companies)}] Screenshot saved: {public_url}")
+                        except Exception as e:
+                            print(f"⚠️ [{idx}/{len(companies)}] Screenshot failed: {str(e)}")
+                        
+                        # Submit form
+                        print(f"🚀 [{idx}/{len(companies)}] Submitting form...")
+                        submit_success = self.submit_form_sync()
+                        
+                        if submit_success:
+                            print(f"✅ [{idx}/{len(companies)}] SUCCESS - Form submitted for {company.company_name}")
+                            results.append({
+                                'companyId': company.id,
+                                'success': True,
+                                'screenshot_url': screenshot_url
+                            })
+                        else:
+                            print(f"❌ [{idx}/{len(companies)}] FAILED - Submission failed for {company.company_name}")
+                            results.append({
+                                'companyId': company.id,
+                                'success': False,
+                                'error': 'Form submission failed',
+                                'screenshot_url': screenshot_url
+                            })
+                        
+                        # If not the last company, reload the page for next submission
+                        if idx < len(companies):
+                            print(f"🔄 [{idx}/{len(companies)}] Reloading page for next company...")
+                            if contact_url:
+                                self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
+                            else:
+                                self.page.goto(website_url, wait_until='networkidle', timeout=30000)
+                            self.page.wait_for_timeout(2000)
+                            self.handle_cookie_consent_sync()
+                            self.page.wait_for_timeout(1000)
+                    
+                    except Exception as e:
+                        print(f"❌ [{idx}/{len(companies)}] ERROR processing {company.company_name}: {str(e)}")
+                        results.append({
+                            'companyId': company.id,
+                            'success': False,
+                            'error': str(e)
+                        })
+                
+                # Clean up
+                print("\n🧹 [BATCH SCRAPER] Cleaning up...")
+                self.browser.close()
+                print(f"✅ [BATCH SCRAPER] Batch complete: {sum(1 for r in results if r.get('success'))} succeeded, {sum(1 for r in results if not r.get('success'))} failed\n")
+                
+                return {
+                    'success': True,
+                    'results': results
+                }
+        
+        except Exception as e:
+            print(f"💥 [BATCH SCRAPER] CRITICAL ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            
+            # Mark any unprocessed companies as failed
+            for company in companies:
+                if not any(r.get('companyId') == company.id for r in results):
+                    results.append({
+                        'companyId': company.id,
+                        'success': False,
+                        'error': str(e)
+                    })
+            
+            return {
+                'success': False,
+                'error': str(e),
+                'results': results
+            }
