@@ -1354,7 +1354,7 @@ class LiveScraper:
                     # Case-insensitive search
                     selector = f'a[href*="{pattern}" i]'
                     link = self.page.locator(selector).first
-                    if link.count() > 0:  # Don't check visibility - many links are hidden (opacity:0, animations, menus)
+                    if link.count() > 0 and link.is_visible():
                         href = link.get_attribute('href')
                         if href:
                             # CRITICAL FIX: Convert relative URLs to absolute
@@ -1390,7 +1390,7 @@ class LiveScraper:
                     # Case-insensitive contains
                     selector = f'a:has-text("{text}")'
                     link = self.page.locator(selector).first
-                    if link.count() > 0:  # Don't check visibility
+                    if link.count() > 0 and link.is_visible():
                         href = link.get_attribute('href')
                         if href:
                             # Convert to absolute URL
@@ -1421,7 +1421,7 @@ class LiveScraper:
             for selector in location_selectors:
                 try:
                     link = self.page.locator(selector).first
-                    if link.count() > 0:  # Don't check visibility
+                    if link.count() > 0 and link.is_visible():
                         href = link.get_attribute('href')
                         if href:
                             # Convert to absolute URL
