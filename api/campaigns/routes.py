@@ -617,6 +617,116 @@ def get_queued_campaigns_internal():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
+def rapid_process_company(campaign_id, company_id):
+    """Process a single company quickly without WebSocket overhead (headless mode)"""
+    try:
+        from models import Company, Campaign
+        from database import db
+        from services.live_scraper import LiveScraper
+        import time
+        import asyncio
+        
+        company = Company.query.filter_by(
+            id=company_id,
+            campaign_id=campaign_id
+        ).first()
+        
+        if not company:
+            return jsonify({'error': 'Company not found'}), 404
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        # Mark as processing
+        company.status = 'processing'
+        db.session.commit()
+        
+        start_time = time.time()
+        
+        try:
+            # Prepare company data
+            company_data = {
+                'id': company.id,
+                'website_url': company.website_url,
+                'company_name': company.company_name,
+                'contact_email': company.contact_email,
+                'phone': company.phone,
+            }
+            
+            # Create scraper WITHOUT WebSocket (headless mode)
+            scraper = LiveScraper(None, company_data, campaign.message_template, campaign_id, company_id)
+            
+            # Run scraper asynchronously in headless mode
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(scraper.scrape_and_submit())
+            loop.close()
+            
+            processing_time = time.time() - start_time
+            
+            # Update company based on result
+            if result.get('success'):
+                company.status = 'completed'
+                company.error_message = None
+            else:
+                # Check if it's a CAPTCHA error
+                error_msg = result.get('error', '').lower()
+                if 'captcha' in error_msg or 'recaptcha' in error_msg or 'hcaptcha' in error_msg:
+                    company.status = 'captcha'
+                    company.error_message = 'CAPTCHA detected'
+                else:
+                    company.status = 'failed'
+                    company.error_message = result.get('error', 'Processing failed')
+            
+            # Save screenshot URL if available
+            if result.get('screenshot_url'):
+                company.screenshot_url = result.get('screenshot_url')
+            
+            db.session.commit()
+            
+            # Update campaign stats
+            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+            campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
+            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
+            
+            if campaign.total_companies > 0:
+                campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100)
+            
+            db.session.commit()
+            
+            return jsonify({
+                'success': result.get('success', False),
+                'status': company.status,
+                'companyId': company_id,
+                'screenshotUrl': company.screenshot_url,
+                'errorMessage': company.error_message,
+                'processingTime': round(processing_time, 2),
+                'company': company.to_dict()
+            }), 200
+            
+        except Exception as e:
+            # Processing error - mark as failed
+            company.status = 'failed'
+            company.error_message = str(e)
+            db.session.commit()
+            
+            return jsonify({
+                'success': False,
+                'status': 'failed',
+                'companyId': company_id,
+                'errorMessage': str(e),
+                'processingTime': time.time() - start_time
+            }), 200
+        
+    except Exception as e:
+        print(f"Error in rapid_process_company: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('/my-campaigns', methods=['GET'])
 @jwt_required()
 def get_user_campaigns():
