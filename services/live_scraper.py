@@ -1439,6 +1439,34 @@ class LiveScraper:
                 except:
                     continue
 
+            # Strategy 4: Fallback - try common contact URLs directly
+            print("[Contact Detection] No link found, trying direct navigation...")
+            base_url = self.page.url.rstrip('/')
+            common_paths = ['/contact', '/contact-us', '/contactus', '/get-in-touch', '/reach-out']
+            
+            for path in common_paths:
+                try:
+                    test_url = base_url + path
+                    print(f"[Contact Detection] Trying: {test_url}")
+                    test_response = self.page.goto(test_url, wait_until='networkidle', timeout=10000)
+                    if test_response and test_response.ok:
+                        # Check if this page has a form
+                        if self.page.locator('form').count() > 0:
+                            print(f"[Contact Detection] ✓ Found contact page via direct navigation: {test_url}")
+                            return test_url
+                        else:
+                            print(f"[Contact Detection] Page exists but no form found: {test_url}")
+                            # Go back to homepage
+                            self.page.goto(base_url, wait_until='networkidle', timeout=10000)
+                except Exception as e:
+                    print(f"[Contact Detection] Failed to load {path}: {str(e)}")
+                    # Go back to homepage for next try
+                    try:
+                        self.page.goto(base_url, wait_until='networkidle', timeout=10000)
+                    except:
+                        pass
+                    continue
+            
             print("[Contact Detection] ⚠ No dedicated contact page found, will use homepage")
             return None
             
