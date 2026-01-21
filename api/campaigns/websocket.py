@@ -62,16 +62,9 @@ def register_websocket_routes(sock):
             from services.live_scraper import LiveScraper
             scraper = LiveScraper(ws, company_data, campaign.message_template, campaign_id, company_id)
             
-            # Run async scraper in sync context
-            import nest_asyncio
-            nest_asyncio.apply()
-            
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Run scraper async
-            result = loop.run_until_complete(scraper.scrape_and_submit())
-            loop.close()
+            # Use synchronous scraper for WebSocket (avoids event loop conflicts)
+            # The sync version still supports WebSocket logging via send_log
+            result = scraper.scrape_and_submit_sync()
             
             # If cancelled, don't send completion
             if result.get('cancelled'):

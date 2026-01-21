@@ -654,15 +654,12 @@ def rapid_process_company(campaign_id, company_id):
                 'contact_email': company.contact_email,
                 'phone': company.phone,
             }
-            
+
             # Create scraper WITHOUT WebSocket (headless mode)
             scraper = LiveScraper(None, company_data, campaign.message_template, campaign_id, company_id)
-            
-            # Run scraper asynchronously in headless mode
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(scraper.scrape_and_submit())
-            loop.close()
+
+            # Run scraper SYNCHRONOUSLY (no event loop issues with parallel processing)
+            result = scraper.scrape_and_submit_sync()
             
             processing_time = time.time() - start_time
             

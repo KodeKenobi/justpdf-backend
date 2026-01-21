@@ -1,10 +1,12 @@
 """
 Live browser scraper with video streaming via WebSocket
 Uses Playwright to capture browser viewport and stream to frontend
+Also includes synchronous headless processing for parallel batch operations
 """
 import asyncio
 import base64
 from playwright.async_api import async_playwright
+from playwright.sync_api import sync_playwright
 from datetime import datetime
 import json
 import sys
@@ -75,6 +77,27 @@ class LiveScraper:
         except Exception as e:
             print("Connection interrupted")
             # If WebSocket is dead, mark as cancelled
+            if "Connection" in str(e) or "closed" in str(e).lower():
+                self.cancelled = True
+
+    def send_log_sync(self, status, action, message, details=None):
+        """Synchronous version: Send log message via WebSocket (for sync scraper)"""
+        if not self.ws:
+            print(f"[{status.upper()}] {action}: {message}")
+            return
+        try:
+            self.ws.send(json.dumps({
+                'type': 'log',
+                'data': {
+                    'status': status,
+                    'action': action,
+                    'message': message,
+                    'details': details,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            }))
+        except Exception as e:
+            print(f"[LOG] WebSocket error: {e}")
             if "Connection" in str(e) or "closed" in str(e).lower():
                 self.cancelled = True
     
@@ -1048,4 +1071,257 @@ class LiveScraper:
             import traceback
             traceback.print_exc()
             await self.send_log('failed', 'Submit Error', 'Unable to submit the form')
+            return False
+
+    def scrape_and_submit_sync(self):
+        """Synchronous version of scrape_and_submit for headless batch processing and WebSocket"""
+        try:
+            with sync_playwright() as p:
+                # Launch browser synchronously
+                self.send_log_sync('info', 'Starting', 'Launching browser...')
+                self.browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox']
+                )
+
+                context = self.browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+
+                self.page = context.new_page()
+
+                # Navigate to website
+                website_url = self.company['website_url']
+                self.send_log_sync('info', 'Navigating', f'Visiting {website_url}', {'url': website_url})
+
+                try:
+                    self.page.goto(website_url, wait_until='networkidle', timeout=30000)
+                    self.send_log_sync('success', 'Loaded', f'Successfully loaded homepage', {'url': self.page.url})
+                except Exception as e:
+                    self.send_log_sync('failed', 'Connection Error', 'Unable to connect to website')
+                    return {'success': False, 'error': 'Website connection failed'}
+
+                # Wait a bit
+                self.page.wait_for_timeout(2000)
+
+                # Handle cookie consent synchronously
+                self.send_log_sync('info', 'Cookie Consent', 'Checking for cookie modals...')
+                cookie_handled = self.handle_cookie_consent_sync()
+                if cookie_handled:
+                    self.send_log_sync('success', 'Cookie Consent', 'Cookie modal handled')
+                    self.page.wait_for_timeout(1000)
+
+                # Find contact page synchronously
+                self.send_log_sync('info', 'Contact Page', 'Searching for contact page...')
+                contact_url = self.find_contact_page_sync()
+
+                if contact_url:
+                    self.send_log_sync('success', 'Contact Page', f'Found contact page: {contact_url}')
+                    self.page.goto(contact_url, wait_until='networkidle', timeout=30000)
+                    self.send_log_sync('info', 'Loaded', f'Contact page loaded')
+                    self.page.wait_for_timeout(2000)
+                else:
+                    self.send_log_sync('info', 'Contact Page', 'No contact page found, using homepage')
+
+                # Find and fill contact form synchronously
+                self.send_log_sync('info', 'Form Search', 'Searching for contact form...')
+                form_found = self.find_and_fill_form_sync()
+
+                if form_found:
+                    self.send_log_sync('success', 'Form Found', 'Form found and filled')
+                    # Capture screenshot of filled form
+                    self.send_log_sync('info', 'Capturing', 'Taking screenshot of filled form...')
+                    screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
+
+                    # Upload screenshot
+                    if self.campaign_id and self.company_id:
+                        try:
+                            public_url = upload_screenshot(screenshot, self.campaign_id, self.company_id)
+                            if public_url:
+                                self.screenshot_url = public_url
+                                self.send_log_sync('success', 'Screenshot Ready', 'Screenshot saved successfully')
+                            else:
+                                self.send_log_sync('warning', 'Preview Failed', 'Could not save screenshot')
+                        except Exception as e:
+                            self.send_log_sync('warning', 'Preview Failed', f'Screenshot error: {str(e)}')
+
+                    # Submit the form
+                    self.send_log_sync('info', 'Submitting', 'Submitting form...')
+                    submit_success = self.submit_form_sync()
+
+                    if submit_success:
+                        self.send_log_sync('success', 'Submitted', 'Form submitted successfully')
+                        result = {'success': True, 'screenshot_url': self.screenshot_url}
+                    else:
+                        self.send_log_sync('failed', 'Submit Error', 'Unable to submit the form')
+                        result = {'success': False, 'error': 'Unable to submit form', 'screenshot_url': self.screenshot_url}
+                else:
+                    self.send_log_sync('failed', 'Form Search', 'Contact form not found')
+                    result = {'success': False, 'error': 'Contact form not found'}
+
+                # Clean up
+                self.browser.close()
+                return result
+
+        except Exception as e:
+            self.send_log_sync('error', 'Fatal Error', f'Error in processing: {str(e)}')
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'error': str(e)}
+
+    def handle_cookie_consent_sync(self):
+        """Synchronous cookie consent handling"""
+        try:
+            # Common cookie consent selectors
+            cookie_selectors = [
+                '[data-testid="cookie-accept"]',
+                '[data-testid="cookie-accept-all"]',
+                'button[id*="cookie"][id*="accept"]',
+                'button[class*="cookie"][class*="accept"]',
+                'a[id*="cookie"][id*="accept"]',
+                'a[class*="cookie"][class*="accept"]',
+                '#cookie-accept',
+                '#accept-cookies',
+                '.cookie-accept',
+                '.accept-cookies',
+                'button:contains("Accept")',
+                'button:contains("Agree")',
+                'button:contains("OK")',
+                'a:contains("Accept")',
+                'a:contains("Agree")'
+            ]
+
+            for selector in cookie_selectors:
+                try:
+                    element = self.page.locator(selector).first
+                    if element.is_visible():
+                        element.click()
+                        self.page.wait_for_timeout(1000)
+                        return True
+                except:
+                    continue
+
+            return False
+        except Exception as e:
+            print(f"[Rapid] Cookie consent error: {e}")
+            return False
+
+    def find_contact_page_sync(self):
+        """Synchronous contact page finding"""
+        try:
+            # Check current page for contact form first
+            if self.page.locator('form').count() > 0:
+                return self.page.url
+
+            # Look for contact links
+            contact_selectors = [
+                'a[href*="contact"]',
+                'a[href*="Contact"]',
+                'a:contains("contact")',
+                'a:contains("Contact")',
+                'a:contains("get in touch")',
+                'a:contains("Get in touch")'
+            ]
+
+            for selector in contact_selectors:
+                try:
+                    link = self.page.locator(selector).first
+                    if link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            return href
+                except:
+                    continue
+
+            return None
+        except Exception as e:
+            print(f"[Rapid] Contact page search error: {e}")
+            return None
+
+    def find_and_fill_form_sync(self):
+        """Synchronous form finding and filling"""
+        try:
+            # Find contact form
+            form_selectors = [
+                'form[action*="contact"]',
+                'form[action*="Contact"]',
+                'form[id*="contact"]',
+                'form[class*="contact"]',
+                'form',
+                '.contact-form',
+                '#contact-form'
+            ]
+
+            form = None
+            for selector in form_selectors:
+                try:
+                    forms = self.page.locator(selector).all()
+                    if forms:
+                        for f in forms:
+                            if f.is_visible():
+                                form = f
+                                break
+                        if form:
+                            break
+                except:
+                    continue
+
+            if not form:
+                return False
+
+            # Fill form fields
+            field_mappings = {
+                'input[name*="name"]': self.form_data['sender_name'],
+                'input[name*="email"]': self.form_data['sender_email'],
+                'input[name*="phone"]': self.form_data['sender_phone'],
+                'input[name*="subject"]': self.form_data['subject'],
+                'textarea[name*="message"]': self.form_data['message'],
+                'textarea[name*="comment"]': self.form_data['message'],
+                'input[type="text"]:first': self.form_data['sender_name'],
+                'input[type="email"]:first': self.form_data['sender_email'],
+                'textarea:first': self.form_data['message']
+            }
+
+            filled_any = False
+            for selector, value in field_mappings.items():
+                try:
+                    field = form.locator(selector).first
+                    if field.is_visible() and not field.input_value():
+                        field.fill(value)
+                        filled_any = True
+                except:
+                    continue
+
+            return filled_any
+        except Exception as e:
+            print(f"[Rapid] Form filling error: {e}")
+            return False
+
+    def submit_form_sync(self):
+        """Synchronous form submission"""
+        try:
+            submit_selectors = [
+                'input[type="submit"]',
+                'button[type="submit"]',
+                'button:contains("Submit")',
+                'button:contains("Send")',
+                'button:contains("Contact")',
+                'input[value*="submit"]',
+                'input[value*="send"]'
+            ]
+
+            for selector in submit_selectors:
+                try:
+                    button = self.page.locator(selector).first
+                    if button.is_visible():
+                        button.click()
+                        self.page.wait_for_timeout(3000)  # Wait for submission
+                        return True
+                except:
+                    continue
+
+            return False
+        except Exception as e:
+            print(f"[Rapid] Form submission error: {e}")
             return False
