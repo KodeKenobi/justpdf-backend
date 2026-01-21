@@ -1336,11 +1336,6 @@ class LiveScraper:
                 CSS_SELECTORS_PATTERNS,
                 get_all_url_variations
             )
-            
-            # Check current page for contact form first
-            if self.page.locator('form').count() > 0:
-                print("[Contact Detection] Contact form found on current page")
-                return self.page.url
 
             print(f"[Contact Detection] Searching for contact page using {len(get_all_url_variations())} URL patterns...")
             
@@ -1354,7 +1349,7 @@ class LiveScraper:
                     # Case-insensitive search
                     selector = f'a[href*="{pattern}" i]'
                     link = self.page.locator(selector).first
-                    if link.count() > 0 and link.is_visible():
+                    if link.is_visible():
                         href = link.get_attribute('href')
                         if href:
                             # CRITICAL FIX: Convert relative URLs to absolute
@@ -1390,7 +1385,7 @@ class LiveScraper:
                     # Case-insensitive contains
                     selector = f'a:has-text("{text}")'
                     link = self.page.locator(selector).first
-                    if link.count() > 0 and link.is_visible():
+                    if link.is_visible():
                         href = link.get_attribute('href')
                         if href:
                             # Convert to absolute URL
