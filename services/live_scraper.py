@@ -1288,36 +1288,98 @@ class LiveScraper:
             return {'success': False, 'error': user_error}
 
     def handle_cookie_consent_sync(self):
-        """Synchronous cookie consent handling"""
+        """Synchronous cookie consent handling - AGGRESSIVE dismissal"""
         try:
-            # Common cookie consent selectors
+            print("🍪 [Cookie Consent] Attempting to dismiss cookie banners...")
+            
+            # Wait for page to settle first
+            self.page.wait_for_timeout(1500)
+            
+            # Comprehensive cookie consent selectors
             cookie_selectors = [
+                # Data attributes
                 '[data-testid="cookie-accept"]',
                 '[data-testid="cookie-accept-all"]',
-                'button[id*="cookie"][id*="accept"]',
-                'button[class*="cookie"][class*="accept"]',
-                'a[id*="cookie"][id*="accept"]',
-                'a[class*="cookie"][class*="accept"]',
+                '[data-cookiebanner="accept"]',
+                '[data-cookie="accept"]',
+                
+                # IDs
                 '#cookie-accept',
                 '#accept-cookies',
+                '#cookieAccept',
+                '#acceptCookies',
+                '#onetrust-accept-btn-handler',
+                '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+                
+                # Classes
                 '.cookie-accept',
                 '.accept-cookies',
-                'button:contains("Accept")',
-                'button:contains("Agree")',
-                'button:contains("OK")',
-                'a:contains("Accept")',
-                'a:contains("Agree")'
+                '.cookie-consent-accept',
+                '.cc-accept',
+                '.cc-allow',
+                '.cc-dismiss',
+                
+                # Attribute contains (broader)
+                'button[id*="cookie" i][id*="accept" i]',
+                'button[class*="cookie" i][class*="accept" i]',
+                'a[id*="cookie" i][id*="accept" i]',
+                'a[class*="cookie" i][class*="accept" i]',
+                'button[class*="accept" i][class*="all" i]',
+                
+                # Text-based (case insensitive)
+                'button:has-text("Accept")',
+                'button:has-text("Accept all")',
+                'button:has-text("Accept All")',
+                'button:has-text("ACCEPT")',
+                'button:has-text("Agree")',
+                'button:has-text("OK")',
+                'button:has-text("Got it")',
+                'button:has-text("I Agree")',
+                'button:has-text("Allow all")',
+                'a:has-text("Accept")',
+                'a:has-text("Agree")',
+                
+                # Common frameworks
+                '.cookie-notice button',
+                '.cookie-banner button',
+                '.cookie-consent button',
+                '#cookieNotice button',
+                '[role="dialog"] button:has-text("Accept")',
             ]
 
+            clicked = False
             for selector in cookie_selectors:
                 try:
-                    element = self.page.locator(selector).first
-                    if element.is_visible():
-                        element.click()
-                        self.page.wait_for_timeout(1000)
-                        return True
+                    elements = self.page.locator(selector)
+                    count = elements.count()
+                    
+                    if count > 0:
+                        # Try first visible element
+                        for i in range(min(count, 3)):  # Try up to 3 matches
+                            try:
+                                element = elements.nth(i)
+                                if element.is_visible():
+                                    print(f"🍪 [Cookie Consent] Found and clicking: {selector}")
+                                    element.click()
+                                    self.page.wait_for_timeout(1000)
+                                    clicked = True
+                                    break
+                            except:
+                                continue
+                    
+                    if clicked:
+                        break
                 except:
                     continue
+            
+            if clicked:
+                print("✅ [Cookie Consent] Successfully dismissed cookie banner")
+                # Extra wait to ensure modal is fully gone
+                self.page.wait_for_timeout(500)
+                return True
+            else:
+                print("ℹ️ [Cookie Consent] No cookie banner found (or already dismissed)")
+                return False
 
             return False
         except Exception as e:
@@ -1703,6 +1765,11 @@ class LiveScraper:
                             continue
                         
                         print(f"✅ [{idx}/{len(companies)}] Form filled")
+                        
+                        # CRITICAL: Dismiss any remaining cookie modals before screenshot
+                        print(f"🍪 [{idx}/{len(companies)}] Final cookie check before screenshot...")
+                        self.handle_cookie_consent_sync()
+                        self.page.wait_for_timeout(500)
                         
                         # Take screenshot
                         screenshot_url = None
