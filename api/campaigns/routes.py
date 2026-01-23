@@ -468,6 +468,41 @@ def update_company(company_id):
             company.contact_page_found = data['contact_page_found']
         if 'form_found' in data:
             company.form_found = data['form_found']
+        if 'contact_method' in data:
+            company.contact_method = data['contact_method']
+        if 'emails_found' in data:
+            # Handle both JSON string and list
+            if isinstance(data['emails_found'], str):
+                import json
+                company.emails_found = json.loads(data['emails_found'])
+            else:
+                company.emails_found = data['emails_found']
+        if 'emails_sent' in data:
+            # Handle both JSON string and list
+            if isinstance(data['emails_sent'], str):
+                import json
+                company.emails_sent = json.loads(data['emails_sent'])
+            else:
+                company.emails_sent = data['emails_sent']
+        if 'email_sent_at' in data:
+            if data['email_sent_at']:
+                company.email_sent_at = datetime.fromisoformat(data['email_sent_at'].replace('Z', '+00:00'))
+        if 'form_structure' in data:
+            if isinstance(data['form_structure'], str):
+                import json
+                company.form_structure = json.loads(data['form_structure'])
+            else:
+                company.form_structure = data['form_structure']
+        if 'field_mappings' in data:
+            if isinstance(data['field_mappings'], str):
+                import json
+                company.field_mappings = json.loads(data['field_mappings'])
+            else:
+                company.field_mappings = data['field_mappings']
+        if 'form_complexity' in data:
+            company.form_complexity = data['form_complexity']
+        if 'pattern_learned' in data:
+            company.pattern_learned = data['pattern_learned']
         if 'screenshot_url' in data:
             company.screenshot_url = data['screenshot_url']
         if 'processed_at' in data:
@@ -481,7 +516,11 @@ def update_company(company_id):
         # Update campaign statistics
         campaign = company.campaign
         campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
-        campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
+        # Count success as both 'success' status and companies with emails_sent (email fallback)
+        success_companies = Company.query.filter_by(campaign_id=campaign.id).filter(
+            db.or_(Company.status == 'success', Company.emails_sent.isnot(None))
+        ).count()
+        campaign.success_count = success_companies
         campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
         campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
         
@@ -684,8 +723,18 @@ def rapid_process_batch(campaign_id):
                 result = batch_result['results'][idx] if idx < len(batch_result['results']) else {'success': False, 'error': 'No result'}
                 
                 if result.get('success'):
-                    company.status = 'completed'
+                    company.status = 'success'
                     company.error_message = None
+                    # Handle email fallback results
+                    if result.get('method') == 'email':
+                        company.contact_method = 'email'
+                        if result.get('emails_found'):
+                            company.emails_found = result.get('emails_found')
+                        if result.get('emails_sent'):
+                            company.emails_sent = result.get('emails_sent')
+                            company.email_sent_at = datetime.utcnow()
+                    else:
+                        company.contact_method = 'form'
                 else:
                     error_msg = result.get('error', '').lower()
                     if 'captcha' in error_msg or 'recaptcha' in error_msg or 'hcaptcha' in error_msg:
@@ -694,6 +743,9 @@ def rapid_process_batch(campaign_id):
                     else:
                         company.status = 'failed'
                         company.error_message = result.get('error', 'Processing failed')
+                    company.contact_method = result.get('method', 'none')
+                    if result.get('emails_found'):
+                        company.emails_found = result.get('emails_found')
                 
                 if result.get('screenshot_url'):
                     company.screenshot_url = result.get('screenshot_url')
@@ -709,8 +761,13 @@ def rapid_process_batch(campaign_id):
             db.session.commit()
             
             # Update campaign stats
+            from sqlalchemy import or_
             campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
-            campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
+            # Count success as both 'success' status and companies with emails_sent (email fallback)
+            success_companies = Company.query.filter_by(campaign_id=campaign.id).filter(
+                or_(Company.status == 'success', Company.emails_sent.isnot(None))
+            ).count()
+            campaign.success_count = success_companies
             campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
             campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
             
@@ -787,27 +844,77 @@ def rapid_process_company(campaign_id, company_id):
                 'phone': company.phone,
             }
 
-            # Create scraper WITHOUT WebSocket (headless mode)
-            scraper = LiveScraper(None, company_data, campaign.message_template, campaign_id, company_id)
+            # IMPLEMENT ADVANCED MULTI-METHOD CONTACT DETECTION (HEADLESS BROWSER)
+            from services.advanced_contact_detector import AdvancedContactDetector
+            from playwright.sync_api import sync_playwright
 
-            # Run scraper SYNCHRONOUSLY
-            # Flask HTTP requests are synchronous, so no asyncio loop conflict
-            result = scraper.scrape_and_submit_sync()
+            # Create logger function
+            def logger(level, action, message):
+                print(f"[{level}] {action}: {message}")
+
+            # Launch headless browser directly
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                )
+
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+
+                page = context.new_page()
+
+                # Use advanced detector with headless browser
+                detector = AdvancedContactDetector(
+                    page,
+                    company_data,
+                    campaign.message_template,
+                    campaign_id,
+                    company_id,
+                    logger
+                )
+
+                result = detector.detect_and_submit()
+
+                # Clean up browser
+                browser.close()
             
             processing_time = time.time() - start_time
             
-            # Update company based on result
+            # Update company based on advanced detection result
             if result.get('success'):
-                company.status = 'completed'
-                company.error_message = None
+                if result.get('contact_info_found'):
+                    company.status = 'contact_info_found'
+                    company.contact_method = 'contact_page_only'
+                    # Store extracted contact info if available
+                    if result.get('contact_info'):
+                        contact_info = result.get('contact_info')
+                        if contact_info.get('emails'):
+                            company.emails_found = contact_info['emails']
+                        # Could add phone/social storage here if needed
+                else:
+                    company.status = 'completed'
+                    company.contact_method = result.get('method', 'form_submitted')
             else:
-                # Check if it's a CAPTCHA error
+                # Handle different failure types
                 error_msg = result.get('error', '').lower()
-                if 'captcha' in error_msg or 'recaptcha' in error_msg or 'hcaptcha' in error_msg:
+                if 'captcha' in error_msg or result.get('status') == 'captcha':
                     company.status = 'captcha'
-                    company.error_message = 'CAPTCHA detected'
+                    company.contact_method = 'form_with_captcha'
+                    company.error_message = result.get('error', 'CAPTCHA detected')
+                elif result.get('method') == 'no_contact_found':
+                    company.status = 'failed'
+                    company.contact_method = 'no_contact_found'
+                    company.error_message = 'No contact form or page found'
+                elif result.get('method') == 'form_no_fields':
+                    company.status = 'failed'
+                    company.contact_method = 'form_no_fields'
+                    company.error_message = 'Form found but no suitable fields to fill'
                 else:
                     company.status = 'failed'
+                    company.contact_method = result.get('method', 'unknown_error')
                     company.error_message = result.get('error', 'Processing failed')
             
             # Save screenshot URL if available
@@ -834,6 +941,10 @@ def rapid_process_company(campaign_id, company_id):
                 'screenshotUrl': company.screenshot_url,
                 'errorMessage': company.error_message,
                 'processingTime': round(processing_time, 2),
+                'method': result.get('method', 'unknown'),
+                'contactMethod': company.contact_method,
+                'fieldsFilled': result.get('fields_filled', 0),
+                'contactInfo': result.get('contact_info'),
                 'company': company.to_dict()
             }), 200
             
