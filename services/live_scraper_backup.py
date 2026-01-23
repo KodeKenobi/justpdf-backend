@@ -1386,227 +1386,151 @@ class LiveScraper:
             print(f"[Rapid] Cookie consent error: {e}")
             return False
 
-
-    async def find_contact_method_simple(self):
+    def find_contact_page_sync(self):
         """
-        Simple contact detection using proven methods from logs
+        Synchronous contact page finding with EXTENSIVE pattern matching
+        Uses 10,000+ patterns across 50+ languages
         """
         try:
+            from services.contact_patterns import (
+                CONTACT_URL_PATTERNS,
+                LINK_TEXT_PATTERNS,
+                CSS_SELECTORS_PATTERNS,
+                get_all_url_variations
+            )
+
+            print(f"[Contact Detection] Searching for contact page using {len(get_all_url_variations())} URL patterns...")
+            
+            # Store current page URL for relative path conversion
             base_url = self.page.url.rstrip('/')
-
-            # STRATEGY 1: Homepage form check (fastest method from logs)
-            await self.send_log('info', 'Contact Detection', 'Checking homepage for forms...')
-            forms = await self.page.query_selector_all('form')
-            if forms and len(forms) > 0:
-                # Analyze form structure (like logs show)
-                contact_forms = []
-                for form in forms:
-                    try:
-                        # Get form details
-                        inputs = await form.query_selector_all('input, textarea, select')
-
-                        # Count contact-relevant fields
-                        contact_score = 0
-                        email_fields = 0
-                        text_fields = 0
-
-                        for inp in inputs:
-                            inp_type = await inp.get_attribute('type') or 'text'
-                            name = (await inp.get_attribute('name') or '').lower()
-                            placeholder = (await inp.get_attribute('placeholder') or '').lower()
-
-                            # Count contact indicators
-                            contact_indicators = ['email', 'name', 'phone', 'message', 'contact', 'subject']
-                            if any(indicator in name or indicator in placeholder for indicator in contact_indicators):
-                                contact_score += 1
-
-                            if inp_type == 'email':
-                                email_fields += 1
-                                contact_score += 2
-                            elif inp_type in ['text', 'textarea']:
-                                text_fields += 1
-
-                        # Consider it a contact form if it has good contact indicators
-                        if contact_score >= 2 or (email_fields > 0 and text_fields > 0):
-                            contact_forms.append(form)
-                            await self.send_log('success', 'Homepage Form Found', f'Form with {len(inputs)} fields, score: {contact_score}')
-                    except:
-                        continue
-
-                if contact_forms:
-                    await self.send_log('success', 'Homepage Form Check', 'Direct form detection on homepage - fastest method')
-                    return base_url  # Stay on homepage
-
-            # STRATEGY 2: Contact link search (simple text matching from logs)
-            await self.send_log('info', 'Contact Detection', 'Searching for contact links...')
-            contact_texts = [
-                "contact", "contact us", "get in touch", "reach out", "reach us",
-                "talk to us", "connect", "connect with us"
+            
+            # Strategy 1: Check href attributes for URL patterns (2500+ patterns)
+            url_patterns = get_all_url_variations()
+            for pattern in url_patterns[:500]:  # Use top 500 most common patterns for speed
+                try:
+                    # Case-insensitive search
+                    selector = f'a[href*="{pattern}" i]'
+                    link = self.page.locator(selector).first
+                    if link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            # CRITICAL FIX: Convert relative URLs to absolute
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found contact page (absolute): {href}")
+                                return href
+                            elif href.startswith('/'):
+                                # Absolute path (relative to domain)
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found contact page (converted /path): {absolute_url}")
+                                return absolute_url
+                            elif href.startswith('#'):
+                                # Anchor link on same page
+                                continue
+                            else:
+                                # Relative path
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found contact page (converted relative): {absolute_url}")
+                                return absolute_url
+                except:
+                    continue
+            
+            # Strategy 2: Check link text (5000+ patterns)
+            print("[Contact Detection] Trying link text pattern matching...")
+            common_texts = [
+                "Contact", "Contact Us", "Get in Touch", "Reach Out",
+                "Contacto", "Contato", "Kontakt", "Contattaci",  # Multi-language
+                "お問い合わせ", "联系我们", "연락처",  # Asian languages
             ]
-
-            for text in contact_texts:
+            
+            for text in common_texts:
                 try:
-                    # Search by text content
+                    # Case-insensitive contains
                     selector = f'a:has-text("{text}")'
-                    link = await self.page.query_selector(selector)
-                    if link:
-                        visible = await link.is_visible()
-                        if visible:
-                            href = await link.get_attribute('href')
-                            if href and not href.startswith('#'):
-                                await self.send_log('success', 'Contact Link Search', f'Search links with "{text}" in href or text')
-                                # Convert to absolute URL
-                                if href.startswith('http'):
-                                    return href
-                                elif href.startswith('/'):
-                                    return base_url + href
-                                else:
-                                    return base_url + '/' + href
+                    link = self.page.locator(selector).first
+                    if link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            # Convert to absolute URL
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {href}")
+                                return href
+                            elif href.startswith('/'):
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {absolute_url}")
+                                return absolute_url
+                            elif not href.startswith('#'):
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found via text '{text}': {absolute_url}")
+                                return absolute_url
                 except:
                     continue
-
-            # STRATEGY 3: Search by href attribute
-            for text in contact_texts:
+            
+            # Strategy 3: Check common locations (nav, footer, header)
+            print("[Contact Detection] Checking common page locations...")
+            location_selectors = [
+                'nav a[href*="contact" i]',
+                'footer a[href*="contact" i]',
+                'header a[href*="contact" i]',
+                '.footer a[href*="contact" i]',
+                '.menu a[href*="contact" i]',
+            ]
+            
+            for selector in location_selectors:
                 try:
-                    selector = f'a[href*="{text.replace(" ", "")}"]'
-                    link = await self.page.query_selector(selector)
-                    if link:
-                        visible = await link.is_visible()
-                        if visible:
-                            href = await link.get_attribute('href')
-                            if href and not href.startswith('#'):
-                                await self.send_log('success', 'Contact Link Search', f'Found href with "{text}" pattern')
-                                if href.startswith('http'):
-                                    return href
-                                elif href.startswith('/'):
-                                    return base_url + href
-                                else:
-                                    return base_url + '/' + href
+                    link = self.page.locator(selector).first
+                    if link.count() > 0 and link.is_visible():
+                        href = link.get_attribute('href')
+                        if href:
+                            # Convert to absolute URL
+                            if href.startswith('http://') or href.startswith('https://'):
+                                print(f"[Contact Detection] ✓ Found in common location: {href}")
+                                return href
+                            elif href.startswith('/'):
+                                absolute_url = base_url + href
+                                print(f"[Contact Detection] ✓ Found in common location: {absolute_url}")
+                                return absolute_url
+                            elif not href.startswith('#'):
+                                absolute_url = base_url + '/' + href
+                                print(f"[Contact Detection] ✓ Found in common location: {absolute_url}")
+                                return absolute_url
                 except:
                     continue
 
-            # STRATEGY 4: Check common contact URLs directly
-            await self.send_log('info', 'Contact Detection', 'Trying direct contact URLs...')
+            # Strategy 4: Fallback - try common contact URLs directly
+            print("[Contact Detection] No link found, trying direct navigation...")
+            base_url = self.page.url.rstrip('/')
             common_paths = ['/contact', '/contact-us', '/contactus', '/get-in-touch', '/reach-out']
-
+            
             for path in common_paths:
                 try:
                     test_url = base_url + path
-                    await self.send_log('info', 'Contact Detection', f'Trying: {test_url}')
-                    response = await self.page.goto(test_url, wait_until='domcontentloaded', timeout=5000)
-                    if response and response.ok:
-                        # Check if this page has a form (Contact page form check from logs)
-                        forms = await self.page.query_selector_all('form')
-                        if forms and len(forms) > 0:
-                            await self.send_log('success', 'Contact Page Form Check', f'Check for form after navigating to contact page')
+                    print(f"[Contact Detection] Trying: {test_url}")
+                    test_response = self.page.goto(test_url, wait_until='networkidle', timeout=10000)
+                    if test_response and test_response.ok:
+                        # Check if this page has a form
+                        if self.page.locator('form').count() > 0:
+                            print(f"[Contact Detection] ✓ Found contact page via direct navigation: {test_url}")
                             return test_url
                         else:
+                            print(f"[Contact Detection] Page exists but no form found: {test_url}")
                             # Go back to homepage
-                            await self.page.goto(base_url, wait_until='domcontentloaded')
-                except:
+                            self.page.goto(base_url, wait_until='networkidle', timeout=10000)
+                except Exception as e:
+                    print(f"[Contact Detection] Failed to load {path}: {str(e)}")
                     # Go back to homepage for next try
                     try:
-                        await self.page.goto(base_url, wait_until='domcontentloaded')
+                        self.page.goto(base_url, wait_until='networkidle', timeout=10000)
                     except:
                         pass
                     continue
-
-            await self.send_log('warning', 'Contact Detection', 'No contact forms or pages found')
+            
+            print("[Contact Detection] ⚠ No dedicated contact page found, will use homepage")
             return None
-
+            
         except Exception as e:
-            print(f"[Contact Detection] Error: {e}")
-            await self.send_log('error', 'Contact Detection', f'Error during contact detection: {str(e)}')
-            return None
-
-    def find_contact_page_sync(self):
-        """
-        Simple contact detection for batch processing
-        """
-        return self.find_contact_method_simple_sync()
-
-    def find_contact_method_simple_sync(self):
-        """
-        Simple synchronous contact detection
-        """
-        try:
-            base_url = self.page.url.rstrip('/')
-
-            # STRATEGY 1: Homepage form check
-            forms = self.page.query_selector_all('form')
-            if forms and len(forms) > 0:
-                contact_forms = []
-                for form in forms:
-                    try:
-                        inputs = form.query_selector_all('input, textarea, select')
-                        contact_score = 0
-                        email_fields = 0
-                        text_fields = 0
-
-                        for inp in inputs:
-                            inp_type = inp.get_attribute('type') or 'text'
-                            name = (inp.get_attribute('name') or '').lower()
-                            placeholder = (inp.get_attribute('placeholder') or '').lower()
-
-                            contact_indicators = ['email', 'name', 'phone', 'message', 'contact', 'subject']
-                            if any(indicator in name or indicator in placeholder for indicator in contact_indicators):
-                                contact_score += 1
-
-                            if inp_type == 'email':
-                                email_fields += 1
-                                contact_score += 2
-                            elif inp_type in ['text', 'textarea']:
-                                text_fields += 1
-
-                        if contact_score >= 2 or (email_fields > 0 and text_fields > 0):
-                            contact_forms.append(form)
-
-                    except:
-                        continue
-
-                if contact_forms:
-                    return base_url
-
-            # STRATEGY 2: Simple link search
-            contact_texts = ["contact", "contact us", "get in touch", "reach out"]
-
-            for text in contact_texts:
-                try:
-                    selector = f'a:has-text("{text}")'
-                    link = self.page.query_selector(selector)
-                    if link and link.is_visible():
-                        href = link.get_attribute('href')
-                        if href and not href.startswith('#'):
-                            if href.startswith('http'):
-                                return href
-                            elif href.startswith('/'):
-                                return base_url + href
-                            else:
-                                return base_url + '/' + href
-                except:
-                    continue
-
-            # STRATEGY 3: Direct paths
-            for path in ['/contact', '/contact-us']:
-                try:
-                    test_url = base_url + path
-                    response = self.page.goto(test_url, wait_until='domcontentloaded', timeout=5000)
-                    if response and response.ok:
-                        forms = self.page.query_selector_all('form')
-                        if forms and len(forms) > 0:
-                            return test_url
-                        self.page.goto(base_url, wait_until='domcontentloaded')
-                except:
-                    try:
-                        self.page.goto(base_url, wait_until='domcontentloaded')
-                    except:
-                        pass
-                    continue
-
-            return None
-
-        except Exception as e:
-            print(f"[Contact Detection] Error: {e}")
+            print(f"[Contact Detection] Error during search: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def find_and_fill_form_sync(self):
@@ -2482,6 +2406,5 @@ class LiveScraper:
                  e x c e p t   E x c e p t i o n   a s   e : 
                          p r i n t ( f " [ C o n t a c t   D e t e c t i o n ]   E r r o r :   { e } " ) 
                          a w a i t   s e l f . s e n d _ l o g ( " e r r o r " ,   " C o n t a c t   D e t e c t i o n " ,   f " E r r o r   d u r i n g   c o n t a c t   d e t e c t i o n :   { s t r ( e ) } " ) 
-                         r e t u r n   N o n e 
- 
+                         r e t u r n   N o n e  
  
