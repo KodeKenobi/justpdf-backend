@@ -43,20 +43,41 @@ class RapidProcessor {
   }
 
   async handleCookieModal(page) {
+    // Try accept buttons first, then reject/close buttons
     const selectors = [
+      // Accept buttons
       'button:has-text("Accept")',
       'button:has-text("Accept All")',
       'button:has-text("I Accept")',
+      'button:has-text("Agree")',
       '#accept-cookies',
-      '.cookie-accept'
+      '#acceptCookies',
+      '.cookie-accept',
+      '.accept-cookies',
+      '[aria-label*="Accept" i]',
+      '[aria-label*="Agree" i]',
+      // Reject/Close buttons
+      'button:has-text("Reject")',
+      'button:has-text("Reject All")',
+      'button:has-text("Decline")',
+      'button:has-text("Close")',
+      '[aria-label*="Close" i]',
+      '[aria-label*="Reject" i]',
+      '.cookie-close',
+      '.cookie-dismiss',
+      // Generic close buttons on modals
+      '[class*="cookie" i] button[class*="close" i]',
+      '[class*="consent" i] button[class*="close" i]',
+      '[id*="cookie" i] button[class*="close" i]'
     ];
 
     for (const selector of selectors) {
       try {
         const element = page.locator(selector).first();
-        if (await element.isVisible({ timeout: 500 })) {
+        if (await element.isVisible({ timeout: 300 })) {
           await element.click();
           await page.waitForTimeout(200);
+          this.log('INFO', 'Cookie Modal', `Dismissed using: ${selector}`);
           return true;
         }
       } catch (e) {
@@ -183,6 +204,10 @@ class RapidProcessor {
           fields_filled: filledCount
         };
       }
+
+      // CRITICAL: Dismiss any remaining cookie modals before screenshot
+      await this.handleCookieModal(page);
+      await page.waitForTimeout(300);
 
       // Take screenshot before submit
       const screenshotPath = `screenshots/before-submit-${Date.now()}.png`;
