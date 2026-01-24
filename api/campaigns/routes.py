@@ -549,15 +549,16 @@ def get_queued_campaigns_internal():
 @campaigns_api.route('/<int:campaign_id>/rapid-process-batch', methods=['POST'])
 def rapid_process_batch(campaign_id):
     """
-    Process multiple companies with the same website URL in ONE browser session
-    Visits website once, submits multiple forms sequentially
-    Example: 5 companies with same URL = 1 visit, 5 submissions
-    Uses AdvancedContactDetector for sophisticated detection
+    REVAMPED: Fast campaign processing using fast-contact-analyzer logic
+    - Stops after finding ONE contact method per site (optimized)
+    - Submits forms when found
+    - Sends emails when no form but email found
+    Based on scripts/fast-contact-analyzer.js strategy
     """
     try:
         from models import Company, Campaign
         from database import db
-        from services.advanced_contact_detector import AdvancedContactDetector
+        from services.fast_campaign_processor import FastCampaignProcessor
         from playwright.sync_api import sync_playwright
         import time
         
@@ -583,7 +584,7 @@ def rapid_process_batch(campaign_id):
         # Verify all companies have the same website URL
         website_url = companies[0].website_url
         if not all(c.website_url == website_url for c in companies):
-            return jsonify({'error': 'All companies must have the same website URL for batch processing'}), 400
+            return jsonify({'error': 'All companies must have same URL for batch processing'}), 400
         
         # Mark all as processing
         for company in companies:
@@ -596,7 +597,7 @@ def rapid_process_batch(campaign_id):
         try:
             # Import required modules
             try:
-                from services.advanced_contact_detector import AdvancedContactDetector
+                from services.fast_campaign_processor import FastCampaignProcessor
                 from playwright.sync_api import sync_playwright
             except Exception as import_error:
                 error_msg = f"Failed to import required modules: {str(import_error)}"
@@ -639,7 +640,7 @@ def rapid_process_batch(campaign_id):
                     
                     # Navigate to website once (first company's URL)
                     try:
-                        page.goto(website_url, wait_until='networkidle', timeout=30000)
+                        page.goto(website_url, wait_until='domcontentloaded', timeout=30000)
                         page.wait_for_timeout(2000)  # Wait for page to fully load
                     except Exception as e:
                         logger('error', 'Navigation Failed', f'Failed to navigate to {website_url}: {str(e)}')
@@ -667,10 +668,11 @@ def rapid_process_batch(campaign_id):
                                 'company_name': company.company_name,
                                 'contact_email': company.contact_email,
                                 'phone': company.phone,
+                                'contact_person': company.contact_person if hasattr(company, 'contact_person') else None
                             }
                             
-                            # Use advanced detector with existing page
-                            detector = AdvancedContactDetector(
+                            # Use Fast Campaign Processor with existing page
+                            processor = FastCampaignProcessor(
                                 page,
                                 company_data,
                                 message_template_str,
@@ -679,26 +681,36 @@ def rapid_process_batch(campaign_id):
                                 logger
                             )
                             
-                            # Detect and submit
-                            result = detector.detect_and_submit()
+                            # Process company (detects, fills, and submits in one go)
+                            result = processor.process_company()
                             
                             # Update company based on result
                             if result.get('success'):
-                                if result.get('contact_info_found'):
+                                if result['method'] == 'email_sent':
+                                    company.status = 'completed'
+                                    company.contact_method = 'email_sent'
+                                    company.error_message = 'Email sent directly to contact'
+                                elif result['method'].startswith('form_submitted'):
+                                    company.status = 'completed'
+                                    company.contact_method = 'form_submitted'
+                                    company.error_message = None
+                                elif result['method'] == 'contact_page_only':
                                     company.status = 'contact_info_found'
                                     company.contact_method = 'contact_page_only'
-                                    if result.get('contact_info'):
-                                        contact_info = result.get('contact_info')
-                                        if contact_info.get('emails'):
-                                            company.emails_found = contact_info['emails']
+                                    if result.get('contact_info') and result['contact_info'].get('emails'):
+                                        company.emails_found = result['contact_info']['emails']
+                                elif result['method'] == 'form_in_iframe':
+                                    company.status = 'contact_info_found'
+                                    company.contact_method = 'form_in_iframe'
+                                    company.error_message = result.get('error', 'Form found in iframe')
                                 else:
                                     company.status = 'completed'
                                     company.contact_method = result.get('method', 'form_submitted')
-                                company.error_message = None
+                                    company.error_message = None
                             else:
                                 # Handle different failure types
                                 error_msg = result.get('error', '').lower()
-                                if 'captcha' in error_msg or result.get('status') == 'captcha':
+                                if 'captcha' in error_msg:
                                     company.status = 'captcha'
                                     company.contact_method = 'form_with_captcha'
                                     company.error_message = 'CAPTCHA detected'
@@ -707,11 +719,9 @@ def rapid_process_batch(campaign_id):
                                     company.error_message = result.get('error', 'Processing failed')
                                     company.contact_method = result.get('method', 'none')
                                 
-                                # Store contact info if found
-                                if result.get('contact_info'):
-                                    contact_info = result.get('contact_info')
-                                    if contact_info.get('emails'):
-                                        company.emails_found = contact_info['emails']
+                                # Store contact info if found even on failure
+                                if result.get('contact_info') and result['contact_info'].get('emails'):
+                                    company.emails_found = result['contact_info']['emails']
                             
                             # Store screenshot if available
                             if result.get('screenshot_url'):
@@ -735,7 +745,7 @@ def rapid_process_batch(campaign_id):
                             if idx < len(companies) - 1:
                                 logger('info', 'Batch Processing', 'Reloading page for next company...')
                                 try:
-                                    page.goto(website_url, wait_until='networkidle', timeout=30000)
+                                    page.goto(website_url, wait_until='domcontentloaded', timeout=30000)
                                     page.wait_for_timeout(2000)
                                 except Exception as e:
                                     logger('warning', 'Page Reload', f'Failed to reload: {str(e)}')
