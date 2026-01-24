@@ -704,6 +704,17 @@ def rapid_process_batch(campaign_id):
         results = []
         
         try:
+            # Import required modules
+            try:
+                from services.advanced_contact_detector import AdvancedContactDetector
+                from playwright.sync_api import sync_playwright
+            except Exception as import_error:
+                error_msg = f"Failed to import required modules: {str(import_error)}"
+                print(f"Import error in batch: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(error_msg)
+            
             # Create logger function
             def logger(level, action, message):
                 print(f"[{level}] {action}: {message}")
@@ -722,7 +733,8 @@ def rapid_process_batch(campaign_id):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
             # Launch headless browser - ONE session for all companies
-            with sync_playwright() as p:
+            try:
+                with sync_playwright() as p:
                 browser = p.chromium.launch(
                     headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
                     args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
@@ -854,6 +866,12 @@ def rapid_process_batch(campaign_id):
                 
                 # Clean up browser
                 browser.close()
+            except Exception as playwright_error:
+                error_msg = f"Playwright error in batch: {str(playwright_error)}"
+                print(f"Error in rapid_process_batch Playwright: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(error_msg)
             
             processing_time = time.time() - start_time
             
@@ -915,7 +933,6 @@ def rapid_process_company(campaign_id, company_id):
     try:
         from models import Company, Campaign
         from database import db
-        from services.live_scraper import LiveScraper
         import time
         
         company = Company.query.filter_by(
@@ -947,8 +964,23 @@ def rapid_process_company(campaign_id, company_id):
             }
 
             # IMPLEMENT ADVANCED MULTI-METHOD CONTACT DETECTION (HEADLESS BROWSER)
-            from services.advanced_contact_detector import AdvancedContactDetector
-            from playwright.sync_api import sync_playwright
+            try:
+                from services.advanced_contact_detector import AdvancedContactDetector
+            except Exception as import_error:
+                error_msg = f"Failed to import AdvancedContactDetector: {str(import_error)}"
+                print(f"Import error: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(error_msg)
+            
+            try:
+                from playwright.sync_api import sync_playwright
+            except Exception as import_error:
+                error_msg = f"Failed to import Playwright: {str(import_error)}"
+                print(f"Import error: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(error_msg)
 
             # Create logger function
             def logger(level, action, message):
@@ -968,33 +1000,40 @@ def rapid_process_company(campaign_id, company_id):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
 
             # Launch headless browser directly
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
-                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                )
+            try:
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(
+                        headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                    )
 
-                context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                )
+                    context = browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
 
-                page = context.new_page()
+                    page = context.new_page()
 
-                # Use advanced detector with headless browser
-                detector = AdvancedContactDetector(
-                    page,
-                    company_data,
-                    message_template_str,
-                    campaign_id,
-                    company_id,
-                    logger
-                )
+                    # Use advanced detector with headless browser
+                    detector = AdvancedContactDetector(
+                        page,
+                        company_data,
+                        message_template_str,
+                        campaign_id,
+                        company_id,
+                        logger
+                    )
 
-                result = detector.detect_and_submit()
+                    result = detector.detect_and_submit()
 
-                # Clean up browser
-                browser.close()
+                    # Clean up browser
+                    browser.close()
+            except Exception as playwright_error:
+                error_msg = f"Playwright error: {str(playwright_error)}"
+                print(f"Error in rapid_process_company Playwright: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                raise Exception(error_msg)
             
             processing_time = time.time() - start_time
             
