@@ -332,6 +332,31 @@ def delete_campaign(campaign_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/<int:campaign_id>/companies', methods=['GET'])
+def get_campaign_companies(campaign_id):
+    """Get all companies for a specific campaign"""
+    try:
+        from models import Campaign, Company
+        
+        campaign = Campaign.query.get(campaign_id)
+        
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        # Get all companies for this campaign
+        companies = Company.query.filter_by(campaign_id=campaign_id).all()
+        
+        return jsonify({
+            'success': True,
+            'companies': [company.to_dict() for company in companies]
+        }), 200
+        
+    except Exception as e:
+        print(f"Error fetching campaign companies: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('/companies/<int:company_id>', methods=['PATCH'])
 def update_company(company_id):
     """Update a specific company in a campaign"""
