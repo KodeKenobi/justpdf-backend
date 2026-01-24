@@ -662,11 +662,13 @@ def rapid_process_batch(campaign_id):
     Process multiple companies with the same website URL in ONE browser session
     Visits website once, submits multiple forms sequentially
     Example: 5 companies with same URL = 1 visit, 5 submissions
+    Uses AdvancedContactDetector for sophisticated detection
     """
     try:
         from models import Company, Campaign
         from database import db
-        from services.live_scraper import LiveScraper
+        from services.advanced_contact_detector import AdvancedContactDetector
+        from playwright.sync_api import sync_playwright
         import time
         
         data = request.get_json()
@@ -702,70 +704,164 @@ def rapid_process_batch(campaign_id):
         results = []
         
         try:
-            # Create scraper with first company data (just for navigation)
-            first_company_data = {
-                'id': companies[0].id,
-                'website_url': companies[0].website_url,
-                'company_name': companies[0].company_name,
-                'contact_email': companies[0].contact_email,
-                'phone': companies[0].phone,
-            }
+            # Create logger function
+            def logger(level, action, message):
+                print(f"[{level}] {action}: {message}")
             
-            scraper = LiveScraper(None, first_company_data, campaign.message_template, campaign_id, companies[0].id)
+            # Parse message_template if it's a JSON string
+            import json
+            try:
+                if isinstance(campaign.message_template, str):
+                    message_template_parsed = json.loads(campaign.message_template)
+                    # Extract the message field if it exists, otherwise use the whole template
+                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
+                else:
+                    message_template_str = campaign.message_template
+            except (json.JSONDecodeError, AttributeError):
+                # If parsing fails, use as-is
+                message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
-            # Process each company in the batch (same browser session)
-            batch_result = scraper.scrape_and_submit_batch_sync(companies, campaign.message_template, campaign_id)
+            # Launch headless browser - ONE session for all companies
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                )
+                
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                )
+                
+                page = context.new_page()
+                
+                # Navigate to website once (first company's URL)
+                try:
+                    page.goto(website_url, wait_until='networkidle', timeout=30000)
+                    page.wait_for_timeout(2000)  # Wait for page to fully load
+                except Exception as e:
+                    logger('error', 'Navigation Failed', f'Failed to navigate to {website_url}: {str(e)}')
+                    # Mark all as failed
+                    for company in companies:
+                        company.status = 'failed'
+                        company.error_message = f'Navigation failed: {str(e)}'
+                    db.session.commit()
+                    browser.close()
+                    return jsonify({
+                        'success': False,
+                        'error': f'Navigation failed: {str(e)}',
+                        'processingTime': time.time() - start_time
+                    }), 200
+                
+                # Process each company in the batch (same browser session)
+                for idx, company in enumerate(companies):
+                    try:
+                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
+                        
+                        # Prepare company data
+                        company_data = {
+                            'id': company.id,
+                            'website_url': company.website_url,
+                            'company_name': company.company_name,
+                            'contact_email': company.contact_email,
+                            'phone': company.phone,
+                        }
+                        
+                        # Use advanced detector with existing page
+                        detector = AdvancedContactDetector(
+                            page,
+                            company_data,
+                            message_template_str,
+                            campaign_id,
+                            company.id,
+                            logger
+                        )
+                        
+                        # Detect and submit
+                        result = detector.detect_and_submit()
+                        
+                        # Update company based on result
+                        if result.get('success'):
+                            if result.get('contact_info_found'):
+                                company.status = 'contact_info_found'
+                                company.contact_method = 'contact_page_only'
+                                if result.get('contact_info'):
+                                    contact_info = result.get('contact_info')
+                                    if contact_info.get('emails'):
+                                        company.emails_found = contact_info['emails']
+                            else:
+                                company.status = 'completed'
+                                company.contact_method = result.get('method', 'form_submitted')
+                            company.error_message = None
+                        else:
+                            # Handle different failure types
+                            error_msg = result.get('error', '').lower()
+                            if 'captcha' in error_msg or result.get('status') == 'captcha':
+                                company.status = 'captcha'
+                                company.contact_method = 'form_with_captcha'
+                                company.error_message = 'CAPTCHA detected'
+                            else:
+                                company.status = 'failed'
+                                company.error_message = result.get('error', 'Processing failed')
+                                company.contact_method = result.get('method', 'none')
+                            
+                            # Store contact info if found
+                            if result.get('contact_info'):
+                                contact_info = result.get('contact_info')
+                                if contact_info.get('emails'):
+                                    company.emails_found = contact_info['emails']
+                        
+                        # Store screenshot if available
+                        if result.get('screenshot_url'):
+                            company.screenshot_url = result.get('screenshot_url')
+                        
+                        # Commit after each company
+                        db.session.commit()
+                        
+                        results.append({
+                            'companyId': company.id,
+                            'success': result.get('success', False),
+                            'status': company.status,
+                            'errorMessage': company.error_message,
+                            'screenshotUrl': company.screenshot_url,
+                            'method': result.get('method', 'none')
+                        })
+                        
+                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Completed: {company.status}')
+                        
+                        # If not the last company, reload page for next submission
+                        if idx < len(companies) - 1:
+                            logger('info', 'Batch Processing', 'Reloading page for next company...')
+                            try:
+                                page.goto(website_url, wait_until='networkidle', timeout=30000)
+                                page.wait_for_timeout(2000)
+                            except Exception as e:
+                                logger('warning', 'Page Reload', f'Failed to reload: {str(e)}')
+                    
+                    except Exception as e:
+                        logger('error', f'Batch Processing [{idx+1}/{len(companies)}]', f'Error: {str(e)}')
+                        company.status = 'failed'
+                        company.error_message = str(e)
+                        db.session.commit()
+                        
+                        results.append({
+                            'companyId': company.id,
+                            'success': False,
+                            'status': 'failed',
+                            'errorMessage': str(e),
+                            'screenshotUrl': None
+                        })
+                
+                # Clean up browser
+                browser.close()
             
             processing_time = time.time() - start_time
-            
-            # Update each company based on results
-            for idx, company in enumerate(companies):
-                result = batch_result['results'][idx] if idx < len(batch_result['results']) else {'success': False, 'error': 'No result'}
-                
-                if result.get('success'):
-                    company.status = 'success'
-                    company.error_message = None
-                    # Handle email fallback results
-                    if result.get('method') == 'email':
-                        company.contact_method = 'email'
-                        if result.get('emails_found'):
-                            company.emails_found = result.get('emails_found')
-                        if result.get('emails_sent'):
-                            company.emails_sent = result.get('emails_sent')
-                            company.email_sent_at = datetime.utcnow()
-                    else:
-                        company.contact_method = 'form'
-                else:
-                    error_msg = result.get('error', '').lower()
-                    if 'captcha' in error_msg or 'recaptcha' in error_msg or 'hcaptcha' in error_msg:
-                        company.status = 'captcha'
-                        company.error_message = 'CAPTCHA detected'
-                    else:
-                        company.status = 'failed'
-                        company.error_message = result.get('error', 'Processing failed')
-                    company.contact_method = result.get('method', 'none')
-                    if result.get('emails_found'):
-                        company.emails_found = result.get('emails_found')
-                
-                if result.get('screenshot_url'):
-                    company.screenshot_url = result.get('screenshot_url')
-                
-                results.append({
-                    'companyId': company.id,
-                    'success': result.get('success', False),
-                    'status': company.status,
-                    'errorMessage': company.error_message,
-                    'screenshotUrl': company.screenshot_url
-                })
-            
-            db.session.commit()
             
             # Update campaign stats
             from sqlalchemy import or_
             campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
-            # Count success as both 'success' status and companies with emails_sent (email fallback)
             success_companies = Company.query.filter_by(campaign_id=campaign.id).filter(
-                or_(Company.status == 'success', Company.emails_sent.isnot(None))
+                or_(Company.status == 'completed', Company.status == 'contact_info_found', Company.emails_sent.isnot(None))
             ).count()
             campaign.success_count = success_companies
             campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
@@ -777,7 +873,7 @@ def rapid_process_batch(campaign_id):
             db.session.commit()
             
             return jsonify({
-                'success': batch_result.get('success', False),
+                'success': True,
                 'websiteUrl': website_url,
                 'companiesProcessed': len(companies),
                 'processingTime': round(processing_time, 2),
@@ -786,22 +882,28 @@ def rapid_process_batch(campaign_id):
             
         except Exception as e:
             # Mark all as failed
+            error_msg = str(e)
+            print(f"Error in rapid_process_batch inner try: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            
             for company in companies:
                 company.status = 'failed'
-                company.error_message = str(e)
+                company.error_message = error_msg
             db.session.commit()
             
             return jsonify({
                 'success': False,
-                'error': str(e),
+                'error': error_msg,
                 'processingTime': time.time() - start_time
             }), 200
         
     except Exception as e:
-        print(f"Error in rapid_process_batch: {e}")
+        error_msg = str(e)
+        print(f"Error in rapid_process_batch outer try: {error_msg}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': error_msg}), 500
 
 @campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
 def rapid_process_company(campaign_id, company_id):
@@ -852,6 +954,19 @@ def rapid_process_company(campaign_id, company_id):
             def logger(level, action, message):
                 print(f"[{level}] {action}: {message}")
 
+            # Parse message_template if it's a JSON string
+            import json
+            try:
+                if isinstance(campaign.message_template, str):
+                    message_template_parsed = json.loads(campaign.message_template)
+                    # Extract the message field if it exists, otherwise use the whole template
+                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
+                else:
+                    message_template_str = campaign.message_template
+            except (json.JSONDecodeError, AttributeError):
+                # If parsing fails, use as-is
+                message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
+
             # Launch headless browser directly
             with sync_playwright() as p:
                 browser = p.chromium.launch(
@@ -870,7 +985,7 @@ def rapid_process_company(campaign_id, company_id):
                 detector = AdvancedContactDetector(
                     page,
                     company_data,
-                    campaign.message_template,
+                    message_template_str,
                     campaign_id,
                     company_id,
                     logger
