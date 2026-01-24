@@ -495,6 +495,14 @@ class Company(db.Model):
     # Submission details
     submitted_at = db.Column(db.DateTime)
     screenshot_url = db.Column(db.String(500))  # Screenshot stored in Supabase Storage
+    contact_method = db.Column(db.String(100))
+    emails_found = db.Column(db.JSON)
+    emails_sent = db.Column(db.JSON)
+    email_sent_at = db.Column(db.DateTime)
+    form_structure = db.Column(db.JSON)
+    field_mappings = db.Column(db.JSON)
+    form_complexity = db.Column(db.String(50))
+    pattern_learned = db.Column(db.Boolean, default=False)
     
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -521,6 +529,14 @@ class Company(db.Model):
             'form_found': self.form_found,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'screenshot_url': self.screenshot_url,
+            'contact_method': self.contact_method,
+            'emails_found': self.emails_found,
+            'emails_sent': self.emails_sent,
+            'email_sent_at': self.email_sent_at.isoformat() if self.email_sent_at else None,
+            'form_structure': self.form_structure,
+            'field_mappings': self.field_mappings,
+            'form_complexity': self.form_complexity,
+            'pattern_learned': self.pattern_learned,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'processed_at': self.processed_at.isoformat() if self.processed_at else None
         }

@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+import os
 from sqlalchemy import desc, or_, func
 from datetime import datetime
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -280,15 +281,14 @@ def update_campaign(campaign_id):
         
         data = request.get_json()
         
-        # Update allowed fields
         if 'name' in data:
             campaign.name = data['name']
         if 'message_template' in data:
             campaign.message_template = data['message_template']
         if 'status' in data:
-            allowed_statuses = ['draft', 'queued', 'processing', 'completed', 'paused', 'failed']
-            if data['status'] in allowed_statuses:
-                campaign.status = data['status']
+            campaign.status = data['status']
+            if data['status'] == 'queued':
+                campaign.started_at = datetime.utcnow()
         
         db.session.commit()
         
@@ -332,121 +332,11 @@ def delete_campaign(campaign_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>/start', methods=['POST'])
-def start_campaign(campaign_id):
-    """Start processing a campaign"""
-    try:
-        from models import Campaign, Company
-        from database import db
-        
-        campaign = Campaign.query.get(campaign_id)
-        
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Check if campaign can be started
-        if campaign.status not in ['draft', 'paused']:
-            return jsonify({'error': f'Campaign cannot be started from {campaign.status} status'}), 400
-        
-        # Update campaign status
-        campaign.status = 'queued'
-        campaign.started_at = datetime.utcnow()
-        db.session.commit()
-        
-        # Queue companies for processing (this will be handled by the scraper service)
-        # For now, we just mark the campaign as queued
-        
-        return jsonify({
-            'success': True,
-            'message': 'Campaign started successfully',
-            'campaign': campaign.to_dict()
-        }), 200
-        
-    except Exception as e:
-        print(f"Error starting campaign: {e}")
-        import traceback
-        traceback.print_exc()
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/<int:campaign_id>/companies', methods=['GET'])
-def get_campaign_companies(campaign_id):
-    """Get all companies in a campaign"""
-    try:
-        from models import Campaign, Company
-        
-        campaign = Campaign.query.get(campaign_id)
-        
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Pagination
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 50, type=int)
-        
-        # Filters
-        status = request.args.get('status')
-        
-        # Build query
-        query = Company.query.filter_by(campaign_id=campaign_id)
-        
-        if status:
-            query = query.filter_by(status=status)
-        
-        # Order by creation date
-        query = query.order_by(Company.created_at)
-        
-        # Paginate
-        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-        companies = pagination.items
-        
-        return jsonify({
-            'success': True,
-            'companies': [company.to_dict() for company in companies],
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': pagination.total,
-                'pages': pagination.pages
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching companies: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/companies/<int:company_id>/logs', methods=['GET'])
-def get_company_logs(company_id):
-    """Get submission logs for a specific company"""
-    try:
-        from models import Company, SubmissionLog
-        
-        company = Company.query.get(company_id)
-        
-        if not company:
-            return jsonify({'error': 'Company not found'}), 404
-        
-        logs = SubmissionLog.query.filter_by(company_id=company_id).order_by(SubmissionLog.created_at).all()
-        
-        return jsonify({
-            'success': True,
-            'company': company.to_dict(),
-            'logs': [log.to_dict() for log in logs]
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching logs: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
 @campaigns_api.route('/companies/<int:company_id>', methods=['PATCH'])
 def update_company(company_id):
-    """Update a company (used by worker)"""
+    """Update a specific company in a campaign"""
     try:
-        from models import Company
+        from models import Company, Campaign
         from database import db
         from datetime import datetime
         
@@ -735,137 +625,137 @@ def rapid_process_batch(campaign_id):
             # Launch headless browser - ONE session for all companies
             try:
                 with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
-                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                )
-                
-                context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                )
-                
-                page = context.new_page()
-                
-                # Navigate to website once (first company's URL)
-                try:
-                    page.goto(website_url, wait_until='networkidle', timeout=30000)
-                    page.wait_for_timeout(2000)  # Wait for page to fully load
-                except Exception as e:
-                    logger('error', 'Navigation Failed', f'Failed to navigate to {website_url}: {str(e)}')
-                    # Mark all as failed
-                    for company in companies:
-                        company.status = 'failed'
-                        company.error_message = f'Navigation failed: {str(e)}'
-                    db.session.commit()
-                    browser.close()
-                    return jsonify({
-                        'success': False,
-                        'error': f'Navigation failed: {str(e)}',
-                        'processingTime': time.time() - start_time
-                    }), 200
-                
-                # Process each company in the batch (same browser session)
-                for idx, company in enumerate(companies):
+                    browser = p.chromium.launch(
+                        headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
+                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                    )
+                    
+                    context = browser.new_context(
+                        viewport={'width': 1920, 'height': 1080},
+                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                    
+                    page = context.new_page()
+                    
+                    # Navigate to website once (first company's URL)
                     try:
-                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
-                        
-                        # Prepare company data
-                        company_data = {
-                            'id': company.id,
-                            'website_url': company.website_url,
-                            'company_name': company.company_name,
-                            'contact_email': company.contact_email,
-                            'phone': company.phone,
-                        }
-                        
-                        # Use advanced detector with existing page
-                        detector = AdvancedContactDetector(
-                            page,
-                            company_data,
-                            message_template_str,
-                            campaign_id,
-                            company.id,
-                            logger
-                        )
-                        
-                        # Detect and submit
-                        result = detector.detect_and_submit()
-                        
-                        # Update company based on result
-                        if result.get('success'):
-                            if result.get('contact_info_found'):
-                                company.status = 'contact_info_found'
-                                company.contact_method = 'contact_page_only'
+                        page.goto(website_url, wait_until='networkidle', timeout=30000)
+                        page.wait_for_timeout(2000)  # Wait for page to fully load
+                    except Exception as e:
+                        logger('error', 'Navigation Failed', f'Failed to navigate to {website_url}: {str(e)}')
+                        # Mark all as failed
+                        for company in companies:
+                            company.status = 'failed'
+                            company.error_message = f'Navigation failed: {str(e)}'
+                        db.session.commit()
+                        browser.close()
+                        return jsonify({
+                            'success': False,
+                            'error': f'Navigation failed: {str(e)}',
+                            'processingTime': time.time() - start_time
+                        }), 200
+                    
+                    # Process each company in the batch (same browser session)
+                    for idx, company in enumerate(companies):
+                        try:
+                            logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
+                            
+                            # Prepare company data
+                            company_data = {
+                                'id': company.id,
+                                'website_url': company.website_url,
+                                'company_name': company.company_name,
+                                'contact_email': company.contact_email,
+                                'phone': company.phone,
+                            }
+                            
+                            # Use advanced detector with existing page
+                            detector = AdvancedContactDetector(
+                                page,
+                                company_data,
+                                message_template_str,
+                                campaign_id,
+                                company.id,
+                                logger
+                            )
+                            
+                            # Detect and submit
+                            result = detector.detect_and_submit()
+                            
+                            # Update company based on result
+                            if result.get('success'):
+                                if result.get('contact_info_found'):
+                                    company.status = 'contact_info_found'
+                                    company.contact_method = 'contact_page_only'
+                                    if result.get('contact_info'):
+                                        contact_info = result.get('contact_info')
+                                        if contact_info.get('emails'):
+                                            company.emails_found = contact_info['emails']
+                                else:
+                                    company.status = 'completed'
+                                    company.contact_method = result.get('method', 'form_submitted')
+                                company.error_message = None
+                            else:
+                                # Handle different failure types
+                                error_msg = result.get('error', '').lower()
+                                if 'captcha' in error_msg or result.get('status') == 'captcha':
+                                    company.status = 'captcha'
+                                    company.contact_method = 'form_with_captcha'
+                                    company.error_message = 'CAPTCHA detected'
+                                else:
+                                    company.status = 'failed'
+                                    company.error_message = result.get('error', 'Processing failed')
+                                    company.contact_method = result.get('method', 'none')
+                                
+                                # Store contact info if found
                                 if result.get('contact_info'):
                                     contact_info = result.get('contact_info')
                                     if contact_info.get('emails'):
                                         company.emails_found = contact_info['emails']
-                            else:
-                                company.status = 'completed'
-                                company.contact_method = result.get('method', 'form_submitted')
-                            company.error_message = None
-                        else:
-                            # Handle different failure types
-                            error_msg = result.get('error', '').lower()
-                            if 'captcha' in error_msg or result.get('status') == 'captcha':
-                                company.status = 'captcha'
-                                company.contact_method = 'form_with_captcha'
-                                company.error_message = 'CAPTCHA detected'
-                            else:
-                                company.status = 'failed'
-                                company.error_message = result.get('error', 'Processing failed')
-                                company.contact_method = result.get('method', 'none')
                             
-                            # Store contact info if found
-                            if result.get('contact_info'):
-                                contact_info = result.get('contact_info')
-                                if contact_info.get('emails'):
-                                    company.emails_found = contact_info['emails']
+                            # Store screenshot if available
+                            if result.get('screenshot_url'):
+                                company.screenshot_url = result.get('screenshot_url')
+                            
+                            # Commit after each company
+                            db.session.commit()
+                            
+                            results.append({
+                                'companyId': company.id,
+                                'success': result.get('success', False),
+                                'status': company.status,
+                                'errorMessage': company.error_message,
+                                'screenshotUrl': company.screenshot_url,
+                                'method': result.get('method', 'none')
+                            })
+                            
+                            logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Completed: {company.status}')
+                            
+                            # If not the last company, reload page for next submission
+                            if idx < len(companies) - 1:
+                                logger('info', 'Batch Processing', 'Reloading page for next company...')
+                                try:
+                                    page.goto(website_url, wait_until='networkidle', timeout=30000)
+                                    page.wait_for_timeout(2000)
+                                except Exception as e:
+                                    logger('warning', 'Page Reload', f'Failed to reload: {str(e)}')
                         
-                        # Store screenshot if available
-                        if result.get('screenshot_url'):
-                            company.screenshot_url = result.get('screenshot_url')
-                        
-                        # Commit after each company
-                        db.session.commit()
-                        
-                        results.append({
-                            'companyId': company.id,
-                            'success': result.get('success', False),
-                            'status': company.status,
-                            'errorMessage': company.error_message,
-                            'screenshotUrl': company.screenshot_url,
-                            'method': result.get('method', 'none')
-                        })
-                        
-                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Completed: {company.status}')
-                        
-                        # If not the last company, reload page for next submission
-                        if idx < len(companies) - 1:
-                            logger('info', 'Batch Processing', 'Reloading page for next company...')
-                            try:
-                                page.goto(website_url, wait_until='networkidle', timeout=30000)
-                                page.wait_for_timeout(2000)
-                            except Exception as e:
-                                logger('warning', 'Page Reload', f'Failed to reload: {str(e)}')
+                        except Exception as e:
+                            logger('error', f'Batch Processing [{idx+1}/{len(companies)}]', f'Error: {str(e)}')
+                            company.status = 'failed'
+                            company.error_message = str(e)
+                            db.session.commit()
+                            
+                            results.append({
+                                'companyId': company.id,
+                                'success': False,
+                                'status': 'failed',
+                                'errorMessage': str(e),
+                                'screenshotUrl': None
+                            })
                     
-                    except Exception as e:
-                        logger('error', f'Batch Processing [{idx+1}/{len(companies)}]', f'Error: {str(e)}')
-                        company.status = 'failed'
-                        company.error_message = str(e)
-                        db.session.commit()
-                        
-                        results.append({
-                            'companyId': company.id,
-                            'success': False,
-                            'status': 'failed',
-                            'errorMessage': str(e),
-                            'screenshotUrl': None
-                        })
-                
-                # Clean up browser
-                browser.close()
+                    # Clean up browser
+                    browser.close()
             except Exception as playwright_error:
                 error_msg = f"Playwright error in batch: {str(playwright_error)}"
                 print(f"Error in rapid_process_batch Playwright: {error_msg}")
@@ -914,532 +804,10 @@ def rapid_process_batch(campaign_id):
                 'success': False,
                 'error': error_msg,
                 'processingTime': time.time() - start_time
-            }), 200
-        
+            }), 500
+            
     except Exception as e:
-        error_msg = str(e)
-        print(f"Error in rapid_process_batch outer try: {error_msg}")
+        print(f"Error in rapid_process_batch outer try: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': error_msg}), 500
-
-@campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
-def rapid_process_company(campaign_id, company_id):
-    """
-    Process a single company quickly without WebSocket overhead (headless mode)
-    Runs synchronously in Flask request context - NO threading needed
-    Flask HTTP requests don't use asyncio, so sync Playwright works fine
-    """
-    try:
-        from models import Company, Campaign
-        from database import db
-        import time
-        
-        company = Company.query.filter_by(
-            id=company_id,
-            campaign_id=campaign_id
-        ).first()
-        
-        if not company:
-            return jsonify({'error': 'Company not found'}), 404
-        
-        campaign = Campaign.query.get(campaign_id)
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        # Mark as processing
-        company.status = 'processing'
-        db.session.commit()
-        
-        start_time = time.time()
-        
-        try:
-            # Prepare company data
-            company_data = {
-                'id': company.id,
-                'website_url': company.website_url,
-                'company_name': company.company_name,
-                'contact_email': company.contact_email,
-                'phone': company.phone,
-            }
-
-            # IMPLEMENT ADVANCED MULTI-METHOD CONTACT DETECTION (HEADLESS BROWSER)
-            try:
-                from services.advanced_contact_detector import AdvancedContactDetector
-            except Exception as import_error:
-                error_msg = f"Failed to import AdvancedContactDetector: {str(import_error)}"
-                print(f"Import error: {error_msg}")
-                import traceback
-                traceback.print_exc()
-                raise Exception(error_msg)
-            
-            try:
-                from playwright.sync_api import sync_playwright
-            except Exception as import_error:
-                error_msg = f"Failed to import Playwright: {str(import_error)}"
-                print(f"Import error: {error_msg}")
-                import traceback
-                traceback.print_exc()
-                raise Exception(error_msg)
-
-            # Create logger function
-            def logger(level, action, message):
-                print(f"[{level}] {action}: {message}")
-
-            # Parse message_template if it's a JSON string
-            import json
-            try:
-                if isinstance(campaign.message_template, str):
-                    message_template_parsed = json.loads(campaign.message_template)
-                    # Extract the message field if it exists, otherwise use the whole template
-                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
-                else:
-                    message_template_str = campaign.message_template
-            except (json.JSONDecodeError, AttributeError):
-                # If parsing fails, use as-is
-                message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
-
-            # Launch headless browser directly
-            try:
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(
-                        headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
-                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                    )
-
-                    context = browser.new_context(
-                        viewport={'width': 1920, 'height': 1080},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    )
-
-                    page = context.new_page()
-
-                    # Use advanced detector with headless browser
-                    detector = AdvancedContactDetector(
-                        page,
-                        company_data,
-                        message_template_str,
-                        campaign_id,
-                        company_id,
-                        logger
-                    )
-
-                    result = detector.detect_and_submit()
-
-                    # Clean up browser
-                    browser.close()
-            except Exception as playwright_error:
-                error_msg = f"Playwright error: {str(playwright_error)}"
-                print(f"Error in rapid_process_company Playwright: {error_msg}")
-                import traceback
-                traceback.print_exc()
-                raise Exception(error_msg)
-            
-            processing_time = time.time() - start_time
-            
-            # Update company based on advanced detection result
-            if result.get('success'):
-                if result.get('contact_info_found'):
-                    company.status = 'contact_info_found'
-                    company.contact_method = 'contact_page_only'
-                    # Store extracted contact info if available
-                    if result.get('contact_info'):
-                        contact_info = result.get('contact_info')
-                        if contact_info.get('emails'):
-                            company.emails_found = contact_info['emails']
-                        # Could add phone/social storage here if needed
-                else:
-                    company.status = 'completed'
-                    company.contact_method = result.get('method', 'form_submitted')
-            else:
-                # Handle different failure types
-                error_msg = result.get('error', '').lower()
-                if 'captcha' in error_msg or result.get('status') == 'captcha':
-                    company.status = 'captcha'
-                    company.contact_method = 'form_with_captcha'
-                    company.error_message = result.get('error', 'CAPTCHA detected')
-                elif result.get('method') == 'no_contact_found':
-                    company.status = 'failed'
-                    company.contact_method = 'no_contact_found'
-                    company.error_message = 'No contact form or page found'
-                elif result.get('method') == 'form_no_fields':
-                    company.status = 'failed'
-                    company.contact_method = 'form_no_fields'
-                    company.error_message = 'Form found but no suitable fields to fill'
-                else:
-                    company.status = 'failed'
-                    company.contact_method = result.get('method', 'unknown_error')
-                    company.error_message = result.get('error', 'Processing failed')
-            
-            # Save screenshot URL if available
-            if result.get('screenshot_url'):
-                company.screenshot_url = result.get('screenshot_url')
-            
-            db.session.commit()
-            
-            # Update campaign stats
-            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
-            campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
-            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
-            
-            if campaign.total_companies > 0:
-                campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100)
-            
-            db.session.commit()
-            
-            return jsonify({
-                'success': result.get('success', False),
-                'status': company.status,
-                'companyId': company_id,
-                'screenshotUrl': company.screenshot_url,
-                'errorMessage': company.error_message,
-                'processingTime': round(processing_time, 2),
-                'method': result.get('method', 'unknown'),
-                'contactMethod': company.contact_method,
-                'fieldsFilled': result.get('fields_filled', 0),
-                'contactInfo': result.get('contact_info'),
-                'company': company.to_dict()
-            }), 200
-            
-        except Exception as e:
-            # Processing error - mark as failed
-            company.status = 'failed'
-            company.error_message = str(e)
-            db.session.commit()
-            
-            return jsonify({
-                'success': False,
-                'status': 'failed',
-                'companyId': company_id,
-                'errorMessage': str(e),
-                'processingTime': time.time() - start_time
-            }), 200
-        
-    except Exception as e:
-        print(f"Error in rapid_process_company: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/my-campaigns', methods=['GET'])
-@jwt_required()
-def get_user_campaigns():
-    """Get campaigns for the authenticated user"""
-    try:
-        from models import Campaign
-        from database import db
-        
-        current_user_id = get_jwt_identity()
-        
-        # Pagination
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        
-        # Get user's campaigns
-        query = Campaign.query.filter_by(user_id=current_user_id).order_by(desc(Campaign.created_at))
-        
-        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-        campaigns = pagination.items
-        
-        return jsonify({
-            'success': True,
-            'campaigns': [campaign.to_dict() for campaign in campaigns],
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': pagination.total,
-                'pages': pagination.pages
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching user campaigns: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/stats', methods=['GET'])
-@jwt_required()
-def get_campaign_stats():
-    """Get campaign statistics for the authenticated user"""
-    try:
-        from models import Campaign, Company
-        from database import db
-        
-        current_user_id = get_jwt_identity()
-        
-        # Total campaigns for user
-        total_campaigns = Campaign.query.filter_by(user_id=current_user_id).count()
-        
-        # Active campaigns
-        active_campaigns = Campaign.query.filter_by(
-            user_id=current_user_id,
-            status='processing'
-        ).count()
-        
-        # Calculate today's processed companies
-        today = datetime.utcnow().date()
-        processed_today = db.session.query(func.count(Company.id)).join(Campaign).filter(
-            Campaign.user_id == current_user_id,
-            func.date(Company.processed_at) == today
-        ).scalar() or 0
-        
-        # Success rate calculation
-        user_campaigns = Campaign.query.filter_by(user_id=current_user_id).all()
-        total_processed = sum(c.processed_count for c in user_campaigns)
-        total_success = sum(c.success_count for c in user_campaigns)
-        success_rate = round((total_success / total_processed * 100) if total_processed > 0 else 0, 1)
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'total': total_campaigns,
-                'active': active_campaigns,
-                'processedToday': processed_today,
-                'successRate': success_rate,
-                'totalProcessed': total_processed,
-                'totalSuccess': total_success
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching campaign stats: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/admin/all', methods=['GET'])
-@jwt_required()
-def get_all_campaigns_admin():
-    """Get all campaigns across all users (admin only)"""
-    try:
-        from models import Campaign, User
-        from database import db
-        
-        # TODO: Add admin role check here
-        # For now, allow any authenticated user (should verify admin role)
-        
-        # Pagination
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 50, type=int)
-        
-        # Filters
-        status = request.args.get('status')
-        user_id = request.args.get('user_id', type=int)
-        
-        # Build query
-        query = Campaign.query
-        
-        if status:
-            query = query.filter_by(status=status)
-        if user_id:
-            query = query.filter_by(user_id=user_id)
-        
-        # Order by most recent
-        query = query.order_by(desc(Campaign.created_at))
-        
-        # Paginate
-        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-        campaigns = pagination.items
-        
-        # Enrich with user info
-        campaigns_data = []
-        for campaign in campaigns:
-            campaign_dict = campaign.to_dict()
-            if campaign.user_id:
-                user = User.query.get(campaign.user_id)
-                if user:
-                    campaign_dict['user_email'] = user.email
-                    campaign_dict['user_tier'] = user.subscription_tier
-            campaigns_data.append(campaign_dict)
-        
-        return jsonify({
-            'success': True,
-            'campaigns': campaigns_data,
-            'pagination': {
-                'page': page,
-                'per_page': per_page,
-                'total': pagination.total,
-                'pages': pagination.pages
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching all campaigns (admin): {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/admin/stats', methods=['GET'])
-@jwt_required()
-def get_admin_campaign_stats():
-    """Get comprehensive campaign statistics for admin"""
-    try:
-        from models import Campaign, Company, User
-        from database import db
-        
-        # TODO: Add admin role check
-        
-        # Total campaigns across all users
-        total_campaigns = Campaign.query.count()
-        
-        # Campaigns by status
-        active_campaigns = Campaign.query.filter_by(status='processing').count()
-        completed_campaigns = Campaign.query.filter_by(status='completed').count()
-        failed_campaigns = Campaign.query.filter_by(status='failed').count()
-        draft_campaigns = Campaign.query.filter_by(status='draft').count()
-        
-        # Today's activity
-        today = datetime.utcnow().date()
-        campaigns_today = Campaign.query.filter(
-            func.date(Campaign.created_at) == today
-        ).count()
-        
-        processed_today = db.session.query(func.count(Company.id)).filter(
-            func.date(Company.processed_at) == today
-        ).scalar() or 0
-        
-        # Campaigns by user tier
-        campaigns_by_tier = db.session.query(
-            User.subscription_tier,
-            func.count(Campaign.id)
-        ).join(Campaign, Campaign.user_id == User.id).group_by(User.subscription_tier).all()
-        
-        tier_breakdown = {tier: count for tier, count in campaigns_by_tier}
-        
-        # Guest campaigns (no user)
-        guest_campaigns = Campaign.query.filter_by(user_id=None).count()
-        tier_breakdown['guest'] = guest_campaigns
-        
-        # Overall success rate
-        all_campaigns = Campaign.query.all()
-        total_processed = sum(c.processed_count for c in all_campaigns)
-        total_success = sum(c.success_count for c in all_campaigns)
-        success_rate = round((total_success / total_processed * 100) if total_processed > 0 else 0, 1)
-        
-        # Top users by campaign count
-        top_users = db.session.query(
-            User.email,
-            User.subscription_tier,
-            func.count(Campaign.id).label('campaign_count')
-        ).join(Campaign, Campaign.user_id == User.id).group_by(User.id, User.email, User.subscription_tier).order_by(desc('campaign_count')).limit(10).all()
-        
-        top_users_data = [
-            {
-                'email': email,
-                'tier': tier,
-                'campaign_count': count
-            }
-            for email, tier, count in top_users
-        ]
-        
-        return jsonify({
-            'success': True,
-            'stats': {
-                'total': total_campaigns,
-                'active': active_campaigns,
-                'completed': completed_campaigns,
-                'failed': failed_campaigns,
-                'draft': draft_campaigns,
-                'createdToday': campaigns_today,
-                'processedToday': processed_today,
-                'successRate': success_rate,
-                'totalProcessed': total_processed,
-                'totalSuccess': total_success,
-                'byTier': tier_breakdown,
-                'topUsers': top_users_data
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Error fetching admin campaign stats: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/admin/<int:campaign_id>/pause', methods=['POST'])
-@jwt_required()
-def admin_pause_campaign(campaign_id):
-    """Pause a campaign (admin action)"""
-    try:
-        from models import Campaign
-        from database import db
-        
-        # TODO: Add admin role check
-        
-        campaign = Campaign.query.get(campaign_id)
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        campaign.status = 'paused'
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Campaign paused successfully',
-            'campaign': campaign.to_dict()
-        }), 200
-        
-    except Exception as e:
-        print(f"Error pausing campaign: {e}")
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/admin/<int:campaign_id>/resume', methods=['POST'])
-@jwt_required()
-def admin_resume_campaign(campaign_id):
-    """Resume a paused campaign (admin action)"""
-    try:
-        from models import Campaign
-        from database import db
-        
-        # TODO: Add admin role check
-        
-        campaign = Campaign.query.get(campaign_id)
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        if campaign.status == 'paused':
-            campaign.status = 'queued'
-        
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Campaign resumed successfully',
-            'campaign': campaign.to_dict()
-        }), 200
-        
-    except Exception as e:
-        print(f"Error resuming campaign: {e}")
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 500
-
-@campaigns_api.route('/admin/<int:campaign_id>/cancel', methods=['POST'])
-@jwt_required()
-def admin_cancel_campaign(campaign_id):
-    """Cancel a campaign (admin action)"""
-    try:
-        from models import Campaign
-        from database import db
-        
-        # TODO: Add admin role check
-        
-        campaign = Campaign.query.get(campaign_id)
-        if not campaign:
-            return jsonify({'error': 'Campaign not found'}), 404
-        
-        campaign.status = 'failed'
-        db.session.commit()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Campaign cancelled successfully',
-            'campaign': campaign.to_dict()
-        }), 200
-        
-    except Exception as e:
-        print(f"Error cancelling campaign: {e}")
-        db.session.rollback()
         return jsonify({'error': str(e)}), 500
