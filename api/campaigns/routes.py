@@ -710,7 +710,38 @@ def rapid_process_single(campaign_id, company_id):
                     company.contact_method = 'form_submitted'
                     company.error_message = None
                     company.fields_filled = result.get('fields_filled', 0)
-                    company.screenshot_url = result.get('screenshot_url')
+                    
+                    # Upload screenshot to Supabase if available
+                    local_screenshot_path = result.get('screenshot_url')
+                    if local_screenshot_path and os.path.exists(local_screenshot_path):
+                        try:
+                            from utils.supabase_storage import upload_screenshot
+                            
+                            # Read screenshot bytes
+                            with open(local_screenshot_path, 'rb') as f:
+                                screenshot_bytes = f.read()
+                            
+                            # Upload to Supabase
+                            supabase_url = upload_screenshot(screenshot_bytes, campaign_id, company_id)
+                            
+                            if supabase_url:
+                                company.screenshot_url = supabase_url
+                                print(f"[Rapid Process] Screenshot uploaded to Supabase: {supabase_url}")
+                            else:
+                                # Fallback to local path
+                                company.screenshot_url = local_screenshot_path
+                                print(f"[Rapid Process] Screenshot upload failed, using local path")
+                            
+                            # Delete local file after upload
+                            try:
+                                os.remove(local_screenshot_path)
+                            except:
+                                pass
+                        except Exception as e:
+                            print(f"[Rapid Process] Error uploading screenshot: {e}")
+                            company.screenshot_url = local_screenshot_path
+                    else:
+                        company.screenshot_url = local_screenshot_path
                 else:
                     company.status = 'completed'
                     company.contact_method = result['method']
