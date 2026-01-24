@@ -56,7 +56,14 @@ class FastCampaignProcessor:
             
             # STRATEGY 1: Check homepage for forms FIRST (fastest)
             self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
-            homepage_forms = self.page.query_selector_all('form')
+            
+            # Wait for forms to render (handles client-side React/Vue/etc)
+            try:
+                self.page.wait_for_selector('form', timeout=3000, state='visible')
+                homepage_forms = self.page.query_selector_all('form')
+            except Exception:
+                homepage_forms = []
+                self.log('info', 'Homepage Forms', 'No forms appeared after waiting 3s')
             
             if homepage_forms:
                 self.log('success', 'Homepage Forms', f'Found {len(homepage_forms)} form(s) on homepage')
@@ -85,8 +92,14 @@ class FastCampaignProcessor:
                     self.handle_cookie_modal()
                     self.page.wait_for_timeout(500)
                     
-                    # Check for form on contact page
-                    contact_page_forms = self.page.query_selector_all('form')
+                    # Check for form on contact page (wait for client-side rendering)
+                    try:
+                        self.page.wait_for_selector('form', timeout=5000, state='visible')
+                        contact_page_forms = self.page.query_selector_all('form')
+                    except Exception:
+                        contact_page_forms = []
+                        self.log('info', 'Contact Page', 'No forms appeared after waiting 5s - checking for emails')
+                    
                     if contact_page_forms:
                         self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
                         self.log_for_live_scraper('Contact page form check', 'form', 
@@ -141,7 +154,13 @@ class FastCampaignProcessor:
                     try:
                         frame = iframe.content_frame()
                         if frame:
-                            iframe_forms = frame.query_selector_all('form')
+                            # Wait for iframe forms to render
+                            try:
+                                frame.wait_for_selector('form', timeout=2000, state='visible')
+                                iframe_forms = frame.query_selector_all('form')
+                            except Exception:
+                                iframe_forms = []
+                            
                             if iframe_forms:
                                 self.log('success', 'Iframe Form Found', f'Found form in iframe {idx + 1}')
                                 self.log_for_live_scraper('Iframe form check', 'iframe form', 
