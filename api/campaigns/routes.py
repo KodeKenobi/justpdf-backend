@@ -648,13 +648,43 @@ def rapid_process_single(campaign_id, company_id):
             )
             
             # Parse stdout JSON
+            print(f"[Rapid Process] Exit code: {process_result.returncode}")
+            print(f"[Rapid Process] Stdout length: {len(process_result.stdout)} chars")
+            print(f"[Rapid Process] Stderr length: {len(process_result.stderr)} chars")
+            
             try:
-                result = json.loads(process_result.stdout)
+                # Try to extract JSON from stdout (might have other output mixed in)
+                stdout = process_result.stdout.strip()
+                
+                # If stdout starts with '{', try to parse it directly
+                if stdout.startswith('{'):
+                    result = json.loads(stdout)
+                else:
+                    # Try to find JSON in the output
+                    import re
+                    json_match = re.search(r'\{[\s\S]*\}', stdout)
+                    if json_match:
+                        result = json.loads(json_match.group())
+                    else:
+                        raise json.JSONDecodeError("No JSON found", stdout, 0)
+                
                 print(f"[Rapid Process] Result: {result}")
-            except json.JSONDecodeError:
-                print(f"[Rapid Process] Failed to parse JSON. Stdout: {process_result.stdout}")
-                print(f"[Rapid Process] Stderr: {process_result.stderr}")
-                raise Exception("JavaScript processor returned invalid JSON")
+            except json.JSONDecodeError as e:
+                print(f"[Rapid Process] Failed to parse JSON")
+                print(f"[Rapid Process] Stdout: {process_result.stdout[:500]}")
+                print(f"[Rapid Process] Stderr: {process_result.stderr[:500]}")
+                
+                # Return a structured error instead of raising exception
+                company.status = 'failed'
+                company.error_message = f"Script error: {process_result.stderr[:200] if process_result.stderr else 'Invalid JSON output'}"
+                company.processed_at = time.time()
+                db.session.commit()
+                
+                return jsonify({
+                    'success': False,
+                    'error': 'Script execution failed',
+                    'details': process_result.stderr[:200] if process_result.stderr else 'Invalid JSON'
+                }), 500
             
             # Update company based on result
             if result.get('success'):
