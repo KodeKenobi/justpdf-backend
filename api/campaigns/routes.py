@@ -603,10 +603,17 @@ def rapid_process_single(campaign_id, company_id):
         
         try:
             # Parse message_template
+            message_template_str = campaign.message_template
+            subject_str = 'Partnership Inquiry'  # Default subject
+            
             try:
                 if isinstance(campaign.message_template, str):
                     message_template_parsed = json.loads(campaign.message_template)
-                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
+                    if isinstance(message_template_parsed, dict):
+                        message_template_str = message_template_parsed.get('message', campaign.message_template)
+                        subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
+                    else:
+                        message_template_str = campaign.message_template
                 else:
                     message_template_str = campaign.message_template
             except (json.JSONDecodeError, AttributeError):
@@ -634,6 +641,7 @@ def rapid_process_single(campaign_id, company_id):
             
             print(f"[Rapid Process] Calling JavaScript processor: {script_path}")
             print(f"[Rapid Process] URL: {company.website_url}")
+            print(f"[Rapid Process] Subject: {subject_str}")
             
             # Prepare arguments for JavaScript script
             args = [
@@ -644,7 +652,8 @@ def rapid_process_single(campaign_id, company_id):
                 message_template_str,
                 company.contact_email or 'contact@business.com',
                 company.phone or '',
-                company.contact_person or 'Business Contact'
+                company.contact_person or 'Business Contact',
+                subject_str  # Pass subject as 8th argument
             ]
             
             # Call JavaScript processor
@@ -879,11 +888,18 @@ def rapid_process_batch(campaign_id):
             
             # Parse message_template if it's a JSON string
             import json
+            message_template_str = campaign.message_template
+            subject_str = 'Partnership Inquiry'  # Default subject
+            
             try:
                 if isinstance(campaign.message_template, str):
                     message_template_parsed = json.loads(campaign.message_template)
-                    # Extract the message field if it exists, otherwise use the whole template
-                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
+                    if isinstance(message_template_parsed, dict):
+                        # Extract the message and subject fields if they exist
+                        message_template_str = message_template_parsed.get('message', campaign.message_template)
+                        subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
+                    else:
+                        message_template_str = campaign.message_template
                 else:
                     message_template_str = campaign.message_template
             except (json.JSONDecodeError, AttributeError):
@@ -945,7 +961,8 @@ def rapid_process_batch(campaign_id):
                                 message_template_str,
                                 campaign_id,
                                 company.id,
-                                logger
+                                logger,
+                                subject_str
                             )
                             
                             # Process company (detects, fills, and submits in one go)

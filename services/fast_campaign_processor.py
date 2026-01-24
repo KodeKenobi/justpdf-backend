@@ -14,13 +14,14 @@ class FastCampaignProcessor:
     """Fast, optimized campaign processing with early exit strategy"""
 
     def __init__(self, page, company_data: Dict, message_template: str, 
-                 campaign_id: int = None, company_id: int = None, logger=None):
+                 campaign_id: int = None, company_id: int = None, logger=None, subject: str = None):
         self.page = page
         self.company = company_data
         self.message_template = message_template
         self.campaign_id = campaign_id
         self.company_id = company_id
         self.logger = logger
+        self.subject = subject or 'Partnership Inquiry'
         self.found_form = False
         self.found_contact_page = False
 
@@ -365,9 +366,9 @@ class FastCampaignProcessor:
                     
                     # Fill subject field
                     if 'subject' in field_text or 'topic' in field_text:
-                        input_element.fill('Partnership Inquiry')
+                        input_element.fill(self.subject)
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Subject field filled')
+                        self.log('info', 'Field Filled', f'Subject field: {self.subject}')
                         continue
                     
                     # Fill message/comment textarea
@@ -610,7 +611,7 @@ This is an automated campaign message.
 If you'd prefer not to receive these messages, please reply to let us know.
 """
             
-            subject = f"Partnership Inquiry - {company_name}"
+            subject = self.subject
             
             self.log('info', 'Sending Email', f'Using existing email service to send to {email_address}')
             

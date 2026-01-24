@@ -8,13 +8,14 @@
 const { chromium } = require('playwright');
 
 class RapidProcessor {
-  constructor(url, companyName, message, email, phone, contactPerson) {
+  constructor(url, companyName, message, email, phone, contactPerson, subject) {
     this.url = url;
     this.companyName = companyName;
     this.message = message;
     this.email = email || 'contact@business.com';
     this.phone = phone || '';
     this.contactPerson = contactPerson || 'Business Contact';
+    this.subject = subject || 'Partnership Inquiry';
   }
 
   log(level, action, message) {
@@ -171,9 +172,9 @@ class RapidProcessor {
 
           // Fill subject field
           if (fieldText.includes('subject') || fieldText.includes('topic')) {
-            await input.fill('Partnership Inquiry');
+            await input.fill(this.subject);
             filledCount++;
-            this.log('INFO', 'Field Filled', 'Subject field');
+            this.log('INFO', 'Field Filled', `Subject field: ${this.subject}`);
             continue;
           }
 
@@ -365,13 +366,13 @@ class RapidProcessor {
   const args = process.argv.slice(2);
   
   if (args.length < 3) {
-    console.error('Usage: node rapid-process-single.js <url> <company_name> <message> [email] [phone] [contact_person]');
+    console.error('Usage: node rapid-process-single.js <url> <company_name> <message> [email] [phone] [contact_person] [subject]');
     process.exit(1);
   }
 
-  const [url, companyName, message, email, phone, contactPerson] = args;
+  const [url, companyName, message, email, phone, contactPerson, subject] = args;
 
-  const processor = new RapidProcessor(url, companyName, message, email, phone, contactPerson);
+  const processor = new RapidProcessor(url, companyName, message, email, phone, contactPerson, subject);
   const result = await processor.process();
 
   // Output JSON to stdout (Python will capture this)
