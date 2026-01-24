@@ -232,20 +232,42 @@ class FastCampaignProcessor:
             return None
 
     def handle_cookie_modal(self):
-        """Quick cookie modal handling"""
-        quick_selectors = [
+        """Comprehensive cookie modal handling - Accept, Reject, or Close"""
+        # Try accept buttons first, then reject/close buttons
+        selectors = [
+            # Accept buttons
             'button:has-text("Accept")',
             'button:has-text("Accept All")',
+            'button:has-text("I Accept")',
+            'button:has-text("Agree")',
             '#accept-cookies',
-            '.cookie-accept'
+            '#acceptCookies',
+            '.cookie-accept',
+            '.accept-cookies',
+            '[aria-label*="Accept"]',
+            '[aria-label*="Agree"]',
+            # Reject/Close buttons
+            'button:has-text("Reject")',
+            'button:has-text("Reject All")',
+            'button:has-text("Decline")',
+            'button:has-text("Close")',
+            '[aria-label*="Close"]',
+            '[aria-label*="Reject"]',
+            '.cookie-close',
+            '.cookie-dismiss',
+            # Generic close buttons on modals
+            '[class*="cookie"] button[class*="close"]',
+            '[class*="consent"] button[class*="close"]',
+            '[id*="cookie"] button[class*="close"]'
         ]
         
-        for selector in quick_selectors:
+        for selector in selectors:
             try:
                 element = self.page.locator(selector).first
-                if element.is_visible(timeout=500):
+                if element.is_visible(timeout=300):
                     element.click()
                     self.page.wait_for_timeout(200)
+                    self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')
                     return True
             except:
                 continue
@@ -637,6 +659,10 @@ If you'd prefer not to receive these messages, please reply to let us know.
     def take_screenshot(self, prefix: str) -> Optional[str]:
         """Take screenshot and return URL"""
         try:
+            # CRITICAL: Dismiss any remaining cookie modals before screenshot
+            self.handle_cookie_modal()
+            self.page.wait_for_timeout(300)
+            
             # Create screenshots directory if it doesn't exist
             screenshot_dir = 'static/screenshots'
             os.makedirs(screenshot_dir, exist_ok=True)
