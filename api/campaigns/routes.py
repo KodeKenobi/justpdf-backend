@@ -616,12 +616,21 @@ def rapid_process_single(campaign_id, company_id):
             backend_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(os.path.dirname(backend_dir))
             
-            # Try backend/scripts first (for Railway deployment), then parent/scripts (for local dev)
-            script_path = os.path.join(project_root, 'scripts', 'rapid-process-single.js')
-            if not os.path.exists(script_path):
-                # Try parent directory (local development)
-                parent_dir = os.path.dirname(project_root)
-                script_path = os.path.join(parent_dir, 'scripts', 'rapid-process-single.js')
+            # Try multiple locations
+            possible_paths = [
+                os.path.join(project_root, 'Scripts', 'rapid-process-single.js'),  # Railway capitalizes Scripts
+                os.path.join(project_root, 'scripts', 'rapid-process-single.js'),  # Local lowercase
+                os.path.join(os.path.dirname(project_root), 'scripts', 'rapid-process-single.js'),  # Parent dir
+            ]
+            
+            script_path = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    script_path = path
+                    break
+            
+            if not script_path:
+                raise Exception(f"Script not found in any of: {possible_paths}")
             
             print(f"[Rapid Process] Calling JavaScript processor: {script_path}")
             print(f"[Rapid Process] URL: {company.website_url}")
@@ -675,9 +684,10 @@ def rapid_process_single(campaign_id, company_id):
                 print(f"[Rapid Process] Stderr: {process_result.stderr[:500]}")
                 
                 # Return a structured error instead of raising exception
+                from datetime import datetime
                 company.status = 'failed'
                 company.error_message = f"Script error: {process_result.stderr[:200] if process_result.stderr else 'Invalid JSON output'}"
-                company.processed_at = time.time()
+                company.processed_at = datetime.utcnow()
                 db.session.commit()
                 
                 return jsonify({
