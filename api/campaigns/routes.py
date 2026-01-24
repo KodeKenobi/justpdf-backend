@@ -574,18 +574,18 @@ def get_queued_campaigns_internal():
 @campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
 def rapid_process_single(campaign_id, company_id):
     """
-    REVAMPED: Fast campaign processing for a single company
-    - Uses fast-contact-analyzer.js logic
+    Fast campaign processing using JavaScript rapid-process-single.js
+    - Uses proven JavaScript scraper that works reliably
     - Submits forms when found
-    - Sends emails when no form but email found
+    - Handles client-side rendered forms correctly
     """
     try:
         from models import Company, Campaign
         from database import db
-        from services.fast_campaign_processor import FastCampaignProcessor
-        from playwright.sync_api import sync_playwright
-        import time
+        import subprocess
         import json
+        import time
+        import os
         
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
@@ -602,10 +602,6 @@ def rapid_process_single(campaign_id, company_id):
         start_time = time.time()
         
         try:
-            # Create logger function
-            def logger(level, action, message):
-                print(f"[{level}] {action}: {message}")
-            
             # Parse message_template
             try:
                 if isinstance(campaign.message_template, str):
@@ -616,82 +612,110 @@ def rapid_process_single(campaign_id, company_id):
             except (json.JSONDecodeError, AttributeError):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
-            # Launch headless browser
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-                )
-                
-                context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                )
-                
-                page = context.new_page()
-                
-                # Prepare company data
-                company_data = {
-                    'id': company.id,
-                    'website_url': company.website_url,
-                    'company_name': company.company_name,
-                    'contact_email': company.contact_email,
-                    'phone': company.phone,
-                    'contact_person': company.contact_person if hasattr(company, 'contact_person') else None
-                }
-                
-                # Use Fast Campaign Processor
-                processor = FastCampaignProcessor(
-                    page,
-                    company_data,
-                    message_template_str,
-                    campaign_id,
-                    company.id,
-                    logger
-                )
-                
-                # Process company
-                result = processor.process_company()
-                
-                # Update company based on result
-                if result.get('success'):
-                    if result['method'] == 'email_sent':
-                        company.status = 'completed'
-                        company.contact_method = 'email_sent'
-                        company.error_message = 'Email sent directly to contact'
-                    elif result['method'].startswith('form_submitted'):
-                        company.status = 'completed'
-                        company.contact_method = 'form_submitted'
-                        company.error_message = None
-                    elif result['method'] == 'contact_page_only':
-                        company.status = 'contact_info_found'
-                        company.contact_method = 'contact_page_only'
-                        if result.get('contact_info'):
-                            company.emails_found = result['contact_info'].get('emails', [])
+            # Get script path (parent directory of backend)
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(backend_dir))
+            script_path = os.path.join(project_root, 'scripts', 'rapid-process-single.js')
+            
+            print(f"[Rapid Process] Calling JavaScript processor: {script_path}")
+            print(f"[Rapid Process] URL: {company.website_url}")
+            
+            # Prepare arguments for JavaScript script
+            args = [
+                'node',
+                script_path,
+                company.website_url,
+                company.company_name or 'Company',
+                message_template_str,
+                company.contact_email or 'contact@business.com',
+                company.phone or '',
+                company.contact_person or 'Business Contact'
+            ]
+            
+            # Call JavaScript processor
+            process_result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=60,  # 60 second timeout
+                cwd=project_root
+            )
+            
+            # Parse stdout JSON
+            try:
+                result = json.loads(process_result.stdout)
+                print(f"[Rapid Process] Result: {result}")
+            except json.JSONDecodeError:
+                print(f"[Rapid Process] Failed to parse JSON. Stdout: {process_result.stdout}")
+                print(f"[Rapid Process] Stderr: {process_result.stderr}")
+                raise Exception("JavaScript processor returned invalid JSON")
+            
+            # Update company based on result
+            if result.get('success'):
+                if result['method'] == 'email_found':
+                    company.status = 'contact_info_found'
+                    company.contact_method = 'email_found'
+                    company.error_message = None
+                    if result.get('contact_info'):
+                        contact_info_json = json.dumps(result['contact_info'])
+                        company.contact_info = contact_info_json
+                elif result['method'] == 'form_submitted':
+                    company.status = 'completed'
+                    company.contact_method = 'form_submitted'
+                    company.error_message = None
+                    company.fields_filled = result.get('fields_filled', 0)
+                    company.screenshot_url = result.get('screenshot_url')
                 else:
-                    if 'captcha' in result.get('error', '').lower():
-                        company.status = 'captcha'
-                        company.contact_method = 'form_with_captcha'
-                    else:
-                        company.status = 'failed'
-                        company.error_message = result.get('error', 'Processing failed')
-                
-                db.session.commit()
-                browser.close()
-                
-                return jsonify({
-                    'success': result.get('success', False),
-                    'status': company.status,
-                    'method': result.get('method'),
-                    'contactMethod': company.contact_method,
-                    'errorMessage': company.error_message,
-                    'contactInfo': result.get('contact_info'),
-                    'fieldsFilled': result.get('fields_filled'),
-                    'processingTime': time.time() - start_time
-                }), 200
-                
+                    company.status = 'completed'
+                    company.contact_method = result['method']
+                    company.error_message = None
+            else:
+                if 'captcha' in result.get('error', '').lower() or result.get('method') == 'form_with_captcha':
+                    company.status = 'captcha'
+                    company.contact_method = 'form_with_captcha'
+                    company.error_message = result.get('error', 'CAPTCHA detected')
+                elif result.get('method') == 'form_in_iframe':
+                    company.status = 'captcha'  # Treat as needs review
+                    company.contact_method = 'form_in_iframe'
+                    company.error_message = result.get('error', 'Form in iframe')
+                elif result.get('method') == 'contact_page_only':
+                    company.status = 'contact_info_found'
+                    company.contact_method = 'contact_page_only'
+                    company.error_message = result.get('error')
+                else:
+                    company.status = 'failed'
+                    company.error_message = result.get('error', 'Processing failed')
+                    company.detection_method = result.get('method', 'unknown')
+            
+            db.session.commit()
+            
+            return jsonify({
+                'success': result.get('success', False),
+                'status': company.status,
+                'method': result.get('method'),
+                'contactMethod': company.contact_method,
+                'errorMessage': company.error_message,
+                'contactInfo': result.get('contact_info'),
+                'fieldsFilled': result.get('fields_filled'),
+                'screenshotUrl': result.get('screenshot_url'),
+                'processingTime': time.time() - start_time
+            }), 200
+            
+        except subprocess.TimeoutExpired:
+            print(f"[Rapid Process] Timeout processing company {company_id}")
+            company.status = 'failed'
+            company.error_message = 'Processing timeout after 60 seconds'
+            db.session.commit()
+            
+            return jsonify({
+                'success': False,
+                'status': 'failed',
+                'error': 'Processing timeout',
+                'processingTime': time.time() - start_time
+            }), 200
+            
         except Exception as e:
-            print(f"Error processing company {company_id}: {e}")
+            print(f"[Rapid Process] Error processing company {company_id}: {e}")
             import traceback
             traceback.print_exc()
             
@@ -707,7 +731,7 @@ def rapid_process_single(campaign_id, company_id):
             }), 200
             
     except Exception as e:
-        print(f"Error in rapid_process_single: {e}")
+        print(f"[Rapid Process] Error in rapid_process_single: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

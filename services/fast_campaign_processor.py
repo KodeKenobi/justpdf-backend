@@ -56,14 +56,7 @@ class FastCampaignProcessor:
             
             # STRATEGY 1: Check homepage for forms FIRST (fastest)
             self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
-            
-            # Wait for forms to render (handles client-side React/Vue/etc)
-            try:
-                self.page.wait_for_selector('form', timeout=3000, state='visible')
-                homepage_forms = self.page.query_selector_all('form')
-            except Exception:
-                homepage_forms = []
-                self.log('info', 'Homepage Forms', 'No forms appeared after waiting 3s')
+            homepage_forms = self.page.query_selector_all('form')
             
             if homepage_forms:
                 self.log('success', 'Homepage Forms', f'Found {len(homepage_forms)} form(s) on homepage')
@@ -92,14 +85,8 @@ class FastCampaignProcessor:
                     self.handle_cookie_modal()
                     self.page.wait_for_timeout(500)
                     
-                    # Check for form on contact page (wait for client-side rendering)
-                    try:
-                        self.page.wait_for_selector('form', timeout=5000, state='visible')
-                        contact_page_forms = self.page.query_selector_all('form')
-                    except Exception:
-                        contact_page_forms = []
-                        self.log('info', 'Contact Page', 'No forms appeared after waiting 5s - checking for emails')
-                    
+                    # Check for form on contact page
+                    contact_page_forms = self.page.query_selector_all('form')
                     if contact_page_forms:
                         self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
                         self.log_for_live_scraper('Contact page form check', 'form', 
@@ -154,13 +141,7 @@ class FastCampaignProcessor:
                     try:
                         frame = iframe.content_frame()
                         if frame:
-                            # Wait for iframe forms to render
-                            try:
-                                frame.wait_for_selector('form', timeout=2000, state='visible')
-                                iframe_forms = frame.query_selector_all('form')
-                            except Exception:
-                                iframe_forms = []
-                            
+                            iframe_forms = frame.query_selector_all('form')
                             if iframe_forms:
                                 self.log('success', 'Iframe Form Found', f'Found form in iframe {idx + 1}')
                                 self.log_for_live_scraper('Iframe form check', 'iframe form', 
@@ -190,25 +171,35 @@ class FastCampaignProcessor:
         """Find contact page link using fast evaluation"""
         try:
             base_url = self.company['website_url']
+            self.log('info', '🔍 Contact Link Search', f'Searching for contact links on {base_url}')
             
             contact_links = self.page.evaluate("""
                 (baseUrl) => {
                     const links = Array.from(document.querySelectorAll('a'));
                     const found = [];
+                    const debug = [];
                     
                     for (const link of links) {
                         const href = (link.getAttribute('href') || '').toLowerCase();
-                        const text = (link.textContent || '').toLowerCase();
+                        const text = (link.textContent || '').toLowerCase().trim();
                         
                         if ((href.includes('contact') || text.includes('contact') || 
                              text.includes('get in touch') || text.includes('reach out')) &&
                             link.offsetParent !== null) {
                             
-                            let fullUrl = link.getAttribute('href');
+                            const rawHref = link.getAttribute('href');
+                            debug.push({
+                                rawHref: rawHref,
+                                text: text.substring(0, 50),
+                                href: href.substring(0, 100)
+                            });
+                            
+                            let fullUrl = rawHref;
                             if (fullUrl && !fullUrl.startsWith('http')) {
                                 try {
                                     fullUrl = new URL(fullUrl, baseUrl).href;
-                                } catch {
+                                } catch (e) {
+                                    debug.push({ error: 'URL construction failed', rawHref: rawHref, message: e.message });
                                     continue;
                                 }
                             }
@@ -218,11 +209,23 @@ class FastCampaignProcessor:
                         }
                     }
                     
-                    return [...new Set(found)].slice(0, 1);
+                    return { found: [...new Set(found)].slice(0, 1), debug: debug.slice(0, 5) };
                 }
             """, base_url)
             
-            return contact_links[0] if contact_links else None
+            # Log debug info
+            if contact_links.get('debug'):
+                self.log('info', '📝 Debug Info', f'Found {len(contact_links["debug"])} potential contact links')
+                for i, debug_item in enumerate(contact_links['debug'], 1):
+                    self.log('info', f'  Link {i}', str(debug_item))
+            
+            result_links = contact_links.get('found', [])
+            if result_links:
+                self.log('success', '✅ Contact Link Found', f'URL: {result_links[0]}')
+                return result_links[0]
+            else:
+                self.log('warning', '❌ No Contact Links', 'No valid contact links found after filtering')
+                return None
             
         except Exception as e:
             self.log('error', 'Contact Link Search', str(e))
