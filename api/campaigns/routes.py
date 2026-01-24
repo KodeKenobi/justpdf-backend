@@ -612,10 +612,16 @@ def rapid_process_single(campaign_id, company_id):
             except (json.JSONDecodeError, AttributeError):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
-            # Get script path (parent directory of backend)
+            # Get script path (in backend/scripts or parent/scripts)
             backend_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.dirname(os.path.dirname(backend_dir))
+            
+            # Try backend/scripts first (for Railway deployment), then parent/scripts (for local dev)
             script_path = os.path.join(project_root, 'scripts', 'rapid-process-single.js')
+            if not os.path.exists(script_path):
+                # Try parent directory (local development)
+                parent_dir = os.path.dirname(project_root)
+                script_path = os.path.join(parent_dir, 'scripts', 'rapid-process-single.js')
             
             print(f"[Rapid Process] Calling JavaScript processor: {script_path}")
             print(f"[Rapid Process] URL: {company.website_url}")

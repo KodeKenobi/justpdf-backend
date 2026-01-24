@@ -1,0 +1,15 @@
+{
+  "name": "trevnoctilla-backend",
+  "version": "1.0.0",
+  "description": "Backend with Node.js support for JavaScript campaign processor",
+  "main": "app.py",
+  "scripts": {
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.57.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
