@@ -571,6 +571,147 @@ def get_queued_campaigns_internal():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
+def rapid_process_single(campaign_id, company_id):
+    """
+    REVAMPED: Fast campaign processing for a single company
+    - Uses fast-contact-analyzer.js logic
+    - Submits forms when found
+    - Sends emails when no form but email found
+    """
+    try:
+        from models import Company, Campaign
+        from database import db
+        from services.fast_campaign_processor import FastCampaignProcessor
+        from playwright.sync_api import sync_playwright
+        import time
+        import json
+        
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+        
+        company = Company.query.filter_by(id=company_id, campaign_id=campaign_id).first()
+        if not company:
+            return jsonify({'error': 'Company not found'}), 404
+        
+        # Mark as processing
+        company.status = 'processing'
+        db.session.commit()
+        
+        start_time = time.time()
+        
+        try:
+            # Create logger function
+            def logger(level, action, message):
+                print(f"[{level}] {action}: {message}")
+            
+            # Parse message_template
+            try:
+                if isinstance(campaign.message_template, str):
+                    message_template_parsed = json.loads(campaign.message_template)
+                    message_template_str = message_template_parsed.get('message', campaign.message_template) if isinstance(message_template_parsed, dict) else campaign.message_template
+                else:
+                    message_template_str = campaign.message_template
+            except (json.JSONDecodeError, AttributeError):
+                message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
+            
+            # Launch headless browser
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+                )
+                
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+                
+                page = context.new_page()
+                
+                # Prepare company data
+                company_data = {
+                    'id': company.id,
+                    'website_url': company.website_url,
+                    'company_name': company.company_name,
+                    'contact_email': company.contact_email,
+                    'phone': company.phone,
+                    'contact_person': company.contact_person if hasattr(company, 'contact_person') else None
+                }
+                
+                # Use Fast Campaign Processor
+                processor = FastCampaignProcessor(
+                    page,
+                    company_data,
+                    message_template_str,
+                    campaign_id,
+                    company.id,
+                    logger
+                )
+                
+                # Process company
+                result = processor.process_company()
+                
+                # Update company based on result
+                if result.get('success'):
+                    if result['method'] == 'email_sent':
+                        company.status = 'completed'
+                        company.contact_method = 'email_sent'
+                        company.error_message = 'Email sent directly to contact'
+                    elif result['method'].startswith('form_submitted'):
+                        company.status = 'completed'
+                        company.contact_method = 'form_submitted'
+                        company.error_message = None
+                    elif result['method'] == 'contact_page_only':
+                        company.status = 'contact_info_found'
+                        company.contact_method = 'contact_page_only'
+                        if result.get('contact_info'):
+                            company.emails_found = result['contact_info'].get('emails', [])
+                else:
+                    if 'captcha' in result.get('error', '').lower():
+                        company.status = 'captcha'
+                        company.contact_method = 'form_with_captcha'
+                    else:
+                        company.status = 'failed'
+                        company.error_message = result.get('error', 'Processing failed')
+                
+                db.session.commit()
+                browser.close()
+                
+                return jsonify({
+                    'success': result.get('success', False),
+                    'status': company.status,
+                    'method': result.get('method'),
+                    'contactMethod': company.contact_method,
+                    'errorMessage': company.error_message,
+                    'contactInfo': result.get('contact_info'),
+                    'fieldsFilled': result.get('fields_filled'),
+                    'processingTime': time.time() - start_time
+                }), 200
+                
+        except Exception as e:
+            print(f"Error processing company {company_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            company.status = 'failed'
+            company.error_message = str(e)
+            db.session.commit()
+            
+            return jsonify({
+                'success': False,
+                'status': 'failed',
+                'error': str(e),
+                'processingTime': time.time() - start_time
+            }), 200
+            
+    except Exception as e:
+        print(f"Error in rapid_process_single: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('/<int:campaign_id>/rapid-process-batch', methods=['POST'])
 def rapid_process_batch(campaign_id):
     """
