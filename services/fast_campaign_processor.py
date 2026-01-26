@@ -66,6 +66,15 @@ class FastCampaignProcessor:
         try:
             website_url = self.company['website_url'].strip()
 
+            # 🔥 FIX: RESET PAGE STATE BEFORE EACH COMPANY
+            try:
+                self.page.context.clear_cookies()
+                self.page.evaluate("() => { localStorage.clear(); sessionStorage.clear(); }")
+                self.page.goto("about:blank", wait_until="domcontentloaded", timeout=15000)
+                self.page.wait_for_timeout(500)
+            except Exception:
+                pass
+
             # IMPORTANT: Navigate to the website for EACH company
             if not self.navigate_with_retry(website_url):
                 result['error'] = 'Homepage navigation failed'
