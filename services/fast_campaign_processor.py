@@ -38,6 +38,17 @@ class FastCampaignProcessor:
         message = f"LIVE_SCRAPER: {icon} Method: {method} | Selector: \"{selector}\" | {reason}"
         self.log('info', 'LIVE_SCRAPER', message)
 
+    def navigate_with_retry(self, url: str, retries: int = 2) -> bool:
+        """Navigate to URL with retry logic"""
+        for attempt in range(retries + 1):
+            try:
+                self.page.goto(url, wait_until='networkidle', timeout=30000)
+                return True
+            except Exception as e:
+                self.log('warning', 'Navigation Failed', f"Attempt {attempt+1}/{retries+1} failed: {str(e)}")
+                self.page.wait_for_timeout(500)
+        return False
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
@@ -56,26 +67,31 @@ class FastCampaignProcessor:
             website_url = self.company['website_url'].strip()
 
             # IMPORTANT: Navigate to the website for EACH company
-            self.page.goto(website_url, wait_until='networkidle', timeout=30000)
+            if not self.navigate_with_retry(website_url):
+                result['error'] = 'Homepage navigation failed'
+                return result
+
             self.handle_cookie_modal()
             self.page.wait_for_timeout(800)
 
             # STRATEGY 1: Check homepage for forms FIRST (fastest)
             self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
+
             homepage_forms = self.page.query_selector_all('form')
+            homepage_forms += self.find_div_forms()  # NEW: add div-based forms
 
             if homepage_forms:
                 self.log('success', 'Homepage Forms', f'Found {len(homepage_forms)} form(s) on homepage')
-                self.log_for_live_scraper('Homepage form check', 'form',
-                                         'Direct form detection on homepage - fastest method', True)
+                self.log_for_live_scraper('Homepage form check', 'form/div', 'Direct form detection on homepage - fastest method', True)
 
-                # Try to fill and submit first form
-                form_result = self.fill_and_submit_form(homepage_forms[0], 'homepage')
-                if form_result['success']:
-                    result.update(form_result)
-                    result['method'] = 'form_submitted_homepage'
-                    self.found_form = True
-                    return result  # EARLY EXIT - found and submitted form
+                # Try up to 3 forms (fast)
+                for form_idx, form in enumerate(homepage_forms[:3]):
+                    form_result = self.fill_and_submit_form(form, f'homepage_{form_idx+1}')
+                    if form_result['success']:
+                        result.update(form_result)
+                        result['method'] = 'form_submitted_homepage'
+                        self.found_form = True
+                        return result
 
             # STRATEGY 2: Find contact link and navigate
             self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link...')
@@ -83,58 +99,58 @@ class FastCampaignProcessor:
 
             if contact_link:
                 self.log('success', 'Contact Link Found', f'Found: {contact_link}')
-                self.log_for_live_scraper('Contact link search', 'a[href*="contact"]',
-                                         'Search links with "contact" in href or text', True)
+                self.log_for_live_scraper('Contact link search', 'a[href*="contact"]', 'Search links with "contact" in href or text', True)
 
-                try:
-                    self.page.goto(contact_link, wait_until='networkidle', timeout=30000)
-                    self.handle_cookie_modal()
-                    self.page.wait_for_timeout(500)
+                if not self.navigate_with_retry(contact_link):
+                    result['error'] = 'Contact page navigation failed'
+                    return result
 
-                    # Check for form on contact page
-                    contact_page_forms = self.page.query_selector_all('form')
-                    if contact_page_forms:
-                        self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
-                        self.log_for_live_scraper('Contact page form check', 'form',
-                                                 'Check for form after navigating to contact page', True)
+                self.handle_cookie_modal()
+                self.page.wait_for_timeout(500)
 
-                        form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
+                # Check for form on contact page
+                contact_page_forms = self.page.query_selector_all('form')
+                contact_page_forms += self.find_div_forms()
+
+                if contact_page_forms:
+                    self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
+                    self.log_for_live_scraper('Contact page form check', 'form/div', 'Check for form after navigating to contact page', True)
+
+                    for form_idx, form in enumerate(contact_page_forms[:3]):
+                        form_result = self.fill_and_submit_form(form, f'contact_page_{form_idx+1}')
                         if form_result['success']:
                             result.update(form_result)
                             result['method'] = 'form_submitted_contact_page'
                             self.found_form = True
-                            return result  # EARLY EXIT - found and submitted form
-                    else:
-                        # No form but on contact page - extract emails
-                        self.log('info', 'Contact Page Only', 'No form found, extracting contact info')
-                        contact_info = self.extract_contact_info()
-
-                        if contact_info and contact_info.get('emails'):
-                            self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
-
-                            # SEND EMAIL DIRECTLY
-                            email_sent = self.send_email_to_contact(contact_info['emails'][0])
-
-                            if email_sent:
-                                result['success'] = True
-                                result['method'] = 'email_sent'
-                                result['contact_info'] = contact_info
-                                self.log('success', 'Email Sent', f"Successfully sent email to {contact_info['emails'][0]}")
-                                return result  # EARLY EXIT - email sent
-                            else:
-                                result['success'] = True  # Found contact info even if email failed
-                                result['method'] = 'contact_page_only'
-                                result['contact_info'] = contact_info
-                                self.log('info', 'Email Not Sent', 'Contact info found but email sending disabled/failed')
-                                return result
-                        else:
-                            result['method'] = 'contact_page_no_email'
-                            result['error'] = 'Contact page found but no email addresses'
                             return result
 
-                except Exception as e:
-                    self.log('error', 'Contact Page Navigation', f'Failed: {str(e)}')
-                    result['error'] = f'Contact page navigation failed: {str(e)}'
+                else:
+                    # No form but on contact page - extract emails
+                    self.log('info', 'Contact Page Only', 'No form found, extracting contact info')
+                    contact_info = self.extract_contact_info()
+
+                    if contact_info and contact_info.get('emails'):
+                        self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
+
+                        # SEND EMAIL DIRECTLY
+                        email_sent = self.send_email_to_contact(contact_info['emails'][0])
+
+                        if email_sent:
+                            result['success'] = True
+                            result['method'] = 'email_sent'
+                            result['contact_info'] = contact_info
+                            self.log('success', 'Email Sent', f"Successfully sent email to {contact_info['emails'][0]}")
+                            return result
+                        else:
+                            result['success'] = True
+                            result['method'] = 'contact_page_only'
+                            result['contact_info'] = contact_info
+                            self.log('info', 'Email Not Sent', 'Contact info found but email sending disabled/failed')
+                            return result
+                    else:
+                        result['method'] = 'contact_page_no_email'
+                        result['error'] = 'Contact page found but no email addresses'
+                        return result
 
             # STRATEGY 3: Check iframes (last resort)
             self.log('info', 'Strategy 3', 'Checking iframes for embedded forms...')
@@ -153,13 +169,12 @@ class FastCampaignProcessor:
                                 self.log_for_live_scraper('Iframe form check', 'iframe form',
                                                          'Check iframe content frames for embedded forms', True)
 
-                                # Note: Filling iframe forms is complex, mark as found but may need manual review
                                 result['success'] = True
                                 result['method'] = 'form_in_iframe'
                                 result['error'] = 'Form found in iframe - may require manual submission'
                                 return result
-                    except Exception as e:
-                        continue  # Cross-origin iframe, skip
+                    except Exception:
+                        continue
 
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', 'No forms or contact pages detected')
@@ -185,19 +200,27 @@ class FastCampaignProcessor:
                     const found = [];
                     const debug = [];
 
+                    const keywords = [
+                        'contact', 'support', 'help', 'customer', 'team', 'get in touch', 'reach out'
+                    ];
+
                     for (const link of links) {
                         const href = (link.getAttribute('href') || '').toLowerCase();
                         const text = (link.textContent || '').toLowerCase().trim();
+                        const aria = (link.getAttribute('aria-label') || '').toLowerCase().trim();
 
-                        if ((href.includes('contact') || text.includes('contact') ||
-                             text.includes('get in touch') || text.includes('reach out')) &&
-                            link.offsetParent !== null) {
+                        const linkText = `${text} ${aria}`;
 
+                        const hasKeyword = keywords.some(k => href.includes(k) || linkText.includes(k));
+                        const visible = link.offsetParent !== null;
+
+                        if (hasKeyword && visible) {
                             const rawHref = link.getAttribute('href');
                             debug.push({
                                 rawHref: rawHref,
                                 text: text.substring(0, 50),
-                                href: href.substring(0, 100)
+                                href: href.substring(0, 100),
+                                aria: aria
                             });
 
                             let fullUrl = rawHref;
@@ -215,7 +238,7 @@ class FastCampaignProcessor:
                         }
                     }
 
-                    return { found: [...new Set(found)].slice(0, 1), debug: debug.slice(0, 5) };
+                    return { found: [...new Set(found)].slice(0, 2), debug: debug.slice(0, 5) };
                 }
             """, base_url)
 
@@ -235,6 +258,22 @@ class FastCampaignProcessor:
         except Exception as e:
             self.log('error', 'Contact Link Search', str(e))
             return None
+
+    def find_div_forms(self):
+        """Find div-based forms (non-form elements that contain inputs)"""
+        try:
+            div_forms = self.page.query_selector_all("div")
+            found_forms = []
+            for div in div_forms:
+                try:
+                    inputs = div.query_selector_all("input, textarea")
+                    if inputs and len(inputs) >= 2:
+                        found_forms.append(div)
+                except Exception:
+                    continue
+            return found_forms
+        except Exception:
+            return []
 
     def handle_cookie_modal(self):
         """Comprehensive cookie modal handling - Accept, Reject, or Close"""
@@ -320,6 +359,11 @@ class FastCampaignProcessor:
             message_filled = False
 
             message = self.replace_variables(self.message_template)
+
+            # NEW: check for email + message presence before filling
+            if not self.has_email_and_message_fields(inputs):
+                self.log('warning', 'Form Skipped', 'Form does not contain email + message fields')
+                return {'success': False, 'error': 'Missing email or message field', 'fields_filled': 0}
 
             for input_element in inputs:
                 try:
@@ -407,6 +451,31 @@ class FastCampaignProcessor:
                 'success': False,
                 'error': f'Form processing error: {str(e)}'
             }
+
+    def has_email_and_message_fields(self, inputs) -> bool:
+        """Check if form has email + message fields"""
+        has_email = False
+        has_message = False
+
+        for input_element in inputs:
+            try:
+                input_type = input_element.get_attribute('type') or 'text'
+                name = (input_element.get_attribute('name') or '').lower()
+                placeholder = (input_element.get_attribute('placeholder') or '').lower()
+                input_id = (input_element.get_attribute('id') or '').lower()
+                field_text = f"{name} {placeholder} {input_id}"
+
+                if input_type == 'email' or 'email' in field_text or 'e-mail' in field_text:
+                    has_email = True
+
+                tag_name = input_element.evaluate('el => el.tagName.toLowerCase()')
+                if tag_name == 'textarea' or any(kw in field_text for kw in ['message', 'comment', 'inquiry', 'details', 'body']):
+                    has_message = True
+
+            except Exception:
+                continue
+
+        return has_email and has_message
 
     def submit_form(self, form) -> bool:
         """Submit form and verify success"""
