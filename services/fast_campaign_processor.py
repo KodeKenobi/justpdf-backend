@@ -7,7 +7,9 @@ Optimized for speed - stops after finding ONE contact method per site
 import re
 import time
 import os
+import csv
 from typing import Dict, List, Optional, Tuple
+from playwright.sync_api import sync_playwright
 
 
 class FastCampaignProcessor:
@@ -727,3 +729,37 @@ If you'd prefer not to receive these messages, please reply to let us know.
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))
             return None
+
+
+# =========================
+#      RUNNER (FIX)
+# =========================
+
+def run_campaign(csv_file):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+
+        with open(csv_file, newline='') as f:
+            reader = csv.DictReader(f)
+
+            for row in reader:
+                page = browser.new_page()
+
+                processor = FastCampaignProcessor(
+                    page=page,
+                    company_data=row,
+                    message_template="YOUR MESSAGE TEMPLATE HERE",
+                    campaign_id=1,
+                    company_id=row.get("id"),
+                )
+
+                result = processor.process_company()
+                print(result)
+
+                page.close()
+
+        browser.close()
+
+
+if __name__ == "__main__":
+    run_campaign("your_file.csv")
