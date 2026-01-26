@@ -341,12 +341,15 @@ async def test_website(url):
     chromium = browser.chromium
     browser = await chromium.launch(headless=False, args=["--no-sandbox", "--disable-setuid-sandbox"])
     page = await browser.new_page()
+is_first_run = True
 
     try:
         print(f"\n🌐 Testing: {url}")
         await page.set_viewport_size({"width": 1920, "height": 1080})
-await hard_reset_page(page)   # ← ADD THIS
+if not is_first_run:
+    await hard_reset_page(page)
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        is_first_run = False
         result["pageTitle"] = await page.title()
 
         cookie_handled = await handle_cookie_modal(page)
