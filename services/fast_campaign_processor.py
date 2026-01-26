@@ -94,6 +94,26 @@ COOKIE_SELECTORS = [
 ]
 
 
+async def hard_reset_page(page):
+    try:
+        await page.goto("about:blank", wait_until="domcontentloaded", timeout=10000)
+        await page.context.clear_cookies()
+        await page.evaluate("""
+            () => {
+                localStorage.clear();
+                sessionStorage.clear();
+                if (indexedDB && indexedDB.databases) {
+                    indexedDB.databases().then(dbs => {
+                        dbs.forEach(db => indexedDB.deleteDatabase(db.name));
+                    });
+                }
+            }
+        """)
+        await page.wait_for_timeout(200)
+    except:
+        pass
+
+
 async def handle_cookie_modal(page):
     await page.wait_for_timeout(2000)
     for selector in COOKIE_SELECTORS:
@@ -325,7 +345,7 @@ async def test_website(url):
     try:
         print(f"\n🌐 Testing: {url}")
         await page.set_viewport_size({"width": 1920, "height": 1080})
-
+await hard_reset_page(page)   # ← ADD THIS
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         result["pageTitle"] = await page.title()
 
@@ -379,6 +399,7 @@ async def test_website(url):
                 print(f"\n🔍 Navigating to contact page: {contact_url}")
 
                 try:
+                    await hard_reset_page(page)   # ← ADD THIS
                     await page.goto(contact_url, wait_until="domcontentloaded", timeout=20000)
                     await handle_cookie_modal(page)
 
