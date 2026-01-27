@@ -270,7 +270,6 @@ class RapidProcessor {
 
       if (forms.length > 0) {
         const result = await this.fillAndSubmitForm(page, forms[0]);
-        await browser.close();
         return result;
       }
 
@@ -289,7 +288,6 @@ class RapidProcessor {
 
         if (forms.length > 0) {
           const result = await this.fillAndSubmitForm(page, forms[0]);
-          await browser.close();
           return result;
         }
 
@@ -300,7 +298,6 @@ class RapidProcessor {
 
         if (emails.length > 0) {
           this.log('SUCCESS', 'Email Found', emails[0]);
-          await browser.close();
           return {
             success: true,
             method: 'email_found',
@@ -309,11 +306,16 @@ class RapidProcessor {
         }
 
         this.log('WARNING', 'Contact Page Only', 'No form or email found');
-        await browser.close();
+        
+        // Take debug screenshot
+        const screenshotPath = `screenshots/no-contact-${Date.now()}.png`;
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        
         return {
           success: false,
           method: 'contact_page_only',
-          error: 'Contact page found but no form or email'
+          error: 'Contact page found but no form or email',
+          screenshot_url: screenshotPath
         };
       }
 
@@ -328,7 +330,6 @@ class RapidProcessor {
             const iframeForms = await frame.$$('form');
             if (iframeForms.length > 0) {
               this.log('INFO', 'Iframe Form', 'Found form in iframe');
-              await browser.close();
               return {
                 success: false,
                 method: 'form_in_iframe',
@@ -342,21 +343,29 @@ class RapidProcessor {
       }
 
       this.log('ERROR', 'No Contact Found', 'No form or contact page found');
-      await browser.close();
+      
+      // Take debug screenshot
+      const screenshotPath = `screenshots/not-found-${Date.now()}.png`;
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+
       return {
         success: false,
         method: 'no_contact_found',
-        error: 'No contact form or page found'
+        error: 'No contact form or page found',
+        screenshot_url: screenshotPath
       };
 
     } catch (e) {
       this.log('ERROR', 'Processing Error', e.message);
-      await browser.close();
       return {
         success: false,
         method: 'error',
         error: e.message
       };
+    } finally {
+      if (browser) {
+        await browser.close().catch(e => console.error('Error closing browser:', e));
+      }
     }
   }
 }
