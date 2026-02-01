@@ -55,6 +55,16 @@ class FastCampaignProcessor:
         try:
             website_url = self.company['website_url']
             
+            # Initial navigation
+            self.log('info', 'Navigation', f'Opening {website_url}...')
+            try:
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=20000)
+                self.handle_cookie_modal()
+                self.page.wait_for_timeout(1000)
+            except Exception as e:
+                self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
+                # Continue anyway, Strategy 2 might still work if we have a partial load
+            
             # STRATEGY 1: Check homepage for forms FIRST (fastest)
             self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
             homepage_forms = self.page.query_selector_all('form')
@@ -412,6 +422,7 @@ class FastCampaignProcessor:
                 
                 return {
                     'success': True,
+                    'method': 'form_submitted',
                     'fields_filled': filled_count,
                     'screenshot_url': screenshot_url
                 }
