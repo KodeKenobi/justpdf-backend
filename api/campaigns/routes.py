@@ -614,96 +614,48 @@ def rapid_process_single(campaign_id, company_id):
                         subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
                     else:
                         message_template_str = campaign.message_template
-                else:
-                    message_template_str = campaign.message_template
             except (json.JSONDecodeError, AttributeError):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
-            # Get script path (in backend/scripts or parent/scripts)
-            backend_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(backend_dir))
+        try:
+            # Use Python FastCampaignProcessor instead of Node script
+            # This ensures consistent logic and safety controls
+            from services.fast_campaign_processor import FastCampaignProcessor
+            from playwright.sync_api import sync_playwright
             
-            # Try multiple locations
-            possible_paths = [
-                os.path.join(project_root, 'Scripts', 'rapid-process-single.js'),  # Railway capitalizes Scripts
-                os.path.join(project_root, 'scripts', 'rapid-process-single.js'),  # Local lowercase
-                os.path.join(os.path.dirname(project_root), 'scripts', 'rapid-process-single.js'),  # Parent dir
-            ]
+            result = None
             
-            script_path = None
-            for path in possible_paths:
-                if os.path.exists(path):
-                    script_path = path
-                    break
-            
-            if not script_path:
-                raise Exception(f"Script not found in any of: {possible_paths}")
-            
-            print(f"[Rapid Process] Calling JavaScript processor: {script_path}")
-            print(f"[Rapid Process] URL: {company.website_url}")
-            print(f"[Rapid Process] Subject: {subject_str}")
-            
-            # Prepare arguments for JavaScript script
-            args = [
-                'node',
-                script_path,
-                company.website_url,
-                company.company_name or 'Company',
-                message_template_str,
-                company.contact_email or 'contact@business.com',
-                company.phone or '',
-                company.contact_person or 'Business Contact',
-                subject_str  # Pass subject as 8th argument
-            ]
-            
-            # Call JavaScript processor
-            process_result = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                timeout=60,  # 60 second timeout
-                cwd=project_root
-            )
-            
-            # Parse stdout JSON
-            print(f"[Rapid Process] Exit code: {process_result.returncode}")
-            print(f"[Rapid Process] Stdout length: {len(process_result.stdout)} chars")
-            print(f"[Rapid Process] Stderr length: {len(process_result.stderr)} chars")
-            
-            try:
-                # Try to extract JSON from stdout (might have other output mixed in)
-                stdout = process_result.stdout.strip()
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+                page = browser.new_page()
                 
-                # If stdout starts with '{', try to parse it directly
-                if stdout.startswith('{'):
-                    result = json.loads(stdout)
-                else:
-                    # Try to find JSON in the output
-                    import re
-                    json_match = re.search(r'\{[\s\S]*\}', stdout)
-                    if json_match:
-                        result = json.loads(json_match.group())
-                    else:
-                        raise json.JSONDecodeError("No JSON found", stdout, 0)
+                # Setup processor
+                company_data = company.to_dict()
+                processor = FastCampaignProcessor(
+                    page=page,
+                    company_data=company_data,
+                    message_template=message_template_str,
+                    campaign_id=campaign_id,
+                    company_id=company_id,
+                    subject=subject_str
+                )
                 
-                print(f"[Rapid Process] Result: {result}")
-            except json.JSONDecodeError as e:
-                print(f"[Rapid Process] Failed to parse JSON")
-                print(f"[Rapid Process] Stdout: {process_result.stdout[:500]}")
-                print(f"[Rapid Process] Stderr: {process_result.stderr[:500]}")
-                
-                # Return a structured error instead of raising exception
-                from datetime import datetime
-                company.status = 'failed'
-                company.error_message = f"Script error: {process_result.stderr[:200] if process_result.stderr else 'Invalid JSON output'}"
-                company.processed_at = datetime.utcnow()
-                db.session.commit()
-                
-                return jsonify({
-                    'success': False,
-                    'error': 'Script execution failed',
-                    'details': process_result.stderr[:200] if process_result.stderr else 'Invalid JSON'
-                }), 500
+                # Execute
+                print(f"[Rapid Process] Starting Python processing for {company.website_url}")
+                result = processor.process_company()
+                browser.close()
+
+        except Exception as e:
+            print(f"[Rapid Process] Script error: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return error
+            return jsonify({
+                'success': False,
+                'error': 'Script execution failed',
+                'details': str(e)
+            }), 500
             
             # Update company based on result
             if result.get('success'):
@@ -871,237 +823,140 @@ def rapid_process_batch(campaign_id):
         results = []
         
         try:
-            # Import required modules
-            try:
-                from services.fast_campaign_processor import FastCampaignProcessor
-                from playwright.sync_api import sync_playwright
-            except Exception as import_error:
-                error_msg = f"Failed to import required modules: {str(import_error)}"
-                print(f"Import error in batch: {error_msg}")
-                import traceback
-                traceback.print_exc()
-                raise Exception(error_msg)
-            
             # Create logger function
             def logger(level, action, message):
                 print(f"[{level}] {action}: {message}")
             
             # Parse message_template if it's a JSON string
             import json
+            import subprocess
+            from datetime import datetime
+            import os
+            
             message_template_str = campaign.message_template
-            subject_str = 'Partnership Inquiry'  # Default subject
+            subject_str = 'Partnership Inquiry'
             
             try:
                 if isinstance(campaign.message_template, str):
                     message_template_parsed = json.loads(campaign.message_template)
                     if isinstance(message_template_parsed, dict):
-                        # Extract the message and subject fields if they exist
                         message_template_str = message_template_parsed.get('message', campaign.message_template)
                         subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
-                    else:
-                        message_template_str = campaign.message_template
-                else:
-                    message_template_str = campaign.message_template
-            except (json.JSONDecodeError, AttributeError):
-                # If parsing fails, use as-is
-                message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
+            except:
+                pass
+
+            # Get script path
+            backend_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(backend_dir))
+            possible_paths = [
+                os.path.join(project_root, 'Scripts', 'rapid-process-single.js'),
+                os.path.join(project_root, 'scripts', 'rapid-process-single.js'),
+            ]
+            script_path = next((p for p in possible_paths if os.path.exists(p)), None)
+            if not script_path:
+                raise Exception("Node.js script not found")
             
-            # Launch headless browser - ONE session for all companies
-            try:
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(
-                        headless=True,  # EXPLICITLY HEADLESS - NO VISIBLE WINDOWS
-                        args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            # Process each company in the batch
+            for idx, company in enumerate(companies):
+                try:
+                    logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
+                    
+                    args = [
+                        'node', script_path,
+                        company.website_url,
+                        company.company_name or 'Company',
+                        message_template_str,
+                        company.contact_email or 'contact@business.com',
+                        company.phone or '',
+                        company.contact_person or 'Business Contact',
+                        subject_str,
+                        campaign.message_template if isinstance(campaign.message_template, str) else json.dumps(campaign.message_template)
+                    ]
+                    
+                    process_result = subprocess.run(
+                        args, capture_output=True, text=True, timeout=90, cwd=project_root
                     )
                     
-                    context = browser.new_context(
-                        viewport={'width': 1920, 'height': 1080},
-                        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                    )
-                    
-                    page = context.new_page()
-                    
-                    # Navigate to website once (first company's URL)
+                    # Parse result
                     try:
-                        page.goto(website_url, wait_until='domcontentloaded', timeout=30000)
-                        page.wait_for_timeout(2000)  # Wait for page to fully load
-                    except Exception as e:
-                        logger('error', 'Navigation Failed', f'Failed to navigate to {website_url}: {str(e)}')
-                        # Mark all as failed
-                        for company in companies:
+                        stdout = process_result.stdout.strip()
+                        import re
+                        json_match = re.search(r'\{[\s\S]*\}', stdout)
+                        result = json.loads(json_match.group()) if json_match else {'success': False, 'error': 'No JSON output'}
+                    except:
+                        result = {'success': False, 'error': f'Script error: {process_result.stderr[:100]}'}
+
+                    # Update company
+                    if result.get('success'):
+                        if result.get('method') == 'email_found':
+                            company.status = 'contact_info_found'
+                            company.contact_method = 'email_found'
+                            if result.get('contact_info'):
+                                company.contact_info = json.dumps(result['contact_info'])
+                        else:
+                            company.status = 'completed'
+                            company.contact_method = result.get('method', 'form_submitted')
+                            company.fields_filled = result.get('fields_filled', 0)
+                    else:
+                        error_msg = result.get('error', '').lower()
+                        if 'captcha' in error_msg or result.get('method') in ['form_with_captcha', 'form_in_iframe']:
+                            company.status = 'captcha'
+                            company.contact_method = result.get('method', 'form_with_captcha')
+                        else:
                             company.status = 'failed'
-                            company.error_message = f'Navigation failed: {str(e)}'
-                        db.session.commit()
-                        browser.close()
-                        return jsonify({
-                            'success': False,
-                            'error': f'Navigation failed: {str(e)}',
-                            'processingTime': time.time() - start_time
-                        }), 200
+                        company.error_message = result.get('error', 'Processing failed')
                     
-                    # Process each company in the batch (same browser session)
-                    for idx, company in enumerate(companies):
-                        try:
-                            logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
-                            
-                            # Prepare company data
-                            company_data = {
-                                'id': company.id,
-                                'website_url': company.website_url,
-                                'company_name': company.company_name,
-                                'contact_email': company.contact_email,
-                                'phone': company.phone,
-                                'contact_person': company.contact_person if hasattr(company, 'contact_person') else None
-                            }
-                            
-                            # Use Fast Campaign Processor with existing page
-                            processor = FastCampaignProcessor(
-                                page,
-                                company_data,
-                                message_template_str,
-                                campaign_id,
-                                company.id,
-                                logger,
-                                subject_str
-                            )
-                            
-                            # Process company (detects, fills, and submits in one go)
-                            result = processor.process_company()
-                            
-                            # Update company based on result
-                            if result.get('success'):
-                                if result['method'] == 'email_sent':
-                                    company.status = 'completed'
-                                    company.contact_method = 'email_sent'
-                                    company.error_message = 'Email sent directly to contact'
-                                elif result['method'].startswith('form_submitted'):
-                                    company.status = 'completed'
-                                    company.contact_method = 'form_submitted'
-                                    company.error_message = None
-                                elif result['method'] == 'contact_page_only':
-                                    company.status = 'contact_info_found'
-                                    company.contact_method = 'contact_page_only'
-                                    if result.get('contact_info') and result['contact_info'].get('emails'):
-                                        company.emails_found = result['contact_info']['emails']
-                                elif result['method'] == 'form_in_iframe':
-                                    company.status = 'contact_info_found'
-                                    company.contact_method = 'form_in_iframe'
-                                    company.error_message = result.get('error', 'Form found in iframe')
+                    # Screenshot upload
+                    local_path = result.get('screenshot_url')
+                    if local_path:
+                        full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
+                        if os.path.exists(full_path):
+                            try:
+                                from utils.supabase_storage import upload_screenshot
+                                with open(full_path, 'rb') as f:
+                                    sb = upload_screenshot(f.read(), campaign_id, company.id)
+                                if sb:
+                                    company.screenshot_url = sb
+                                    os.remove(full_path)
                                 else:
-                                    company.status = 'completed'
-                                    company.contact_method = result.get('method', 'form_submitted')
-                                    company.error_message = None
-                            else:
-                                # Handle different failure types
-                                error_msg = result.get('error', '').lower()
-                                if 'captcha' in error_msg:
-                                    company.status = 'captcha'
-                                    company.contact_method = 'form_with_captcha'
-                                    company.error_message = 'CAPTCHA detected'
-                                else:
-                                    company.status = 'failed'
-                                    company.error_message = result.get('error', 'Processing failed')
-                                    company.contact_method = result.get('method', 'none')
-                                
-                                # Store contact info if found even on failure
-                                if result.get('contact_info') and result['contact_info'].get('emails'):
-                                    company.emails_found = result['contact_info']['emails']
-                            
-                            # Store screenshot if available
-                            if result.get('screenshot_url'):
-                                company.screenshot_url = result.get('screenshot_url')
-                            
-                            # Commit after each company
-                            db.session.commit()
-                            
-                            results.append({
-                                'companyId': company.id,
-                                'success': result.get('success', False),
-                                'status': company.status,
-                                'errorMessage': company.error_message,
-                                'screenshotUrl': company.screenshot_url,
-                                'method': result.get('method', 'none')
-                            })
-                            
-                            logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Completed: {company.status}')
-                            
-                            # If not the last company, reload page for next submission
-                            if idx < len(companies) - 1:
-                                logger('info', 'Batch Processing', 'Reloading page for next company...')
-                                try:
-                                    page.goto(website_url, wait_until='domcontentloaded', timeout=30000)
-                                    page.wait_for_timeout(2000)
-                                except Exception as e:
-                                    logger('warning', 'Page Reload', f'Failed to reload: {str(e)}')
-                        
-                        except Exception as e:
-                            logger('error', f'Batch Processing [{idx+1}/{len(companies)}]', f'Error: {str(e)}')
-                            company.status = 'failed'
-                            company.error_message = str(e)
-                            db.session.commit()
-                            
-                            results.append({
-                                'companyId': company.id,
-                                'success': False,
-                                'status': 'failed',
-                                'errorMessage': str(e),
-                                'screenshotUrl': None
-                            })
+                                    company.screenshot_url = local_path
+                            except:
+                                company.screenshot_url = local_path
                     
-                    # Clean up browser
-                    browser.close()
-            except Exception as playwright_error:
-                error_msg = f"Playwright error in batch: {str(playwright_error)}"
-                print(f"Error in rapid_process_batch Playwright: {error_msg}")
-                import traceback
-                traceback.print_exc()
-                raise Exception(error_msg)
-            
+                    company.processed_at = datetime.utcnow()
+                    db.session.commit()
+                    
+                    results.append({
+                        'companyId': company.id,
+                        'status': company.status,
+                        'screenshotUrl': company.screenshot_url,
+                        'errorMessage': company.error_message
+                    })
+                except Exception as e:
+                    logger('error', 'Batch Company Error', str(e))
+                    company.status = 'failed'
+                    company.error_message = str(e)
+                    db.session.commit()
+
+            # Final response
             processing_time = time.time() - start_time
-            
-            # Update campaign stats
             from sqlalchemy import or_
-            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
-            success_companies = Company.query.filter_by(campaign_id=campaign.id).filter(
-                or_(Company.status == 'completed', Company.status == 'contact_info_found', Company.emails_sent.isnot(None))
-            ).count()
-            campaign.success_count = success_companies
-            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
-            
-            if campaign.total_companies > 0:
-                campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100)
-            
+            campaign.processed_count = Company.query.filter_by(campaign_id=campaign_id).filter(Company.status != 'pending').count()
+            campaign.success_count = Company.query.filter_by(campaign_id=campaign_id).filter(or_(Company.status == 'completed', Company.status == 'contact_info_found')).count()
+            campaign.failed_count = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
+            campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100) if campaign.total_companies > 0 else 0
             db.session.commit()
             
             return jsonify({
                 'success': True,
-                'websiteUrl': website_url,
                 'companiesProcessed': len(companies),
                 'processingTime': round(processing_time, 2),
                 'results': results
             }), 200
-            
+
         except Exception as e:
-            # Mark all as failed
-            error_msg = str(e)
-            print(f"Error in rapid_process_batch inner try: {error_msg}")
-            import traceback
-            traceback.print_exc()
-            
-            for company in companies:
-                company.status = 'failed'
-                company.error_message = error_msg
-            db.session.commit()
-            
-            return jsonify({
-                'success': False,
-                'error': error_msg,
-                'processingTime': time.time() - start_time
-            }), 500
-            
+            logger('error', 'Batch Loop Error', str(e))
+            return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
-        print(f"Error in rapid_process_batch outer try: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Outer Batch Error: {e}")
         return jsonify({'error': str(e)}), 500
