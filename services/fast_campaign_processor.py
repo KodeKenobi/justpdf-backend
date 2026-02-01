@@ -162,9 +162,13 @@ class FastCampaignProcessor:
                                      'No forms or contact pages detected - website may not have contact mechanism', False)
             result['error'] = 'No contact form or page found'
             
+            # Take screenshot on failure
+            result['screenshot_url'] = self.take_screenshot('failed_discovery')
+            
         except Exception as e:
             self.log('error', 'Processing Error', str(e))
             result['error'] = str(e)
+            result['screenshot_url'] = self.take_screenshot('error_processing')
         
         return result
 
@@ -391,7 +395,8 @@ class FastCampaignProcessor:
                 return {
                     'success': False,
                     'error': 'Could not fill required form fields',
-                    'fields_filled': filled_count
+                    'fields_filled': filled_count,
+                    'screenshot_url': self.take_screenshot(f'failed_fill_{location}')
                 }
             
             self.log('success', 'Form Filled', f'Filled {filled_count} fields successfully')
@@ -414,7 +419,8 @@ class FastCampaignProcessor:
                 return {
                     'success': False,
                     'error': 'Form submission failed',
-                    'fields_filled': filled_count
+                    'fields_filled': filled_count,
+                    'screenshot_url': self.take_screenshot(f'failed_submit_{location}')
                 }
                 
         except Exception as e:
@@ -452,8 +458,10 @@ class FastCampaignProcessor:
             
             if submit_button:
                 # Click and wait for response
-                submit_button.click()
-                self.page.wait_for_timeout(2000)  # Wait for submission
+                self.log('warning', 'SIMULATION', 'Submission disabled for testing - not clicking button')
+                return True
+                # submit_button.click()
+                # self.page.wait_for_timeout(2000)  # Wait for submission
                 
                 # Check for success indicators
                 success_indicators = [
