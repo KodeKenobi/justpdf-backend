@@ -617,35 +617,35 @@ def rapid_process_single(campaign_id, company_id):
             except (json.JSONDecodeError, AttributeError):
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
-        try:
-            # Use Python FastCampaignProcessor instead of Node script
-            # This ensures consistent logic and safety controls
-            from services.fast_campaign_processor import FastCampaignProcessor
-            from playwright.sync_api import sync_playwright
-            
-            result = None
-            
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-                page = browser.new_page()
+            try:
+                # Use Python FastCampaignProcessor instead of Node script
+                # This ensures consistent logic and safety controls
+                from services.fast_campaign_processor import FastCampaignProcessor
+                from playwright.sync_api import sync_playwright
                 
-                # Setup processor
-                company_data = company.to_dict()
-                processor = FastCampaignProcessor(
-                    page=page,
-                    company_data=company_data,
-                    message_template=message_template_str,
-                    campaign_id=campaign_id,
-                    company_id=company_id,
-                    subject=subject_str
-                )
+                result = None
                 
-                # Execute
-                print(f"[Rapid Process] Starting Python processing for {company.website_url}")
-                result = processor.process_company()
-                browser.close()
+                with sync_playwright() as p:
+                    browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+                    page = browser.new_page()
+                    
+                    # Setup processor
+                    company_data = company.to_dict()
+                    processor = FastCampaignProcessor(
+                        page=page,
+                        company_data=company_data,
+                        message_template=message_template_str,
+                        campaign_id=campaign_id,
+                        company_id=company_id,
+                        subject=subject_str
+                    )
+                    
+                    # Execute
+                    print(f"[Rapid Process] Starting Python processing for {company.website_url}")
+                    result = processor.process_company()
+                    browser.close()
 
-        except Exception as e:
+            except Exception as e:
             print(f"[Rapid Process] Script error: {e}")
             import traceback
             traceback.print_exc()
