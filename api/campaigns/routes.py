@@ -646,16 +646,16 @@ def rapid_process_single(campaign_id, company_id):
                     browser.close()
 
             except Exception as e:
-            print(f"[Rapid Process] Script error: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Return error
-            return jsonify({
-                'success': False,
-                'error': 'Script execution failed',
-                'details': str(e)
-            }), 500
+                print(f"[Rapid Process] Script error: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Return error
+                return jsonify({
+                    'success': False,
+                    'error': 'Script execution failed',
+                    'details': str(e)
+                }), 500
             
             # Update company based on result
             if result.get('success'):
