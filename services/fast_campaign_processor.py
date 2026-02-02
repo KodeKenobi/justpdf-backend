@@ -808,8 +808,8 @@ If you'd prefer not to receive these messages, please reply to let us know.
             
             self.page.screenshot(path=filepath, full_page=False)
             
-            # Return URL (adjust based on your static file serving)
-            return filepath
+            # Return URL (absolute path for frontend)
+            return '/' + filepath.replace('\\', '/')
             
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))

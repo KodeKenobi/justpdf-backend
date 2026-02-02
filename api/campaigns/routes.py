@@ -904,8 +904,9 @@ def rapid_process_batch(campaign_id):
                         # Screenshot upload
                         local_path = result.get('screenshot_url')
                         if local_path:
-                            # Ensure we have the full path for local file operations
-                            full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
+                            # Handle both relative and absolute-style URLs from processor
+                            check_path = local_path.lstrip('/')
+                            full_path = os.path.join(project_root, check_path)
                             
                             if os.path.exists(full_path):
                                 try:
@@ -932,7 +933,14 @@ def rapid_process_batch(campaign_id):
                     except Exception as e:
                         logger('error', 'Batch Company Error', str(e))
                         company.status = 'failed'
-                        company.error_message = str(e)
+                        # Group common technical errors into friendlier strings for the frontend
+                        error_str = str(e)
+                        if "Playwright" in error_str or "browser" in error_str:
+                            company.error_message = "Browser system error. Please try again."
+                        elif "Timeout" in error_str:
+                            company.error_message = "Website took too long to load."
+                        else:
+                            company.error_message = error_str
                         db.session.commit()
 
                 browser.close()
