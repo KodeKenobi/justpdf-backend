@@ -130,21 +130,19 @@ class FastCampaignProcessor:
                 except Exception as e:
                     self.log('error', 'Contact Page Navigation', f'Failed: {str(e)}')
 
-            # STRATEGY 3: Check iframes (more thoroughly)
-            self.log('info', 'Strategy 3', 'Checking iframes for embedded forms (HubSpot/Typeform)...')
-            iframes = self.page.query_selector_all('iframe')
-            for idx, iframe in enumerate(iframes[:3]):
+            # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
+            self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
+            for idx, frame in enumerate(self.page.frames):
+                if frame == self.page.main_frame: continue
                 try:
-                    frame = iframe.content_frame()
-                    if frame:
-                        frame_forms = frame.query_selector_all('form')
-                        if frame_forms:
-                            self.log('success', 'Iframe Form Found', f'Found form in iframe {idx + 1}')
-                            form_result = self.fill_and_submit_form(frame_forms[0], f'iframe_{idx}', is_iframe=True)
-                            if form_result['success']:
-                                result.update(form_result)
-                                result['method'] = 'form_submitted_iframe'
-                                return result
+                    frame_forms = frame.query_selector_all('form')
+                    if frame_forms:
+                        self.log('success', 'Frame Form Found', f'Found form in frame: {frame.url[:50]}...')
+                        form_result = self.fill_and_submit_form(frame_forms[0], f'frame_{idx}', is_iframe=True, frame=frame)
+                        if form_result['success']:
+                            result.update(form_result)
+                            result['method'] = 'form_submitted_iframe'
+                            return result
                 except Exception: continue
 
             # STRATEGY 4: Heuristic Field Search (No <form> tag)
@@ -156,11 +154,8 @@ class FastCampaignProcessor:
                 return result
 
             # NO CONTACT FOUND
-            self.log('error', 'No Contact Found', 'All strategies exhausted')
-            result['error'] = 'No contact form or page found'
-            result['screenshot_url'] = self.take_screenshot('failed_discovery')
-            
-            # Take screenshot on failure
+            self.log('error', 'No Contact Found', f'All strategies exhausted for {self.company_url}')
+            result['error'] = f'No discovery method succeeded for {self.company_url}'
             result['screenshot_url'] = self.take_screenshot('failed_discovery')
             
         except Exception as e:
@@ -318,7 +313,7 @@ class FastCampaignProcessor:
             self.log('error', 'Contact Info Extraction', str(e))
             return None
 
-    def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False) -> Dict:
+    def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False, frame=None) -> Dict:
         """Fill and submit form with smart field detection"""
         try:
             context_name = "iframe" if is_iframe else ("heuristic" if is_heuristic else "standard")
@@ -333,8 +328,9 @@ class FastCampaignProcessor:
                     'method': 'form_with_captcha'
                 }
             
-            # Get all inputs and textareas
+            # Get all inputs, textareas, and selects
             inputs = form.query_selector_all('input, textarea')
+            selects = form.query_selector_all('select')
             
             filled_count = 0
             email_filled = False
@@ -401,6 +397,43 @@ class FastCampaignProcessor:
                     self.log('warning', 'Field Fill Failed', f'Field error: {str(e)}')
                     continue
             
+            # Handle Selects (Dropdowns)
+            for select in selects:
+                name = (select.get_attribute('name') or '').lower()
+                placeholder = (select.get_attribute('placeholder') or '').lower()
+                select_id = (select.get_attribute('id') or '').lower()
+                text = f"{name} {placeholder} {select_id}"
+                
+                try:
+                    options = select.query_selector_all('option')
+                    if not options: continue
+                    
+                    # Try to match country or industry
+                    if any(kw in text for kw in ['country', 'ext', 'region', 'location']):
+                        target_val = None
+                        for opt in options:
+                            if 'united kingdom' in (opt.inner_text() or '').lower():
+                                target_val = opt.get_attribute('value')
+                                break
+                        if not target_val:
+                            target_val = options[1].get_attribute('value') if len(options) > 1 else options[0].get_attribute('value')
+                        
+                        select.select_option(value=target_val)
+                        filled_count += 1
+                except Exception: continue
+
+            # Handle Checkboxes
+            for cb in inputs:
+                if cb.get_attribute('type') == 'checkbox':
+                    name = (cb.get_attribute('name') or '').lower()
+                    # Try to get text from parent label or next sibling
+                    parent_text = (cb.evaluate("el => el.parentElement.innerText") or '').lower()
+                    if any(kw in f"{name} {parent_text}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent']):
+                        try:
+                            cb.check()
+                            filled_count += 1
+                        except Exception: continue
+
             # Require at least email and message to be filled
             if not (email_filled and message_filled):
                 self.log('warning', 'Form Incomplete', f'Could not fill required fields (email: {email_filled}, message: {message_filled})')
