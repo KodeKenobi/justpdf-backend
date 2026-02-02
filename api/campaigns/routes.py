@@ -744,7 +744,7 @@ def rapid_process_single(campaign_id, company_id):
                 'errorMessage': company.error_message,
                 'contactInfo': result.get('contact_info'),
                 'fieldsFilled': result.get('fields_filled'),
-                'screenshotUrl': result.get('screenshot_url'),
+                'screenshotUrl': f"/{result.get('screenshot_url')}" if result.get('screenshot_url') and not result.get('screenshot_url').startswith('http') and not result.get('screenshot_url').startswith('/') else result.get('screenshot_url'),
                 'processingTime': time.time() - start_time
             }), 200
             
@@ -916,9 +916,10 @@ def rapid_process_batch(campaign_id):
                                         company.screenshot_url = sb
                                         os.remove(full_path)
                                     else:
-                                        company.screenshot_url = local_path
+                                        # Fallback to local path with leading slash
+                                        company.screenshot_url = f"/{local_path}" if not local_path.startswith('/') else local_path
                                 except:
-                                    company.screenshot_url = local_path
+                                    company.screenshot_url = f"/{local_path}" if not local_path.startswith('/') else local_path
                         
                         company.processed_at = datetime.utcnow()
                         db.session.commit()
