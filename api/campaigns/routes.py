@@ -742,6 +742,7 @@ def rapid_process_single(campaign_id, company_id):
                 'method': result.get('method'),
                 'contactMethod': company.contact_method,
                 'errorMessage': company.error_message,
+                'error': company.error_message, # Add for redundancy
                 'contactInfo': result.get('contact_info'),
                 'fieldsFilled': result.get('fields_filled'),
                 'screenshotUrl': f"/{result.get('screenshot_url')}" if result.get('screenshot_url') and not result.get('screenshot_url').startswith('http') and not result.get('screenshot_url').startswith('/') else result.get('screenshot_url'),
@@ -758,6 +759,7 @@ def rapid_process_single(campaign_id, company_id):
                 'success': False,
                 'status': 'failed',
                 'error': 'Processing timeout',
+                'errorMessage': 'Processing timeout after 60 seconds',
                 'processingTime': time.time() - start_time
             }), 200
             
@@ -774,6 +776,7 @@ def rapid_process_single(campaign_id, company_id):
                 'success': False,
                 'status': 'failed',
                 'error': str(e),
+                'errorMessage': str(e),
                 'processingTime': time.time() - start_time
             }), 200
             
