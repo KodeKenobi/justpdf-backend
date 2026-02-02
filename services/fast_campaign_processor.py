@@ -379,6 +379,19 @@ class FastCampaignProcessor:
             inputs = form.query_selector_all('input, textarea')
             selects = form.query_selector_all('select')
             
+            # If no inputs found, wait a bit and try again (especially for iframes/HubSpot)
+            if not inputs:
+                self.log('info', 'Form Filling', 'No inputs found immediately, waiting 5s for hydration...')
+                self.page.wait_for_timeout(5000)
+                inputs = form.query_selector_all('input, textarea')
+                selects = form.query_selector_all('select')
+                
+                if not inputs:
+                     self.log('info', 'Form Filling', 'Still no inputs, trying one last 2s wait...')
+                     self.page.wait_for_timeout(2000)
+                     inputs = form.query_selector_all('input, textarea')
+                     selects = form.query_selector_all('select')
+            
             filled_count = 0
             email_filled = False
             message_filled = False
@@ -532,7 +545,7 @@ class FastCampaignProcessor:
             self.log('success', 'Form Filled', f'Filled {filled_count} fields successfully')
             
             # Submit the form
-            submit_success = self.submit_form(form)
+            submit_success = self.submit_form(form, location)
             
             if submit_success:
                 self.log('success', 'Form Submitted', 'Form submission successful')
@@ -561,7 +574,7 @@ class FastCampaignProcessor:
                 'error': f'Form processing error: {str(e)}'
             }
 
-    def submit_form(self, form) -> bool:
+    def submit_form(self, form, location: str) -> bool:
         """Submit form and verify success"""
         try:
             # Find submit button
@@ -588,6 +601,15 @@ class FastCampaignProcessor:
                 submit_button = form.query_selector('button')
             
             if submit_button:
+                # Check for simulation mode via environment variable
+                simulation_mode = os.environ.get('SIMULATION_MODE', 'false').lower() == 'true'
+                
+                if simulation_mode:
+                    self.log('warning', 'SIMULATION', 'Simulation mode active - skipping final click')
+                    # Take success screenshot while form is filled
+                    self.take_screenshot(f'simulation_{location}')
+                    return True
+
                 # Click and wait for response
                 submit_button.click()
                 self.page.wait_for_timeout(3000)  # Wait for submission and redirects
