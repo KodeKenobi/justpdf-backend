@@ -124,10 +124,11 @@ class FastCampaignProcessor:
                         # Wait for dynamic forms (HubSpot, React, etc.)
                         self.log('info', 'Contact Page', 'Waiting for form to initialize...')
                         try:
-                            self.page.wait_for_selector('form', timeout=5000)
-                            self.page.wait_for_timeout(1000)
+                            self.log('info', 'Contact Page', 'Waiting for form to initialize (10s)...')
+                            self.page.wait_for_selector('form', timeout=10000)
+                            self.page.wait_for_timeout(2000)
                         except:
-                            self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
+                            self.log('info', 'Contact Page', 'No standard form appeared within 10s, checking immediately')
                         
                         # Check for form on contact page
                         contact_page_forms = self.page.query_selector_all('form')
@@ -403,7 +404,9 @@ class FastCampaignProcessor:
                     if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
                         email = self.company.get('contact_email', 'contact@business.com')
                         input_element.click()
-                        input_element.type(email, delay=50)
+                        input_element.fill('') # Clear first
+                        input_element.type(email, delay=30)
+                        input_element.press('Tab') # Trigger validation
                         email_filled = True
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Email field filled: {email}')
@@ -439,11 +442,12 @@ class FastCampaignProcessor:
 
                     # 4. Fill phone field
                     if any(kw in field_text for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
-                        phone = self.company.get('phone') or self.company.get('phone_number')
+                        phone = self.company.get('phone') or self.company.get('phone_number') or "01211234567"
                         if phone:
-                            # Use type for phone as well just in case
                             input_element.click()
-                            input_element.type(phone, delay=50)
+                            input_element.fill('') # Clear
+                            input_element.type(str(phone), delay=30)
+                            input_element.press('Tab')
                             filled_count += 1
                             self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
@@ -585,10 +589,8 @@ class FastCampaignProcessor:
             
             if submit_button:
                 # Click and wait for response
-                self.log('warning', 'SIMULATION', 'Submission disabled for testing - not clicking button')
-                return True
-                # submit_button.click()
-                # self.page.wait_for_timeout(2000)  # Wait for submission
+                submit_button.click()
+                self.page.wait_for_timeout(3000)  # Wait for submission and redirects
                 
                 # Check for success indicators
                 success_indicators = [
@@ -602,7 +604,7 @@ class FastCampaignProcessor:
                     'message has been sent'
                 ]
                 
-                page_text = self.page.text_content().lower()
+                page_text = self.page.inner_text('body').lower()
                 if any(indicator in page_text for indicator in success_indicators):
                     self.log('success', 'Success Indicator', 'Success message detected on page')
                     return True
@@ -808,8 +810,8 @@ If you'd prefer not to receive these messages, please reply to let us know.
             
             self.page.screenshot(path=filepath, full_page=False)
             
-            # Return URL with leading slash for absolute path resolution on frontend
-            return f"/{filepath}"
+            # Return relative path with forward slashes for cross-platform URL consistency
+            return filepath.replace('\\', '/')
             
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))
