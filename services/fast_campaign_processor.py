@@ -154,8 +154,8 @@ class FastCampaignProcessor:
                 return result
 
             # NO CONTACT FOUND
-            self.log('error', 'No Contact Found', f'All strategies exhausted for {self.company_url}')
-            result['error'] = f'No discovery method succeeded for {self.company_url}'
+            self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
+            result['error'] = f'No discovery method succeeded for {website_url}'
             result['screenshot_url'] = self.take_screenshot('failed_discovery')
             
         except Exception as e:
