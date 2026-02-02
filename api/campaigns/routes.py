@@ -873,57 +873,57 @@ def rapid_process_batch(campaign_id):
                         result = processor.process_company()
                         page.close()
 
-                    # Update company
-                    if result.get('success'):
-                        if result.get('method') == 'email_found':
-                            company.status = 'contact_info_found'
-                            company.contact_method = 'email_found'
-                            if result.get('contact_info'):
-                                company.contact_info = json.dumps(result['contact_info'])
+                        # Update company
+                        if result.get('success'):
+                            if result.get('method') == 'email_found':
+                                company.status = 'contact_info_found'
+                                company.contact_method = 'email_found'
+                                if result.get('contact_info'):
+                                    company.contact_info = json.dumps(result['contact_info'])
+                            else:
+                                company.status = 'completed'
+                                company.contact_method = result.get('method', 'form_submitted')
+                                company.fields_filled = result.get('fields_filled', 0)
                         else:
-                            company.status = 'completed'
-                            company.contact_method = result.get('method', 'form_submitted')
-                            company.fields_filled = result.get('fields_filled', 0)
-                    else:
-                        error_msg = result.get('error', '').lower()
-                        if 'captcha' in error_msg or result.get('method') in ['form_with_captcha', 'form_in_iframe']:
-                            company.status = 'captcha'
-                            company.contact_method = result.get('method', 'form_with_captcha')
-                        else:
-                            company.status = 'failed'
-                        company.error_message = result.get('error', 'Processing failed')
-                    
-                    # Screenshot upload
-                    local_path = result.get('screenshot_url')
-                    if local_path:
-                        full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
-                        if os.path.exists(full_path):
-                            try:
-                                from utils.supabase_storage import upload_screenshot
-                                with open(full_path, 'rb') as f:
-                                    sb = upload_screenshot(f.read(), campaign_id, company.id)
-                                if sb:
-                                    company.screenshot_url = sb
-                                    os.remove(full_path)
-                                else:
+                            error_msg = result.get('error', '').lower()
+                            if 'captcha' in error_msg or result.get('method') in ['form_with_captcha', 'form_in_iframe']:
+                                company.status = 'captcha'
+                                company.contact_method = result.get('method', 'form_with_captcha')
+                            else:
+                                company.status = 'failed'
+                            company.error_message = result.get('error', 'Processing failed')
+                        
+                        # Screenshot upload
+                        local_path = result.get('screenshot_url')
+                        if local_path:
+                            full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
+                            if os.path.exists(full_path):
+                                try:
+                                    from utils.supabase_storage import upload_screenshot
+                                    with open(full_path, 'rb') as f:
+                                        sb = upload_screenshot(f.read(), campaign_id, company.id)
+                                    if sb:
+                                        company.screenshot_url = sb
+                                        os.remove(full_path)
+                                    else:
+                                        company.screenshot_url = local_path
+                                except:
                                     company.screenshot_url = local_path
-                            except:
-                                company.screenshot_url = local_path
-                    
-                    company.processed_at = datetime.utcnow()
-                    db.session.commit()
-                    
-                    results.append({
-                        'companyId': company.id,
-                        'status': company.status,
-                        'screenshotUrl': company.screenshot_url,
-                        'errorMessage': company.error_message
-                    })
-                except Exception as e:
-                    logger('error', 'Batch Company Error', str(e))
-                    company.status = 'failed'
-                    company.error_message = str(e)
-                    db.session.commit()
+                        
+                        company.processed_at = datetime.utcnow()
+                        db.session.commit()
+                        
+                        results.append({
+                            'companyId': company.id,
+                            'status': company.status,
+                            'screenshotUrl': company.screenshot_url,
+                            'errorMessage': company.error_message
+                        })
+                    except Exception as e:
+                        logger('error', 'Batch Company Error', str(e))
+                        company.status = 'failed'
+                        company.error_message = str(e)
+                        db.session.commit()
 
                 browser.close()
             
