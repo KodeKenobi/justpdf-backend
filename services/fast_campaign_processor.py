@@ -94,7 +94,14 @@ class FastCampaignProcessor:
                 try:
                     self.page.goto(contact_link, wait_until='domcontentloaded', timeout=15000)
                     self.handle_cookie_modal()
-                    self.page.wait_for_timeout(500)
+                    
+                    # Wait for dynamic forms (HubSpot, React, etc.)
+                    self.log('info', 'Contact Page', 'Waiting for form to initialize...')
+                    try:
+                        self.page.wait_for_selector('form', timeout=5000)
+                        self.page.wait_for_timeout(1000)
+                    except:
+                        self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
                     
                     # Check for form on contact page
                     contact_page_forms = self.page.query_selector_all('form')
@@ -110,67 +117,48 @@ class FastCampaignProcessor:
                             self.found_form = True
                             return result  # EARLY EXIT - found and submitted form
                     else:
-                        # No form but on contact page - extract emails
-                        self.log('info', 'Contact Page Only', 'No form found, extracting contact info')
+                        # No form but on contact page - attempt strategy 3 & 4 within contact page context
+                        self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
                         contact_info = self.extract_contact_info()
                         
                         if contact_info and contact_info.get('emails'):
                             self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
-                            
-                            # SEND EMAIL DIRECTLY
                             email_sent = self.send_email_to_contact(contact_info['emails'][0])
-                            
                             if email_sent:
-                                result['success'] = True
-                                result['method'] = 'email_sent'
-                                result['contact_info'] = contact_info
-                                self.log('success', 'Email Sent', f"Successfully sent email to {contact_info['emails'][0]}")
-                                return result  # EARLY EXIT - email sent
-                            else:
-                                result['success'] = True  # Found contact info even if email failed
-                                result['method'] = 'contact_page_only'
-                                result['contact_info'] = contact_info
-                                self.log('info', 'Email Not Sent', 'Contact info found but email sending disabled/failed')
+                                result.update({'success': True, 'method': 'email_sent', 'contact_info': contact_info})
                                 return result
-                        else:
-                            result['method'] = 'contact_page_no_email'
-                            result['error'] = 'Contact page found but no email addresses'
-                            return result
-                            
                 except Exception as e:
                     self.log('error', 'Contact Page Navigation', f'Failed: {str(e)}')
-                    result['error'] = f'Contact page navigation failed: {str(e)}'
-            
-            # STRATEGY 3: Check iframes (last resort)
-            self.log('info', 'Strategy 3', 'Checking iframes for embedded forms...')
+
+            # STRATEGY 3: Check iframes (more thoroughly)
+            self.log('info', 'Strategy 3', 'Checking iframes for embedded forms (HubSpot/Typeform)...')
             iframes = self.page.query_selector_all('iframe')
-            
-            if iframes:
-                self.log('info', 'Iframes Found', f'Checking {min(len(iframes), 2)} iframe(s)...')
-                
-                for idx, iframe in enumerate(iframes[:2]):  # Limit to 2 iframes
-                    try:
-                        frame = iframe.content_frame()
-                        if frame:
-                            iframe_forms = frame.query_selector_all('form')
-                            if iframe_forms:
-                                self.log('success', 'Iframe Form Found', f'Found form in iframe {idx + 1}')
-                                self.log_for_live_scraper('Iframe form check', 'iframe form', 
-                                                         'Check iframe content frames for embedded forms', True)
-                                
-                                # Note: Filling iframe forms is complex, mark as found but may need manual review
-                                result['success'] = True
-                                result['method'] = 'form_in_iframe'
-                                result['error'] = 'Form found in iframe - may require manual submission'
+            for idx, iframe in enumerate(iframes[:3]):
+                try:
+                    frame = iframe.content_frame()
+                    if frame:
+                        frame_forms = frame.query_selector_all('form')
+                        if frame_forms:
+                            self.log('success', 'Iframe Form Found', f'Found form in iframe {idx + 1}')
+                            form_result = self.fill_and_submit_form(frame_forms[0], f'iframe_{idx}', is_iframe=True)
+                            if form_result['success']:
+                                result.update(form_result)
+                                result['method'] = 'form_submitted_iframe'
                                 return result
-                    except Exception as e:
-                        continue  # Cross-origin iframe, skip
-            
+                except Exception: continue
+
+            # STRATEGY 4: Heuristic Field Search (No <form> tag)
+            self.log('info', 'Strategy 4', 'Searching for inputs by label heuristics...')
+            heuristics_result = self.search_by_heuristics()
+            if heuristics_result['success']:
+                result.update(heuristics_result)
+                result['method'] = 'form_submitted_heuristics'
+                return result
+
             # NO CONTACT FOUND
-            self.log('error', 'No Contact Found', 'No forms or contact pages detected')
-            self.log_for_live_scraper('No contact found', 'N/A', 
-                                     'No forms or contact pages detected - website may not have contact mechanism', False)
+            self.log('error', 'No Contact Found', 'All strategies exhausted')
             result['error'] = 'No contact form or page found'
+            result['screenshot_url'] = self.take_screenshot('failed_discovery')
             
             # Take screenshot on failure
             result['screenshot_url'] = self.take_screenshot('failed_discovery')
@@ -181,6 +169,19 @@ class FastCampaignProcessor:
             result['screenshot_url'] = self.take_screenshot('error_processing')
         
         return result
+
+    def search_by_heuristics(self) -> Dict:
+        """Fallback: look for inputs directly on page when no <form> tag exists"""
+        try:
+            # Check for common form fields manually
+            inputs = self.page.query_selector_all('input, textarea')
+            if not inputs: return {'success': False}
+
+            self.log('info', 'Heuristics', f'Analyzing {len(inputs)} orphan inputs...')
+            # Treat all visible inputs as a virtual form
+            return self.fill_and_submit_form(self.page, 'page_heuristics', is_heuristic=True)
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def find_contact_link(self) -> Optional[str]:
         """Find contact page link using fast evaluation"""
@@ -317,10 +318,11 @@ class FastCampaignProcessor:
             self.log('error', 'Contact Info Extraction', str(e))
             return None
 
-    def fill_and_submit_form(self, form, location: str) -> Dict:
+    def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False) -> Dict:
         """Fill and submit form with smart field detection"""
         try:
-            self.log('info', 'Form Filling', f'Starting form fill on {location}')
+            context_name = "iframe" if is_iframe else ("heuristic" if is_heuristic else "standard")
+            self.log('info', 'Form Filling', f'Starting {context_name} fill on {location}')
             
             # Check for CAPTCHA first
             if self.detect_captcha(form):

@@ -659,16 +659,17 @@ def rapid_process_single(campaign_id, company_id):
             
             # Update company based on result
             if result.get('success'):
-                if result['method'] == 'email_found':
+                method = result.get('method', '')
+                if method.startswith('email'):
                     company.status = 'contact_info_found'
-                    company.contact_method = 'email_found'
+                    company.contact_method = method
                     company.error_message = None
                     if result.get('contact_info'):
                         contact_info_json = json.dumps(result['contact_info'])
                         company.contact_info = contact_info_json
-                elif result['method'] == 'form_submitted':
+                elif method.startswith('form_submitted'):
                     company.status = 'completed'
-                    company.contact_method = 'form_submitted'
+                    company.contact_method = method
                     company.error_message = None
                     company.fields_filled = result.get('fields_filled', 0)
                     

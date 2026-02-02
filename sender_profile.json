@@ -1,0 +1,11 @@
+{
+  "sender_name": "Anti Gravity",
+  "sender_first_name": "Anti",
+  "sender_last_name": "Gravity",
+  "sender_company": "Mock Company",
+  "sender_email": "agent@example.com",
+  "sender_phone": "+447700900001",
+  "sender_country": "United Kingdom",
+  "subject": "Verification Test",
+  "message": "This is a verification test of the simplified profile-first form integration."
+}

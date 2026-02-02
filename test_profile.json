@@ -1,0 +1,9 @@
+{
+  "sender_name": "Test User",
+  "sender_email": "antigravity.test@example.com",
+  "sender_phone": "0123456789",
+  "sender_company": "Antigravity AI",
+  "message": "This is a test message to verify form detection and screenshot capture. Please ignore.",
+  "subject": "Testing Form Heuristics",
+  "sender_country": "United Kingdom"
+}
