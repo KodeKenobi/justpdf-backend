@@ -124,11 +124,10 @@ class FastCampaignProcessor:
                         # Wait for dynamic forms (HubSpot, React, etc.)
                         self.log('info', 'Contact Page', 'Waiting for form to initialize...')
                         try:
-                            self.log('info', 'Contact Page', 'Waiting for form to initialize (10s)...')
-                            self.page.wait_for_selector('form', timeout=10000)
-                            self.page.wait_for_timeout(2000)
+                            self.page.wait_for_selector('form', timeout=5000)
+                            self.page.wait_for_timeout(1000)
                         except:
-                            self.log('info', 'Contact Page', 'No standard form appeared within 10s, checking immediately')
+                            self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
                         
                         # Check for form on contact page
                         contact_page_forms = self.page.query_selector_all('form')
@@ -379,19 +378,6 @@ class FastCampaignProcessor:
             inputs = form.query_selector_all('input, textarea')
             selects = form.query_selector_all('select')
             
-            # If no inputs found, wait a bit and try again (especially for iframes/HubSpot)
-            if not inputs:
-                self.log('info', 'Form Filling', 'No inputs found immediately, waiting 5s for hydration...')
-                self.page.wait_for_timeout(5000)
-                inputs = form.query_selector_all('input, textarea')
-                selects = form.query_selector_all('select')
-                
-                if not inputs:
-                     self.log('info', 'Form Filling', 'Still no inputs, trying one last 2s wait...')
-                     self.page.wait_for_timeout(2000)
-                     inputs = form.query_selector_all('input, textarea')
-                     selects = form.query_selector_all('select')
-            
             filled_count = 0
             email_filled = False
             message_filled = False
@@ -417,9 +403,7 @@ class FastCampaignProcessor:
                     if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
                         email = self.company.get('contact_email', 'contact@business.com')
                         input_element.click()
-                        input_element.fill('') # Clear first
-                        input_element.type(email, delay=30)
-                        input_element.press('Tab') # Trigger validation
+                        input_element.type(email, delay=50)
                         email_filled = True
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Email field filled: {email}')
@@ -455,12 +439,11 @@ class FastCampaignProcessor:
 
                     # 4. Fill phone field
                     if any(kw in field_text for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
-                        phone = self.company.get('phone') or self.company.get('phone_number') or "01211234567"
+                        phone = self.company.get('phone') or self.company.get('phone_number')
                         if phone:
+                            # Use type for phone as well just in case
                             input_element.click()
-                            input_element.fill('') # Clear
-                            input_element.type(str(phone), delay=30)
-                            input_element.press('Tab')
+                            input_element.type(phone, delay=50)
                             filled_count += 1
                             self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
@@ -545,7 +528,7 @@ class FastCampaignProcessor:
             self.log('success', 'Form Filled', f'Filled {filled_count} fields successfully')
             
             # Submit the form
-            submit_success = self.submit_form(form, location)
+            submit_success = self.submit_form(form)
             
             if submit_success:
                 self.log('success', 'Form Submitted', 'Form submission successful')
@@ -574,7 +557,7 @@ class FastCampaignProcessor:
                 'error': f'Form processing error: {str(e)}'
             }
 
-    def submit_form(self, form, location: str) -> bool:
+    def submit_form(self, form) -> bool:
         """Submit form and verify success"""
         try:
             # Find submit button
@@ -601,18 +584,11 @@ class FastCampaignProcessor:
                 submit_button = form.query_selector('button')
             
             if submit_button:
-                # Check for simulation mode via environment variable
-                simulation_mode = os.environ.get('SIMULATION_MODE', 'false').lower() == 'true'
-                
-                if simulation_mode:
-                    self.log('warning', 'SIMULATION', 'Simulation mode active - skipping final click')
-                    # Take success screenshot while form is filled
-                    self.take_screenshot(f'simulation_{location}')
-                    return True
-
                 # Click and wait for response
-                submit_button.click()
-                self.page.wait_for_timeout(3000)  # Wait for submission and redirects
+                self.log('warning', 'SIMULATION', 'Submission disabled for testing - not clicking button')
+                return True
+                # submit_button.click()
+                # self.page.wait_for_timeout(2000)  # Wait for submission
                 
                 # Check for success indicators
                 success_indicators = [
@@ -626,7 +602,7 @@ class FastCampaignProcessor:
                     'message has been sent'
                 ]
                 
-                page_text = self.page.inner_text('body').lower()
+                page_text = self.page.text_content().lower()
                 if any(indicator in page_text for indicator in success_indicators):
                     self.log('success', 'Success Indicator', 'Success message detected on page')
                     return True
@@ -832,8 +808,8 @@ If you'd prefer not to receive these messages, please reply to let us know.
             
             self.page.screenshot(path=filepath, full_page=False)
             
-            # Return relative path with forward slashes for cross-platform URL consistency
-            return filepath.replace('\\', '/')
+            # Return URL (adjust based on your static file serving)
+            return filepath
             
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))

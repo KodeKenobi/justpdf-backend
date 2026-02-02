@@ -152,6 +152,8 @@ try:
     print("[OK] campaigns_api imported")
 except Exception as e:
     print(f"[WARN] Failed to import campaigns_api: {e}")
+    import traceback
+    traceback.print_exc()
     campaigns_api = None
 
 try:

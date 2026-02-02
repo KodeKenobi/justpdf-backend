@@ -680,10 +680,8 @@ def rapid_process_single(campaign_id, company_id):
                     # Upload screenshot to Supabase if available
                     local_screenshot_path = result.get('screenshot_url')
                     if local_screenshot_path:
-                        # Ensure we have the full path for local file operations (internal is relative)
-                        # Normalize path separators for the OS first
-                        os_norm_path = local_screenshot_path.replace('/', os.sep).replace('\\', os.sep)
-                        full_path = os.path.join(project_root, os_norm_path)
+                        # Ensure we have the full path for local file operations
+                        full_path = os.path.join(project_root, local_screenshot_path) if not os.path.isabs(local_screenshot_path) else local_screenshot_path
                         
                         if os.path.exists(full_path):
                             try:
@@ -744,10 +742,9 @@ def rapid_process_single(campaign_id, company_id):
                 'method': result.get('method'),
                 'contactMethod': company.contact_method,
                 'errorMessage': company.error_message,
-                'error': company.error_message, # Add for redundancy
                 'contactInfo': result.get('contact_info'),
                 'fieldsFilled': result.get('fields_filled'),
-                'screenshotUrl': f"/{result.get('screenshot_url').replace('\\', '/')}" if result.get('screenshot_url') and not result.get('screenshot_url').startswith('http') and not result.get('screenshot_url').startswith('/') else result.get('screenshot_url'),
+                'screenshotUrl': result.get('screenshot_url'),
                 'processingTime': time.time() - start_time
             }), 200
             
@@ -761,7 +758,6 @@ def rapid_process_single(campaign_id, company_id):
                 'success': False,
                 'status': 'failed',
                 'error': 'Processing timeout',
-                'errorMessage': 'Processing timeout after 60 seconds',
                 'processingTime': time.time() - start_time
             }), 200
             
@@ -778,7 +774,6 @@ def rapid_process_single(campaign_id, company_id):
                 'success': False,
                 'status': 'failed',
                 'error': str(e),
-                'errorMessage': str(e),
                 'processingTime': time.time() - start_time
             }), 200
             
@@ -909,9 +904,8 @@ def rapid_process_batch(campaign_id):
                         # Screenshot upload
                         local_path = result.get('screenshot_url')
                         if local_path:
-                            # Ensure we have the full path for local file operations (internal is relative)
-                            os_norm_path = local_path.replace('/', os.sep).replace('\\', os.sep)
-                            full_path = os.path.join(project_root, os_norm_path)
+                            # Ensure we have the full path for local file operations
+                            full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
                             
                             if os.path.exists(full_path):
                                 try:
@@ -922,10 +916,9 @@ def rapid_process_batch(campaign_id):
                                         company.screenshot_url = sb
                                         os.remove(full_path)
                                     else:
-                                        # Fallback to local path with leading slash
-                                        company.screenshot_url = f"/{local_path}" if not local_path.startswith('/') else local_path
+                                        company.screenshot_url = local_path
                                 except:
-                                    company.screenshot_url = f"/{local_path}" if not local_path.startswith('/') else local_path
+                                    company.screenshot_url = local_path
                         
                         company.processed_at = datetime.utcnow()
                         db.session.commit()
@@ -933,7 +926,7 @@ def rapid_process_batch(campaign_id):
                         results.append({
                             'companyId': company.id,
                             'status': company.status,
-                            'screenshotUrl': f"/{company.screenshot_url.replace('\\', '/')}" if company.screenshot_url and not company.screenshot_url.startswith('http') and not company.screenshot_url.startswith('/') else company.screenshot_url,
+                            'screenshotUrl': company.screenshot_url,
                             'errorMessage': company.error_message
                         })
                     except Exception as e:
