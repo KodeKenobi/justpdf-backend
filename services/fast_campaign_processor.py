@@ -24,6 +24,7 @@ class FastCampaignProcessor:
         self.subject = subject or 'Partnership Inquiry'
         self.found_form = False
         self.found_contact_page = False
+        self.website_url = self.company.get('website_url', '')
 
     def log(self, level: str, action: str, message: str):
         """Log with live scraper educational format"""
@@ -186,13 +187,7 @@ class FastCampaignProcessor:
             result['error'] = f'No discovery method succeeded for {website_url}'
             
             # Log page source on discovery failure
-            screenshot_path = f"static/screenshots/failed_discovery_{self.company_id}_{int(time.time())}.png"
-            try:
-                self.page.screenshot(path=screenshot_path)
-                result['screenshot_url'] = screenshot_path
-            except Exception as e:
-                self.log('error', 'Screenshot Failed', f'Could not take screenshot: {e}')
-                result['screenshot_url'] = None
+            result['screenshot_url'] = self.take_screenshot('failed_discovery')
             
             # Log some page info for debugging
             page_title = self.page.title()
@@ -814,7 +809,7 @@ If you'd prefer not to receive these messages, please reply to let us know.
             self.page.screenshot(path=filepath, full_page=False)
             
             # Return URL (adjust based on your static file serving)
-            return f"/screenshots/{filename}"
+            return filepath
             
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))

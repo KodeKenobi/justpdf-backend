@@ -4,6 +4,10 @@ from sqlalchemy import desc, or_, func
 from datetime import datetime
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
+# Add project root for path resolution
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+
 # Create Blueprint - All endpoints are public, no authentication required
 campaigns_api = Blueprint('campaigns_api', __name__, url_prefix='/api/campaigns')
 
@@ -675,35 +679,39 @@ def rapid_process_single(campaign_id, company_id):
                     
                     # Upload screenshot to Supabase if available
                     local_screenshot_path = result.get('screenshot_url')
-                    if local_screenshot_path and os.path.exists(local_screenshot_path):
-                        try:
-                            from utils.supabase_storage import upload_screenshot
-                            
-                            # Read screenshot bytes
-                            with open(local_screenshot_path, 'rb') as f:
-                                screenshot_bytes = f.read()
-                            
-                            # Upload to Supabase
-                            supabase_url = upload_screenshot(screenshot_bytes, campaign_id, company_id)
-                            
-                            if supabase_url:
-                                company.screenshot_url = supabase_url
-                                print(f"[Rapid Process] Screenshot uploaded to Supabase: {supabase_url}")
-                            else:
-                                # Fallback to local path
-                                company.screenshot_url = local_screenshot_path
-                                print(f"[Rapid Process] Screenshot upload failed, using local path")
-                            
-                            # Delete local file after upload
+                    if local_screenshot_path:
+                        # Ensure we have the full path for local file operations
+                        full_path = os.path.join(project_root, local_screenshot_path) if not os.path.isabs(local_screenshot_path) else local_screenshot_path
+                        
+                        if os.path.exists(full_path):
                             try:
-                                os.remove(local_screenshot_path)
-                            except:
-                                pass
-                        except Exception as e:
-                            print(f"[Rapid Process] Error uploading screenshot: {e}")
+                                from utils.supabase_storage import upload_screenshot
+                                
+                                # Read screenshot bytes
+                                with open(full_path, 'rb') as f:
+                                    screenshot_bytes = f.read()
+                                
+                                # Upload to Supabase
+                                supabase_url = upload_screenshot(screenshot_bytes, campaign_id, company_id)
+                                
+                                if supabase_url:
+                                    company.screenshot_url = supabase_url
+                                    print(f"[Rapid Process] Screenshot uploaded to Supabase: {supabase_url}")
+                                else:
+                                    # Fallback to local path
+                                    company.screenshot_url = local_screenshot_path
+                                    print(f"[Rapid Process] Screenshot upload failed, using local path")
+                                
+                                # Delete local file after upload
+                                try:
+                                    os.remove(full_path)
+                                except:
+                                    pass
+                            except Exception as e:
+                                print(f"[Rapid Process] Error uploading screenshot: {e}")
+                                company.screenshot_url = local_screenshot_path # Fallback
+                        else:
                             company.screenshot_url = local_screenshot_path
-                    else:
-                        company.screenshot_url = local_screenshot_path
                 else:
                     company.status = 'completed'
                     company.contact_method = result['method']
@@ -896,7 +904,9 @@ def rapid_process_batch(campaign_id):
                         # Screenshot upload
                         local_path = result.get('screenshot_url')
                         if local_path:
+                            # Ensure we have the full path for local file operations
                             full_path = os.path.join(project_root, local_path) if not os.path.isabs(local_path) else local_path
+                            
                             if os.path.exists(full_path):
                                 try:
                                     from utils.supabase_storage import upload_screenshot
