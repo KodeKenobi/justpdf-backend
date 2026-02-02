@@ -53,6 +53,12 @@ class FastCampaignProcessor:
         }
 
         try:
+            # Set a common user agent to avoid detection
+            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            try:
+                self.page.context.set_extra_http_headers({"User-Agent": user_agent})
+            except Exception: pass
+            
             website_url = self.company.get('website_url', '')
             
             # URL Validation
@@ -91,51 +97,66 @@ class FastCampaignProcessor:
             
             # STRATEGY 2: Find contact link and navigate
             self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link...')
-            contact_link = self.find_contact_link()
             
-            if contact_link:
-                self.log('success', 'Contact Link Found', f'Found: {contact_link}')
-                self.log_for_live_scraper('Contact link search', 'a[href*="contact"]', 
-                                         'Search links with "contact" in href or text', True)
+            # Strategy 2: Link search
+            self.log('info', 'Discovery', 'Strategy 2: Searching for contact links')
+            contact_keywords = ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us']
+            selector = ', '.join([f'a[href*="{kw}"]' for kw in contact_keywords]) + ', ' + \
+                       ', '.join([f'a:has-text("{kw}")' for kw in contact_keywords])
+            
+            contact_link = None
+            try:
+                links = self.page.query_selector_all(selector)
+                self.log('info', 'Discovery', f'Found {len(links)} potential contact links')
                 
-                try:
-                    self.page.goto(contact_link, wait_until='domcontentloaded', timeout=15000)
-                    self.handle_cookie_modal()
+                for i, link in enumerate(links[:5]): # Check first 5 matches
+                    href = link.get_attribute('href')
+                    text = (link.inner_text() or '').strip()
+                    self.log('info', 'Testing Link', f'Link {i+1}: {text} ({href})')
                     
-                    # Wait for dynamic forms (HubSpot, React, etc.)
-                    self.log('info', 'Contact Page', 'Waiting for form to initialize...')
+                    if not href: continue
+                    full_href = self.make_absolute_url(href)
+                    
                     try:
-                        self.page.wait_for_selector('form', timeout=5000)
-                        self.page.wait_for_timeout(1000)
-                    except:
-                        self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
-                    
-                    # Check for form on contact page
-                    contact_page_forms = self.page.query_selector_all('form')
-                    if contact_page_forms:
-                        self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
-                        self.log_for_live_scraper('Contact page form check', 'form', 
-                                                 'Check for form after navigating to contact page', True)
+                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=15000)
+                        self.handle_cookie_modal()
+                        # Wait for dynamic forms (HubSpot, React, etc.)
+                        self.log('info', 'Contact Page', 'Waiting for form to initialize...')
+                        try:
+                            self.page.wait_for_selector('form', timeout=5000)
+                            self.page.wait_for_timeout(1000)
+                        except:
+                            self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
                         
-                        form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
-                        if form_result['success']:
-                            result.update(form_result)
-                            result['method'] = 'form_submitted_contact_page'
-                            self.found_form = True
-                            return result  # EARLY EXIT - found and submitted form
-                    else:
-                        # No form but on contact page - attempt strategy 3 & 4 within contact page context
-                        self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
-                        contact_info = self.extract_contact_info()
-                        
-                        if contact_info and contact_info.get('emails'):
-                            self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
-                            email_sent = self.send_email_to_contact(contact_info['emails'][0])
-                            if email_sent:
-                                result.update({'success': True, 'method': 'email_sent', 'contact_info': contact_info})
-                                return result
-                except Exception as e:
-                    self.log('error', 'Contact Page Navigation', f'Failed: {str(e)}')
+                        # Check for form on contact page
+                        contact_page_forms = self.page.query_selector_all('form')
+                        if contact_page_forms:
+                            self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
+                            self.log_for_live_scraper('Contact page form check', 'form', 
+                                                     'Check for form after navigating to contact page', True)
+                            
+                            form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
+                            if form_result['success']:
+                                result.update(form_result)
+                                result['method'] = 'form_submitted_contact_page'
+                                self.found_form = True
+                                return result  # EARLY EXIT - found and submitted form
+                        else:
+                            # No form but on contact page - attempt strategy 3 & 4 within contact page context
+                            self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
+                            contact_info = self.extract_contact_info()
+                            
+                            if contact_info and contact_info.get('emails'):
+                                self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
+                                email_sent = self.send_email_to_contact(contact_info['emails'][0])
+                                if email_sent:
+                                    result.update({'success': True, 'method': 'email_sent', 'contact_info': contact_info})
+                                    return result
+                    except Exception as e:
+                        self.log('warn', 'Link Failed', f'Could not open {full_href}: {str(e)}')
+                        continue
+            except Exception as e:
+                self.log('error', 'Strategy 2 Error', str(e))
 
             # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
@@ -163,7 +184,20 @@ class FastCampaignProcessor:
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
             result['error'] = f'No discovery method succeeded for {website_url}'
-            result['screenshot_url'] = self.take_screenshot('failed_discovery')
+            
+            # Log page source on discovery failure
+            screenshot_path = f"static/screenshots/failed_discovery_{self.company_id}_{int(time.time())}.png"
+            try:
+                self.page.screenshot(path=screenshot_path)
+                result['screenshot_url'] = screenshot_path
+            except Exception as e:
+                self.log('error', 'Screenshot Failed', f'Could not take screenshot: {e}')
+                result['screenshot_url'] = None
+            
+            # Log some page info for debugging
+            page_title = self.page.title()
+            page_content_snippet = (self.page.content() or "")[:1000].replace('\n', ' ')
+            self.log('error', 'Discovery Failed', f"Title: {page_title} | Snippet: {page_content_snippet}")
             
         except Exception as e:
             self.log('error', 'Processing Error', str(e))
@@ -171,6 +205,13 @@ class FastCampaignProcessor:
             result['screenshot_url'] = self.take_screenshot('error_processing')
         
         return result
+
+    def make_absolute_url(self, href: str) -> str:
+        """Converts a relative URL to an absolute URL."""
+        if href.startswith('http://') or href.startswith('https://'):
+            return href
+        from urllib.parse import urljoin
+        return urljoin(self.website_url, href)
 
     def search_by_heuristics(self) -> Dict:
         """Fallback: look for inputs directly on page when no <form> tag exists"""
@@ -187,6 +228,9 @@ class FastCampaignProcessor:
 
     def find_contact_link(self) -> Optional[str]:
         """Find contact page link using fast evaluation"""
+        # This method is largely replaced by the in-line strategy 2 logic,
+        # but kept for completeness if other parts of the code still call it.
+        # The new strategy 2 is more robust.
         try:
             base_url = self.company['website_url']
             self.log('info', '🔍 Contact Link Search', f'Searching for contact links on {base_url}')
