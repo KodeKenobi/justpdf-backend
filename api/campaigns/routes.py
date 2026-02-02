@@ -846,46 +846,32 @@ def rapid_process_batch(campaign_id):
             except:
                 pass
 
-            # Get script path
-            backend_dir = os.path.dirname(os.path.abspath(__file__))
-            project_root = os.path.dirname(os.path.dirname(backend_dir))
-            possible_paths = [
-                os.path.join(project_root, 'Scripts', 'rapid-process-single.js'),
-                os.path.join(project_root, 'scripts', 'rapid-process-single.js'),
-            ]
-            script_path = next((p for p in possible_paths if os.path.exists(p)), None)
-            if not script_path:
-                raise Exception("Node.js script not found")
+            # Process each company using Python FastCampaignProcessor
+            from services.fast_campaign_processor import FastCampaignProcessor
+            from playwright.sync_api import sync_playwright
             
-            # Process each company in the batch
-            for idx, company in enumerate(companies):
-                try:
-                    logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
-                    
-                    args = [
-                        'node', script_path,
-                        company.website_url,
-                        company.company_name or 'Company',
-                        message_template_str,
-                        company.contact_email or 'contact@business.com',
-                        company.phone or '',
-                        company.contact_person or 'Business Contact',
-                        subject_str,
-                        campaign.message_template if isinstance(campaign.message_template, str) else json.dumps(campaign.message_template)
-                    ]
-                    
-                    process_result = subprocess.run(
-                        args, capture_output=True, text=True, timeout=90, cwd=project_root
-                    )
-                    
-                    # Parse result
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+                
+                for idx, company in enumerate(companies):
                     try:
-                        stdout = process_result.stdout.strip()
-                        import re
-                        json_match = re.search(r'\{[\s\S]*\}', stdout)
-                        result = json.loads(json_match.group()) if json_match else {'success': False, 'error': 'No JSON output'}
-                    except:
-                        result = {'success': False, 'error': f'Script error: {process_result.stderr[:100]}'}
+                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
+                        page = browser.new_page()
+                        
+                        # Setup processor
+                        company_data = company.to_dict()
+                        processor = FastCampaignProcessor(
+                            page=page,
+                            company_data=company_data,
+                            message_template=message_template_str,
+                            campaign_id=campaign_id,
+                            company_id=company.id,
+                            subject=subject_str
+                        )
+                        
+                        # Execute
+                        result = processor.process_company()
+                        page.close()
 
                     # Update company
                     if result.get('success'):
@@ -939,6 +925,8 @@ def rapid_process_batch(campaign_id):
                     company.error_message = str(e)
                     db.session.commit()
 
+                browser.close()
+            
             # Final response
             processing_time = time.time() - start_time
             from sqlalchemy import or_

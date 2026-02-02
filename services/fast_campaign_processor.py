@@ -53,8 +53,15 @@ class FastCampaignProcessor:
         }
 
         try:
-            website_url = self.company['website_url']
+            website_url = self.company.get('website_url', '')
             
+            # URL Validation
+            if not website_url or not re.match(r'^https?://[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', website_url):
+                self.log('error', 'Malformed URL', f'The URL "{website_url}" is invalid. Please ensure it starts with http/https and has a valid domain (e.g. .com, .co.uk)')
+                result['error'] = f'Malformed URL: {website_url}'
+                result['method'] = 'invalid_url'
+                return result
+
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
@@ -340,40 +347,66 @@ class FastCampaignProcessor:
             message = self.replace_variables(self.message_template)
             
             for input_element in inputs:
+                input_id = (input_element.get_attribute('id') or '').lower()
+                name = (input_element.get_attribute('name') or '').lower()
+                placeholder = (input_element.get_attribute('placeholder') or '').lower()
+                input_type = (input_element.get_attribute('type') or 'text').lower()
+                
+                field_text = f"{name} {placeholder} {input_id}"
+                self.log('info', 'Checking Field', f'Type: {input_type}, Name: {name}, Text: {field_text}')
+                
                 try:
-                    input_type = input_element.get_attribute('type') or 'text'
-                    name = (input_element.get_attribute('name') or '').lower()
-                    placeholder = (input_element.get_attribute('placeholder') or '').lower()
-                    input_id = (input_element.get_attribute('id') or '').lower()
-                    
-                    field_text = f"{name} {placeholder} {input_id}"
-                    
                     # Skip hidden, submit, button fields
                     if input_type in ['hidden', 'submit', 'button']:
                         continue
                     
-                    # Fill name field
-                    if not email_filled and any(kw in field_text for kw in ['name', 'full-name', 'fullname', 'your-name']):
+                    # 1. Fill email field (Highest priority)
+                    if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
+                        email = self.company.get('contact_email', 'contact@business.com')
+                        input_element.click()
+                        input_element.type(email, delay=50)
+                        email_filled = True
+                        filled_count += 1
+                        self.log('info', 'Field Filled', f'Email field filled: {email}')
+                        continue
+
+                    # 2. Fill name fields
+                    if any(kw in field_text for kw in ['first-name', 'fname', 'firstname', 'given-name']):
+                        input_element.fill(self.company.get('contact_person', 'Business').split()[0])
+                        filled_count += 1
+                        self.log('info', 'Field Filled', f'First Name field filled')
+                        continue
+
+                    if any(kw in field_text for kw in ['last-name', 'lname', 'lastname', 'surname', 'family-name']):
+                        name_parts = self.company.get('contact_person', 'Contact').split()
+                        last_name = name_parts[-1] if len(name_parts) > 1 else 'Contact'
+                        input_element.fill(last_name)
+                        filled_count += 1
+                        self.log('info', 'Field Filled', f'Last Name field filled')
+                        continue
+
+                    if any(kw in field_text for kw in ['name', 'full-name', 'fullname', 'your-name']) and 'company' not in field_text:
                         input_element.fill(self.company.get('contact_person', 'Business Contact'))
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Name field filled')
                         continue
                     
-                    # Fill email field
-                    if not email_filled and (input_type == 'email' or 'email' in field_text or 'e-mail' in field_text):
-                        email = self.company.get('contact_email', 'contact@business.com')
-                        input_element.fill(email)
-                        email_filled = True
+                    # 3. Fill Company field (avoid matching email placeholders)
+                    if any(kw in field_text for kw in ['company', 'organization', 'business-name', 'firm']) and 'email' not in field_text:
+                        input_element.fill(self.company.get('company_name', 'Your Company'))
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Email field filled')
+                        self.log('info', 'Field Filled', f'Company field filled')
                         continue
-                    
-                    # Fill phone field
-                    if 'phone' in field_text or 'tel' in field_text or input_type == 'tel':
-                        if self.company.get('phone'):
-                            input_element.fill(self.company['phone'])
+
+                    # 4. Fill phone field
+                    if any(kw in field_text for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
+                        phone = self.company.get('phone') or self.company.get('phone_number')
+                        if phone:
+                            # Use type for phone as well just in case
+                            input_element.click()
+                            input_element.type(phone, delay=50)
                             filled_count += 1
-                            self.log('info', 'Field Filled', f'Phone field filled')
+                            self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
                     
                     # Fill subject field
@@ -426,9 +459,18 @@ class FastCampaignProcessor:
             for cb in inputs:
                 if cb.get_attribute('type') == 'checkbox':
                     name = (cb.get_attribute('name') or '').lower()
-                    # Try to get text from parent label or next sibling
+                    # Try to get text from parent label or next sibling or aria-label
                     parent_text = (cb.evaluate("el => el.parentElement.innerText") or '').lower()
-                    if any(kw in f"{name} {parent_text}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent']):
+                    aria_label = (cb.get_attribute('aria-label') or '').lower()
+                    
+                    if any(kw in f"{name} {parent_text} {aria_label}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent', 'optin', 'policy']):
+                        try:
+                            cb.check()
+                            filled_count += 1
+                            self.log('info', 'Checkbox Checked', f'Checkbox filled ({name})')
+                        except Exception: continue
+                    else:
+                        # For 2020 Innovation and others, if we have a checkbox and we don't know what it is, just check it to be safe
                         try:
                             cb.check()
                             filled_count += 1
