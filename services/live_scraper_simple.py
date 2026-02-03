@@ -6,7 +6,7 @@
             base_url = self.page.url.rstrip('/')
 
             # STRATEGY 1: Homepage form check (fastest method from logs)
-            await self.send_log('info', 'Contact Detection', 'Checking homepage for forms...')
+            await self.send_log('info', 'Contact Detection', 'Checking homepage for forms....')
             forms = await self.page.query_selector_all('form')
             if forms and len(forms) > 0:
                 # Analyze form structure (like logs show)
