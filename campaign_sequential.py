@@ -128,37 +128,38 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         company.error_message = result.get('error')
                         company.contact_method = result.get('method')
 
-                    # Screenshots are stored only on Supabase (no local/static fallback)
-                    local_path = result.get('screenshot_url')
-                    if local_path:
+                    # Screenshots stored only on Supabase. Prefer bytes (no path resolution); fallback to file.
+                    screenshot_bytes = result.get('screenshot_bytes')
+                    if not screenshot_bytes:
+                        local_path = result.get('screenshot_url')
+                        if local_path:
+                            try:
+                                path_part = local_path.lstrip('/').replace('/', os.sep)
+                                roots = [
+                                    os.path.dirname(os.path.abspath(__file__)),
+                                    os.getcwd(),
+                                ]
+                                for root in roots:
+                                    candidate = os.path.join(root, path_part)
+                                    if os.path.exists(candidate):
+                                        with open(candidate, 'rb') as f:
+                                            screenshot_bytes = f.read()
+                                        try:
+                                            os.remove(candidate)
+                                        except OSError:
+                                            pass
+                                        break
+                            except Exception as e:
+                                print(f"[WARN] Screenshot file read error: {e}")
+                    if screenshot_bytes:
                         try:
-                            path_part = local_path.lstrip('/').replace('/', os.sep)
-                            roots = [
-                                os.path.dirname(os.path.abspath(__file__)),
-                                os.getcwd(),
-                            ]
-                            full_path = None
-                            for root in roots:
-                                candidate = os.path.join(root, path_part)
-                                if os.path.exists(candidate):
-                                    full_path = candidate
-                                    break
-                            if full_path:
-                                with open(full_path, 'rb') as f:
-                                    screenshot_bytes = f.read()
-                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                if sb_url:
-                                    company.screenshot_url = sb_url
-                                else:
-                                    print(f"[WARN] Supabase upload failed for company {company.id}; screenshot_url not set")
-                                try:
-                                    os.remove(full_path)
-                                except OSError:
-                                    pass
+                            sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
+                            if sb_url:
+                                company.screenshot_url = sb_url
                             else:
-                                print(f"[WARN] Screenshot file not found (tried {roots}); not set (Supabase only)")
+                                print(f"[WARN] Supabase upload failed for company {company.id}; screenshot_url not set")
                         except Exception as e:
-                            print(f"Screenshot error: {e}")
+                            print(f"[WARN] Screenshot upload error: {e}")
                             import traceback
                             traceback.print_exc()
 

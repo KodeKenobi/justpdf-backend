@@ -225,7 +225,9 @@ class FastCampaignProcessor:
             result['error'] = f'No discovery method succeeded for {website_url}'
             
             # Log page source on discovery failure
-            result['screenshot_url'] = self.take_screenshot('failed_discovery')
+            _path, _bytes = self.take_screenshot('failed_discovery')
+            result['screenshot_url'] = _path
+            result['screenshot_bytes'] = _bytes
             
             # Log some page info for debugging
             page_title = self.page.title()
@@ -236,7 +238,9 @@ class FastCampaignProcessor:
         except Exception as e:
             self.log('error', 'Processing Error', str(e))
             result['error'] = str(e)
-            result['screenshot_url'] = self.take_screenshot('error_processing')
+            _path, _bytes = self.take_screenshot('error_processing')
+            result['screenshot_url'] = _path
+            result['screenshot_bytes'] = _bytes
         
         return result
 
@@ -581,7 +585,7 @@ class FastCampaignProcessor:
                         except Exception: continue
 
             # Take screenshot of the filled form
-            screenshot_url = self.take_screenshot(f'filled_{location}')
+            screenshot_url, screenshot_bytes = self.take_screenshot(f'filled_{location}')
             
             # SUCCESS CRITERIA: If we filled ANY fields, it counts as success
             if filled_count > 0:
@@ -590,7 +594,8 @@ class FastCampaignProcessor:
                     'success': True,
                     'method': 'form_filled',
                     'fields_filled': filled_count,
-                    'screenshot_url': screenshot_url
+                    'screenshot_url': screenshot_url,
+                    'screenshot_bytes': screenshot_bytes,
                 }
                 return res
             else:
@@ -599,7 +604,8 @@ class FastCampaignProcessor:
                     'success': False,
                     'error': 'No fields were filled',
                     'fields_filled': 0,
-                    'screenshot_url': screenshot_url
+                    'screenshot_url': screenshot_url,
+                    'screenshot_bytes': screenshot_bytes,
                 }
                 return res
                 
@@ -789,25 +795,20 @@ If you'd prefer not to receive these messages, please reply to let us know.
         
         return message
 
-    def take_screenshot(self, prefix: str) -> Optional[str]:
-        """Take screenshot and return URL"""
+    def take_screenshot(self, prefix: str):
+        """Take screenshot; return (path_or_url, bytes). Bytes allow upload without file path resolution (e.g. on Railway)."""
         try:
-            # CRITICAL: Dismiss any remaining cookie modals before screenshot
             self.handle_cookie_modal()
             self.page.wait_for_timeout(300)
-            
-            # Create screenshots directory if it doesn't exist
             screenshot_dir = 'static/screenshots'
             os.makedirs(screenshot_dir, exist_ok=True)
-            
             filename = f"{prefix}_{self.company_id}_{int(time.time())}.png"
             filepath = os.path.join(screenshot_dir, filename)
-            
             self.page.screenshot(path=filepath, full_page=False)
-            
-            # Return URL (absolute path for frontend)
-            return '/' + filepath.replace('\\', '/')
-            
+            path_for_url = '/' + filepath.replace('\\', '/')
+            with open(filepath, 'rb') as f:
+                screenshot_bytes = f.read()
+            return (path_for_url, screenshot_bytes)
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))
-            return None
+            return (None, None)
