@@ -53,7 +53,7 @@ class WebSocketManager:
         
         # Send to all connected clients
         disconnected = []
-        for ws in self.connections[company_id]:
+        for ws in self.connections[campaign_id]:
             try:
                 ws.send(message)
             except Exception as e:
@@ -62,17 +62,17 @@ class WebSocketManager:
         
         # Clean up disconnected clients
         for ws in disconnected:
-            self.connections[company_id].remove(ws)
+            self.connections[campaign_id].remove(ws)
     
-    def close_all(self, company_id: int):
-        """Close all connections for a company"""
-        if company_id in self.connections:
-            for ws in self.connections[company_id]:
+    def close_all(self, campaign_id: int):
+        """Close all connections for a campaign"""
+        if campaign_id in self.connections:
+            for ws in self.connections[campaign_id]:
                 try:
                     ws.close()
                 except:
                     pass
-            self.connections[company_id].clear()
+            self.connections[campaign_id].clear()
 
 # Global instance
 ws_manager = WebSocketManager()

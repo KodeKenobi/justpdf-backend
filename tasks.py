@@ -1,11 +1,13 @@
 from celery import current_task
 from celery_app import celery_app
+from celery.schedules import crontab
 import subprocess
 import os
 import time
 from datetime import datetime
-from database import db as database
 import json
+from models import Campaign, Company, Job, db
+database = db
 from playwright.sync_api import sync_playwright
 
 @celery_app.task(bind=True)
@@ -341,7 +343,6 @@ def process_campaign_sequential(self, campaign_id, company_ids=None):
     Process a campaign sequentially (one-by-one)
     Ensures stability and real-time monitoring via WebSockets
     """
-    from models import Campaign, Company, db
     from services.fast_campaign_processor import FastCampaignProcessor
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
