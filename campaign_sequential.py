@@ -159,8 +159,9 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
                             if sb_url:
                                 company.screenshot_url = sb_url
+                                print(f"[SCREENSHOT] Set company_id={company.id} screenshot_url (len={len(sb_url)})")
                             else:
-                                print(f"[WARN] Supabase upload failed for company {company.id}; screenshot_url not set")
+                                print(f"[WARN] Supabase upload returned None for company {company.id}; screenshot_url not set")
                         except Exception as e:
                             print(f"[WARN] Screenshot upload error: {e}")
                             import traceback

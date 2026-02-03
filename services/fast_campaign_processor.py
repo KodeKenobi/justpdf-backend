@@ -170,7 +170,14 @@ class FastCampaignProcessor:
                                 self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
                                 email_sent = self.send_email_to_contact(contact_info['emails'][0])
                                 if email_sent:
-                                    result.update({'success': True, 'method': 'email_sent', 'contact_info': contact_info})
+                                    path, screenshot_bytes = self.take_screenshot('email_sent')
+                                    result.update({
+                                        'success': True,
+                                        'method': 'email_sent',
+                                        'contact_info': contact_info,
+                                        'screenshot_url': path,
+                                        'screenshot_bytes': screenshot_bytes,
+                                    })
                                     return result
                     except Exception as e:
                         self.log('warn', 'Link Failed', f'Could not open {full_href}: {str(e)}')
@@ -806,8 +813,10 @@ If you'd prefer not to receive these messages, please reply to let us know.
             self.handle_cookie_modal()
             self.page.wait_for_timeout(300)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
-            screenshot_bytes = self.page.screenshot(full_page=False)
+            raw = self.page.screenshot(full_page=False)
+            screenshot_bytes = raw if isinstance(raw, bytes) and len(raw) > 0 else None
             if not screenshot_bytes:
+                self.log('warning', 'Screenshot', 'page.screenshot() returned no bytes (type=%s)' % type(raw).__name__)
                 return (None, None)
             return (f"/temp/{prefix}_{self.company_id}_{int(time.time())}.png", screenshot_bytes)
         except Exception as e:

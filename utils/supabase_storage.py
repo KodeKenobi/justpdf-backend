@@ -8,19 +8,28 @@ from supabase import create_client, Client
 from datetime import datetime
 
 def _get_supabase_url() -> str:
-    """Derive API URL from SUPABASE_DATABASE_URL (only existing backend vars)."""
+    """Supabase API URL: SUPABASE_URL > NEXT_PUBLIC_SUPABASE_URL > derive from SUPABASE_DATABASE_URL."""
+    # 1) Explicit (set this in Railway to avoid any parsing)
+    u = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip()
+    if u:
+        return u.rstrip("/") + "/"
+    # 2) Derive from DB URL
     db_url = os.getenv("SUPABASE_DATABASE_URL", "")
-    # e.g. postgresql://...@db.XXXXX.supabase.co:5432/... -> https://XXXXX.supabase.co
     m = re.search(r"@(?:db\.)?([a-z0-9-]+)\.supabase\.co", db_url)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    m = re.search(r"postgres(?:ql)?://(?:[^/]*\.)?([a-z0-9-]+):[^@]+@[^/]+pooler\.supabase\.com", db_url)
     if m:
         return f"https://{m.group(1)}.supabase.co"
     return ""
 
 def _get_supabase_client() -> Client:
     url = _get_supabase_url()
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not url or not key:
-        raise ValueError("SUPABASE_DATABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
+    key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    if not url:
+        raise ValueError("Set SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL or use parseable SUPABASE_DATABASE_URL")
+    if not key:
+        raise ValueError("Set SUPABASE_SERVICE_ROLE_KEY")
     return create_client(url, key)
 
 # Lazy init so env is available at runtime
@@ -34,6 +43,18 @@ def _client() -> Client:
 
 # Storage bucket name (must match bucket in Supabase Dashboard; override with env if you named it differently)
 SCREENSHOT_BUCKET = os.getenv("SUPABASE_SCREENSHOT_BUCKET", "campaign-screenshots")
+
+def _ensure_bucket(client) -> None:
+    """Create bucket if it doesn't exist (public so image URLs work). Ignore if already exists."""
+    try:
+        client.storage.create_bucket(SCREENSHOT_BUCKET, options={"public": True})
+        print(f"[INFO] Created storage bucket: {SCREENSHOT_BUCKET}")
+    except Exception as e:
+        if "already exists" in str(e).lower() or "BucketAlreadyExists" in str(type(e).__name__):
+            pass
+        else:
+            print(f"[WARN] Could not create bucket (may already exist): {e}")
+
 
 def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int) -> str:
     """
@@ -54,6 +75,7 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
         print(f"[INFO] Uploading screenshot to Supabase: {filename} ({len(screenshot_bytes)} bytes)")
         
         client = _client()
+        _ensure_bucket(client)
         response = client.storage.from_(SCREENSHOT_BUCKET).upload(
             filename,
             screenshot_bytes,
