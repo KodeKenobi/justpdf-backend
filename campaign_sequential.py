@@ -128,30 +128,39 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         company.error_message = result.get('error')
                         company.contact_method = result.get('method')
 
+                    # Screenshots are stored only on Supabase (no local/static fallback)
                     local_path = result.get('screenshot_url')
                     if local_path:
                         try:
-                            project_root = os.path.dirname(os.path.abspath(__file__))
-                            # Normalize: strip leading slash so join() works on Windows and Linux
                             path_part = local_path.lstrip('/').replace('/', os.sep)
-                            full_path = os.path.join(project_root, path_part)
-                            if os.path.exists(full_path):
+                            roots = [
+                                os.path.dirname(os.path.abspath(__file__)),
+                                os.getcwd(),
+                            ]
+                            full_path = None
+                            for root in roots:
+                                candidate = os.path.join(root, path_part)
+                                if os.path.exists(candidate):
+                                    full_path = candidate
+                                    break
+                            if full_path:
                                 with open(full_path, 'rb') as f:
-                                    sb_url = upload_screenshot(f.read(), campaign_id, company.id)
-                                    if sb_url:
-                                        company.screenshot_url = sb_url
-                                        os.remove(full_path)
-                                    else:
-                                        # Fallback: store path for frontend (Next.js rewrites /static/screenshots to backend)
-                                        company.screenshot_url = local_path if local_path.startswith('/') else '/' + local_path.replace('\\', '/')
+                                    screenshot_bytes = f.read()
+                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
+                                if sb_url:
+                                    company.screenshot_url = sb_url
+                                else:
+                                    print(f"[WARN] Supabase upload failed for company {company.id}; screenshot_url not set")
+                                try:
+                                    os.remove(full_path)
+                                except OSError:
+                                    pass
                             else:
-                                print(f"Screenshot file not found: {full_path} (local_path={local_path})")
+                                print(f"[WARN] Screenshot file not found (tried {roots}); not set (Supabase only)")
                         except Exception as e:
                             print(f"Screenshot error: {e}")
                             import traceback
                             traceback.print_exc()
-                            if local_path:
-                                company.screenshot_url = local_path if local_path.startswith('/') else '/' + local_path.replace('\\', '/')
 
                     company.processed_at = datetime.utcnow()
                     db.session.commit()

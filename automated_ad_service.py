@@ -19,10 +19,9 @@ class AutomatedAdService:
         self.last_view_time = None
         self.target_views_per_day = 12
         self.view_history = []
-        self.admin_notification_email = os.getenv('ADMIN_NOTIFICATION_EMAIL', 'admin@trevnoctilla.com')
-
-        # Get frontend URL for making requests
-        self.frontend_url = os.getenv('NEXT_PUBLIC_BASE_URL', 'https://www.trevnoctilla.com')
+        # Only use existing Railway vars; FROM_EMAIL used for notifications
+        self.admin_notification_email = os.getenv('FROM_EMAIL', 'admin@trevnoctilla.com').split('<')[-1].split('>')[0].strip() if os.getenv('FROM_EMAIL') else 'admin@trevnoctilla.com'
+        self.frontend_url = 'https://www.trevnoctilla.com'
 
     def start_service(self):
         """Start the automated ad view service"""

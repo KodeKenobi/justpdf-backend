@@ -128,38 +128,33 @@ def upgrade_subscription():
             from psycopg2.extras import RealDictCursor
             from datetime import datetime
             
-            # Get Supabase connection string
-            database_url = os.getenv("DATABASE_URL", "postgresql://postgres:Kopenikus0218!@db.pqdxqvxyrahvongbhtdb.supabase.co:5432/postgres")
-            
-            # Convert to pooler format
-            if database_url and "db." in database_url and ".supabase.co" in database_url:
-                import re
-                match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
-                if match:
-                    user_part, password, project_ref, port, database = match.groups()
-                    database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
-            
-            # Connect and update Supabase
-            conn = psycopg2.connect(database_url, sslmode='require')
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            
-            # Update user tier in Supabase
-            cursor.execute("""
-                UPDATE users SET
-                    subscription_tier = %s,
-                    monthly_call_limit = %s
-                WHERE email = %s
-            """, (
-                new_tier,
-                TIER_LIMITS.get(new_tier, 5),
-                user.email
-            ))
-            
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            print(f"[OK] [UPGRADE] Synced tier update to Supabase: {user_email} -> {new_tier}")
+            # Use only existing Railway var
+            database_url = os.getenv("DATABASE_URL")
+            if database_url:
+                # Convert to pooler format
+                if "db." in database_url and ".supabase.co" in database_url:
+                    import re
+                    match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+                    if match:
+                        user_part, password, project_ref, port, database = match.groups()
+                        database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+                
+                conn = psycopg2.connect(database_url, sslmode='require')
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("""
+                    UPDATE users SET
+                        subscription_tier = %s,
+                        monthly_call_limit = %s
+                    WHERE email = %s
+                """, (
+                    new_tier,
+                    TIER_LIMITS.get(new_tier, 5),
+                    user.email
+                ))
+                conn.commit()
+                cursor.close()
+                conn.close()
+                print(f"[OK] [UPGRADE] Synced tier update to Supabase: {user_email} -> {new_tier}")
         except Exception as e:
             print(f"[WARN] [UPGRADE] Failed to sync tier to Supabase: {e}")
             import traceback

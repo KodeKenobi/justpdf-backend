@@ -184,9 +184,15 @@ except Exception as e:
     print(f"[WARN] Failed to import debug_bp: {e}")
     debug_bp = None
 
-# Configuration
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-in-production')
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'your-jwt-secret-key-change-in-production')
+# Configuration: use only Railway backend vars. Derive secrets from SUPABASE_SERVICE_ROLE_KEY when set.
+def _derived_secret(suffix: str) -> str:
+    key = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '')
+    if key:
+        import hashlib
+        return hashlib.sha256((key + suffix).encode()).hexdigest()[:64]
+    return 'your-secret-key-change-in-production'
+app.config['SECRET_KEY'] = _derived_secret('secret')
+app.config['JWT_SECRET_KEY'] = _derived_secret('jwt')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 app.config['JWT_IDENTITY_CLAIM'] = 'sub'
 app.config['JWT_JSON_KEY'] = 'access_token'
@@ -5193,8 +5199,7 @@ atexit.register(cleanup_all_processes)
 if __name__ == "__main__":
     print("[START] Starting Flask application...")
     print(f"[INFO] Database URL: {os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')}")
-    print(f"[KEY] Secret Key configured: {bool(os.getenv('SECRET_KEY'))}")
-    print(f"[SEC] JWT Secret Key configured: {bool(os.getenv('JWT_SECRET_KEY'))}")
+    print(f"[KEY] Secrets derived from SUPABASE_SERVICE_ROLE_KEY: {bool(os.getenv('SUPABASE_SERVICE_ROLE_KEY'))}")
     
     # Database is already initialized above
     

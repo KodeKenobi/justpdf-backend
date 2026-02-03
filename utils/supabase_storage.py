@@ -1,46 +1,64 @@
 """
-Supabase Storage utility for uploading campaign screenshots
+Supabase Storage utility for uploading campaign screenshots.
+Uses only Railway env vars: SUPABASE_DATABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 """
 import os
+import re
 from supabase import create_client, Client
 from datetime import datetime
 
-# Supabase credentials
-SUPABASE_URL = os.getenv('SUPABASE_URL', 'https://pqdxqvxyrahvongbhtdb.supabase.co')
-SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBxZHhxdnh5cmFodm9uZ2JodGRiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczMTk0NzE5MiwiZXhwIjoyMDQ3NTIzMTkyfQ.5WnRaHqAl0EcNzwMuY_dFYMaW5F8xfv6bj31gPGdgLs')
+def _get_supabase_url() -> str:
+    """Derive API URL from SUPABASE_DATABASE_URL (only existing backend vars)."""
+    db_url = os.getenv("SUPABASE_DATABASE_URL", "")
+    # e.g. postgresql://...@db.XXXXX.supabase.co:5432/... -> https://XXXXX.supabase.co
+    m = re.search(r"@(?:db\.)?([a-z0-9-]+)\.supabase\.co", db_url)
+    if m:
+        return f"https://{m.group(1)}.supabase.co"
+    return ""
 
-# Initialize Supabase client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+def _get_supabase_client() -> Client:
+    url = _get_supabase_url()
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not url or not key:
+        raise ValueError("SUPABASE_DATABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set")
+    return create_client(url, key)
+
+# Lazy init so env is available at runtime
+_supabase: Client = None
+
+def _client() -> Client:
+    global _supabase
+    if _supabase is None:
+        _supabase = _get_supabase_client()
+    return _supabase
 
 # Storage bucket name
 SCREENSHOT_BUCKET = 'campaign-screenshots'
 
 def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int) -> str:
     """
-    Upload screenshot to Supabase Storage
+    Upload screenshot to Supabase Storage (all campaign screenshots live in Supabase only).
     
     Args:
-        screenshot_bytes: Screenshot image as bytes
+        screenshot_bytes: Screenshot image as bytes (PNG from processor)
         campaign_id: Campaign ID
         company_id: Company ID
     
     Returns:
-        Public URL of uploaded screenshot
+        Public URL of uploaded screenshot, or None on failure
     """
     try:
-        # Generate unique filename
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        filename = f"campaign_{campaign_id}/company_{company_id}_{timestamp}.jpg"
+        filename = f"campaign_{campaign_id}/company_{company_id}_{timestamp}.png"
         
-        print(f"[INFO] Attempting to upload screenshot: {filename} ({len(screenshot_bytes)} bytes)")
+        print(f"[INFO] Uploading screenshot to Supabase: {filename} ({len(screenshot_bytes)} bytes)")
         
-        # Upload to Supabase Storage
-        # Python SDK uses hyphens and string values
-        response = supabase.storage.from_(SCREENSHOT_BUCKET).upload(
+        client = _client()
+        response = client.storage.from_(SCREENSHOT_BUCKET).upload(
             filename,
             screenshot_bytes,
             file_options={
-                'content-type': 'image/jpeg',
+                'content-type': 'image/png',
                 'cache-control': '3600',
                 'upsert': 'true'
             }
@@ -49,7 +67,7 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
         print(f"[DEBUG] Upload response: {response}")
         
         # Get public URL
-        public_url = supabase.storage.from_(SCREENSHOT_BUCKET).get_public_url(filename)
+        public_url = client.storage.from_(SCREENSHOT_BUCKET).get_public_url(filename)
         
         print(f"[OK] Screenshot uploaded to Supabase: {filename}")
         print(f"[OK] Public URL: {public_url}")
@@ -76,7 +94,7 @@ def delete_screenshot(screenshot_url: str) -> bool:
         filename = screenshot_url.split(f'{SCREENSHOT_BUCKET}/')[-1]
         
         # Delete from Supabase Storage
-        supabase.storage.from_(SCREENSHOT_BUCKET).remove([filename])
+        _client().storage.from_(SCREENSHOT_BUCKET).remove([filename])
         
         print(f"[OK] Screenshot deleted from Supabase: {filename}")
         return True

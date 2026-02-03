@@ -101,7 +101,7 @@ def init_db(app):
         print("[WARN] [DATABASE] Railway auto-provisioned database detected!")
         print(f"   Railway DB URL: {database_url[:50]}...")
         # Check for explicit Supabase URL in environment (Railway might set both)
-        supabase_url = os.getenv('SUPABASE_DATABASE_URL') or os.getenv('SUPABASE_URL')
+        supabase_url = os.getenv('SUPABASE_DATABASE_URL')
         if supabase_url:
             print("[OK] [DATABASE] Using explicit Supabase URL from SUPABASE_DATABASE_URL")
             database_url = supabase_url

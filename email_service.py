@@ -15,7 +15,7 @@ from pathlib import Path
 template_dir = Path(__file__).parent / 'templates' / 'emails'
 env = Environment(loader=FileSystemLoader(str(template_dir)))
 
-# Resend API configuration
+# Resend API: optional (not in backend's 9 Railway vars; add RESEND_API_KEY to Railway if backend should send email)
 RESEND_API_KEY = os.getenv('RESEND_API_KEY')
 RESEND_API_URL = 'https://api.resend.com/emails'
 # FROM_EMAIL should be in format: "Name <email@domain.com>" for proper inbox display
@@ -116,15 +116,9 @@ def generate_subscription_pdf(tier: str, amount: float = 0.0, user_email: str = 
         # Get API URL for PDF conversion
         # Use frontend domain if available (Next.js rewrites proxy to backend)
         # Otherwise fall back to direct backend URL
-        frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
-        if frontend_url and frontend_url.startswith('http'):
-            api_url = frontend_url
-            print(f" [SUBSCRIPTION] Using frontend domain for PDF conversion: {api_url}")
-        else:
-            api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
-            if not api_url.startswith('http'):
-                api_url = f'https://{api_url}'
-            print(f" [SUBSCRIPTION] Using direct backend URL for PDF conversion: {api_url}")
+        # Backend only uses existing Railway vars; use fixed production URLs for PDF conversion.
+        api_url = 'https://www.trevnoctilla.com'
+        print(f" [SUBSCRIPTION] Using frontend domain for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
         print(f" [SUBSCRIPTION] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
@@ -311,15 +305,9 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         # Get API URL for PDF conversion
         # Use frontend domain if available (Next.js rewrites proxy to backend)
         # Otherwise fall back to direct backend URL
-        frontend_url = os.getenv('NEXTJS_URL') or os.getenv('FRONTEND_URL') or os.getenv('NEXT_PUBLIC_BASE_URL')
-        if frontend_url and frontend_url.startswith('http'):
-            api_url = frontend_url
-            print(f" [INVOICE] Using frontend domain for PDF conversion: {api_url}")
-        else:
-            api_url = os.getenv('BACKEND_URL', 'https://web-production-737b.up.railway.app')
-            if not api_url.startswith('http'):
-                api_url = f'https://{api_url}'
-            print(f" [INVOICE] Using direct backend URL for PDF conversion: {api_url}")
+        # Backend only uses existing Railway vars; use fixed production URL for PDF conversion.
+        api_url = 'https://www.trevnoctilla.com'
+        print(f" [INVOICE] Using frontend domain for PDF conversion: {api_url}")
         
         # Convert HTML to PDF using backend endpoint
         print(f" [INVOICE] Converting HTML to PDF via {api_url}/convert_html_to_pdf...")
@@ -407,9 +395,8 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
     try:
         import os
         
-        # Get Next.js API URL
-        nextjs_url = os.getenv('NEXTJS_API_URL', 'https://www.trevnoctilla.com')
-        email_api_url = f"{nextjs_url}/api/email/send"
+        # Backend only uses existing Railway vars; use fixed production URL.
+        email_api_url = 'https://www.trevnoctilla.com/api/email/send'
         
         # Prepare email payload
         payload = {

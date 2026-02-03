@@ -1,6 +1,6 @@
 """
 Automated Database Backup Service
-Runs daily backups at 12am and 12pm, compresses them, and sends email notifications
+Uses only Railway backend vars: DATABASE_URL, FROM_EMAIL, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD.
 """
 import os
 import gzip
@@ -12,33 +12,58 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 import threading
 import time
 from pathlib import Path
 from flask import Flask
 from database import db
 
+def _parse_db_url():
+    """Parse DATABASE_URL (only existing backend var) into pg_dump params."""
+    database_url = os.getenv('DATABASE_URL', '')
+    if not database_url or database_url.startswith('sqlite'):
+        return None
+    try:
+        parsed = urlparse(database_url)
+        netloc = parsed.hostname or 'localhost'
+        port = str(parsed.port or 5432)
+        username = parsed.username or 'postgres'
+        password = parsed.password or ''
+        dbname = (parsed.path or '/postgres').lstrip('/') or 'postgres'
+        return {'host': netloc, 'port': port, 'user': username, 'password': password, 'dbname': dbname}
+    except Exception:
+        return None
+
 class BackupService:
     def __init__(self):
         self.backup_dir = Path("backups")
         self.backup_dir.mkdir(exist_ok=True)
 
-        # Get database config from environment
-        self.db_host = os.getenv('DB_HOST', 'localhost')
-        self.db_name = os.getenv('DB_NAME', 'postgres')
-        self.db_user = os.getenv('DB_USER', 'postgres')
-        self.db_password = os.getenv('DB_PASSWORD', '')
-        self.db_port = os.getenv('DB_PORT', '5432')
+        # Database: only DATABASE_URL (parsed)
+        db_params = _parse_db_url()
+        if db_params:
+            self.db_host = db_params['host']
+            self.db_port = db_params['port']
+            self.db_user = db_params['user']
+            self.db_password = db_params['password']
+            self.db_name = db_params['dbname']
+        else:
+            self.db_host = self.db_port = self.db_user = self.db_password = self.db_name = None
 
-        # Email config
-        self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        # Email: only existing vars SMTP_*, FROM_EMAIL
+        self.smtp_server = os.getenv('SMTP_HOST', 'smtp.gmail.com')
         self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
-        self.smtp_username = os.getenv('SMTP_USERNAME', '')
+        self.smtp_username = os.getenv('SMTP_USER', '')
         self.smtp_password = os.getenv('SMTP_PASSWORD', '')
-        self.backup_notification_email = os.getenv('BACKUP_NOTIFICATION_EMAIL', 'admin@trevnoctilla.com')
+        raw_from = os.getenv('FROM_EMAIL', '')
+        self.backup_notification_email = raw_from if raw_from else 'admin@trevnoctilla.com'
 
     def create_backup(self):
         """Create a compressed database backup"""
+        if not self.db_host:
+            print("[BACKUP] Skipping: DATABASE_URL is not PostgreSQL (or not set)")
+            return None
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_filename = f"trevnoctilla_backup_{timestamp}.sql"
@@ -87,7 +112,7 @@ class BackupService:
             backup_path.unlink()
 
             compressed_size = compressed_path.stat().st_size / (1024 * 1024)  # Size in MB
-            print(".1f"
+            print(f"[BACKUP] Compressed size: {compressed_size:.1f} MB")
             return compressed_path, compressed_size
 
         except Exception as e:
@@ -162,7 +187,10 @@ Trevnoctilla Backup Service
             backup_time = datetime.now()
 
             # Create backup
-            backup_path, backup_size = self.create_backup()
+            result = self.create_backup()
+            if result is None:
+                return
+            backup_path, backup_size = result
 
             # Send email notification
             self.send_backup_email(backup_path, backup_size, backup_time)

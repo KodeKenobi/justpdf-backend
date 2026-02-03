@@ -24,7 +24,7 @@ def get_backend_db_url():
     # If Railway DB detected, prefer explicit Supabase URL from environment
     if is_railway_db:
         print("[WARN] [SYNC] Railway auto-provisioned database detected!")
-        supabase_url = os.getenv('SUPABASE_DATABASE_URL') or os.getenv('SUPABASE_URL')
+        supabase_url = os.getenv('SUPABASE_DATABASE_URL')
         if supabase_url:
             print("[OK] [SYNC] Using explicit Supabase URL from SUPABASE_DATABASE_URL")
             database_url = supabase_url
