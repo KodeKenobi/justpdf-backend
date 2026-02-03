@@ -108,7 +108,7 @@ class FastCampaignProcessor:
                     self.found_form = True
                     return result  # EARLY EXIT - found and submitted form
             
-            # STRATEGY 2: Find contact link and navigate
+            # STRATEGY 2: Find contact link and navigate (many sites have emails only on contact/about pages)
             self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link...')
             
             # Strategy 2: Link search
@@ -228,6 +228,23 @@ class FastCampaignProcessor:
                 result.update(heuristics_result)
                 result['method'] = 'form_submitted_heuristics'
                 return result
+
+            # Last resort: email-only on current page (no form but may have visible emails)
+            self.log('info', 'Email-only', 'No form found; checking current page for contact emails...')
+            contact_info = self.extract_contact_info()
+            if contact_info and contact_info.get('emails'):
+                self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
+                email_sent = self.send_email_to_contact(contact_info['emails'][0])
+                if email_sent:
+                    path, screenshot_bytes = self.take_screenshot('email_sent')
+                    result.update({
+                        'success': True,
+                        'method': 'email_sent',
+                        'contact_info': contact_info,
+                        'screenshot_url': path,
+                        'screenshot_bytes': screenshot_bytes,
+                    })
+                    return result
 
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
@@ -853,7 +870,7 @@ If you'd prefer not to receive these messages, please reply to let us know.
             self.handle_cookie_modal()
             self.page.wait_for_timeout(300)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
-            raw = self.page.screenshot(full_page=False)
+            raw = self.page.screenshot(full_page=True)
             screenshot_bytes = raw if isinstance(raw, bytes) and len(raw) > 0 else None
             if not screenshot_bytes:
                 self.log('warning', 'Screenshot', 'page.screenshot() returned no bytes (type=%s)' % type(raw).__name__)
