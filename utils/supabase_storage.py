@@ -32,8 +32,8 @@ def _client() -> Client:
         _supabase = _get_supabase_client()
     return _supabase
 
-# Storage bucket name
-SCREENSHOT_BUCKET = 'campaign-screenshots'
+# Storage bucket name (must match bucket in Supabase Dashboard; override with env if you named it differently)
+SCREENSHOT_BUCKET = os.getenv("SUPABASE_SCREENSHOT_BUCKET", "campaign-screenshots")
 
 def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int) -> str:
     """

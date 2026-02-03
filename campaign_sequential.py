@@ -131,6 +131,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                     # Screenshots stored only on Supabase. Prefer bytes (no path resolution); fallback to file.
                     screenshot_bytes = result.get('screenshot_bytes')
                     if not screenshot_bytes:
+                        print(f"[SCREENSHOT] Company {company.id}: no screenshot_bytes in result (take_screenshot may have failed)")
                         local_path = result.get('screenshot_url')
                         if local_path:
                             try:
@@ -151,6 +152,8 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                         break
                             except Exception as e:
                                 print(f"[WARN] Screenshot file read error: {e}")
+                    if not screenshot_bytes:
+                        print(f"[SCREENSHOT] Company {company.id}: no bytes after fallback; screenshot_url will stay null")
                     if screenshot_bytes:
                         try:
                             sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)

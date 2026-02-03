@@ -7,7 +7,6 @@ Optimized for speed - stops after finding ONE contact method per site
 import json
 import os
 import re
-import tempfile
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -799,24 +798,15 @@ If you'd prefer not to receive these messages, please reply to let us know.
         return message
 
     def take_screenshot(self, prefix: str):
-        """Take screenshot; return (path_or_url, bytes). Uses temp dir so it works on read-only filesystems (e.g. Railway)."""
+        """Take screenshot; return (path_or_url, bytes). Uses in-memory only so no filesystem on Railway."""
         try:
             self.handle_cookie_modal()
             self.page.wait_for_timeout(300)
-            # Use temp dir so screenshot write works on Railway (app fs often read-only; /tmp is writable)
-            suffix = f"{prefix}_{self.company_id}_{int(time.time())}.png"
-            fd, filepath = tempfile.mkstemp(suffix=suffix, prefix="screenshot_")
-            try:
-                os.close(fd)
-                self.page.screenshot(path=filepath, full_page=False)
-                with open(filepath, 'rb') as f:
-                    screenshot_bytes = f.read()
-                return (f"/temp/{os.path.basename(filepath)}", screenshot_bytes)
-            finally:
-                try:
-                    os.unlink(filepath)
-                except OSError:
-                    pass
+            # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
+            screenshot_bytes = self.page.screenshot(full_page=False)
+            if not screenshot_bytes:
+                return (None, None)
+            return (f"/temp/{prefix}_{self.company_id}_{int(time.time())}.png", screenshot_bytes)
         except Exception as e:
             self.log('error', 'Screenshot Failed', str(e))
             return (None, None)
