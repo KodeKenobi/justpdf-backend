@@ -1275,3 +1275,47 @@ def sync_user_role_from_supabase():
         traceback.print_exc()
         return jsonify({"message": f"Error syncing user roles: {str(e)}"}), 500
 
+
+# --- Self-learning Brain (Supabase; no domains stored) ---
+
+@admin_api.route('/brain/stats', methods=['GET'])
+@require_admin
+def brain_stats():
+    """Aggregate stats for the learning brain (patterns count, events count, by type)."""
+    try:
+        from services.brain_service import get_brain_stats
+        stats = get_brain_stats()
+        return jsonify(stats), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_api.route('/brain/events', methods=['GET'])
+@require_admin
+def brain_events():
+    """Recent learning events (event_type, outcome, pattern_value, metadata; no domain)."""
+    try:
+        from services.brain_service import get_brain_events
+        limit = request.args.get('limit', 100, type=int)
+        limit = min(limit, 500)
+        event_type = request.args.get('event_type') or None
+        events = get_brain_events(limit=limit, event_type=event_type)
+        return jsonify({'events': events}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_api.route('/brain/patterns', methods=['GET'])
+@require_admin
+def brain_patterns():
+    """List learned patterns (optionally by type), ordered by success_count."""
+    try:
+        from services.brain_service import get_brain_patterns
+        limit = request.args.get('limit', 200, type=int)
+        limit = min(limit, 1000)
+        pattern_type = request.args.get('pattern_type') or None
+        patterns = get_brain_patterns(pattern_type=pattern_type, limit=limit)
+        return jsonify({'patterns': patterns}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+

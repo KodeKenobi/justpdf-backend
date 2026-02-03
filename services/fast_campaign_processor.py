@@ -1,7 +1,8 @@
 """
 Fast Campaign Processor
 Based on fast-contact-analyzer.js logic with form submission and email fallback
-Optimized for speed - stops after finding ONE contact method per site
+Optimized for speed - stops after finding ONE contact method per site.
+Self-learning: records and uses patterns via brain_service (Supabase); no domains stored.
 """
 
 import json
@@ -9,6 +10,30 @@ import os
 import re
 import time
 from typing import Dict, List, Optional, Tuple
+
+def _brain_record_event(event_type: str, outcome: str, pattern_value: Optional[str] = None, metadata: Optional[Dict] = None):
+    try:
+        from services.brain_service import record_event
+        record_event(event_type, outcome, pattern_value=pattern_value, metadata=metadata)
+    except Exception:
+        pass
+
+def _brain_record_pattern(pattern_type: str, pattern_value: str, success: bool):
+    try:
+        from services.brain_service import record_pattern_use
+        record_pattern_use(pattern_type, pattern_value, success=success)
+    except Exception:
+        pass
+
+def _brain_get_keywords(pattern_type: str, default: List[str]) -> List[str]:
+    try:
+        from services.brain_service import get_top_patterns
+        learned = get_top_patterns(pattern_type, limit=30)
+        if learned:
+            return list(dict.fromkeys(learned + default))  # learned first, then defaults, no dupes
+    except Exception:
+        pass
+    return default
 
 
 class FastCampaignProcessor:
@@ -106,14 +131,13 @@ class FastCampaignProcessor:
                     result.update(form_result)
                     result['method'] = 'form_submitted_homepage'
                     self.found_form = True
+                    _brain_record_event('outcome', 'form_submitted', metadata={'location': 'homepage'})
                     return result  # EARLY EXIT - found and submitted form
             
             # STRATEGY 2: Find contact link and navigate (many sites have emails only on contact/about pages)
             self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link...')
-            
-            # Strategy 2: Link search
+            contact_keywords = _brain_get_keywords('contact_keyword', ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us'])
             self.log('info', 'Discovery', 'Strategy 2: Searching for contact links')
-            contact_keywords = ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us']
             selector = ', '.join([f'a[href*="{kw}"]' for kw in contact_keywords]) + ', ' + \
                        ', '.join([f'a:has-text("{kw}")' for kw in contact_keywords])
             
@@ -122,52 +146,47 @@ class FastCampaignProcessor:
                 links = self.page.query_selector_all(selector)
                 self.log('info', 'Discovery', f'Found {len(links)} potential contact links')
                 
-                for i, link in enumerate(links[:5]): # Check first 5 matches
+                for i, link in enumerate(links[:5]):
                     href = link.get_attribute('href')
-                    text = (link.inner_text() or '').strip()
-                    self.log('info', 'Testing Link', f'Link {i+1}: {text} ({href})')
-                    
-                    if not href: continue
+                    text = (link.inner_text() or '').strip().lower()
+                    if not href:
+                        continue
+                    matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in text), None)
                     full_href = self.make_absolute_url(href)
-                    
+                    self.log('info', 'Testing Link', f'Link {i+1}: {text} ({href})')
                     try:
-                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000) # Increased to 30s
+                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000)
                         self.handle_cookie_modal()
-                        
-                        # Add scrolling to trigger lazy-loaded forms/content (common on 2020 Innovation)
                         self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
                         self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                         self.page.wait_for_timeout(1500)
                         self.page.evaluate("window.scrollTo(0, 0)")
                         self.page.wait_for_timeout(1000)
-
-                        # Wait for dynamic forms (HubSpot, React, etc.)
-                        self.log('info', 'Contact Page', 'Waiting for form/inputs/iframes to initialize...')
                         try:
-                            # Search for form OR email input OR textarea OR iframe to be more flexible
                             self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=15000)
                             self.page.wait_for_timeout(2000)
-                        except:
+                        except Exception:
                             self.log('info', 'Contact Page', 'No form elements/iframes appeared within 15s, checking immediately')
-                        
-                        # Check for form on contact page
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
-                            
+                            if matched_kw:
+                                _brain_record_pattern('contact_keyword', matched_kw, success=True)
+                            _brain_record_event('contact_page', 'form_found', pattern_value=matched_kw, metadata={'forms': len(contact_page_forms)})
                             form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
                             if form_result['success']:
                                 result.update(form_result)
                                 result['method'] = 'form_submitted_contact_page'
                                 self.found_form = True
-                                return result  # EARLY EXIT - found and submitted form
+                                return result
                         else:
-                            # No form but on contact page - attempt strategy 3 & 4 within contact page context
                             self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
                             contact_info = self.extract_contact_info()
-                            
                             if contact_info and contact_info.get('emails'):
                                 self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
+                                if matched_kw:
+                                    _brain_record_pattern('contact_keyword', matched_kw, success=True)
+                                _brain_record_event('contact_page', 'email_sent', pattern_value=matched_kw, metadata={'emails': len(contact_info['emails'])})
                                 email_sent = self.send_email_to_contact(contact_info['emails'][0])
                                 if email_sent:
                                     path, screenshot_bytes = self.take_screenshot('email_sent')
@@ -179,8 +198,12 @@ class FastCampaignProcessor:
                                         'screenshot_bytes': screenshot_bytes,
                                     })
                                     return result
+                            if matched_kw:
+                                _brain_record_pattern('contact_keyword', matched_kw, success=False)
                     except Exception as e:
                         self.log('warn', 'Link Failed', f'Could not open {full_href}: {str(e)}')
+                        if matched_kw:
+                            _brain_record_pattern('contact_keyword', matched_kw, success=False)
                         continue
             except Exception as e:
                 self.log('error', 'Strategy 2 Error', str(e))
@@ -249,6 +272,7 @@ class FastCampaignProcessor:
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
             result['error'] = f'No discovery method succeeded for {website_url}'
+            _brain_record_event('outcome', 'no_contact_found', metadata={'strategies': 4})
             
             # Log page source on discovery failure
             _path, _bytes = self.take_screenshot('failed_discovery')
@@ -394,8 +418,10 @@ class FastCampaignProcessor:
                     element.click()
                     self.page.wait_for_timeout(200)
                     self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')
+                    _brain_record_pattern('cookie_selector', selector[:200], success=True)
+                    _brain_record_event('cookie_modal', 'dismissed', pattern_value=selector[:200])
                     return True
-            except:
+            except Exception:
                 continue
         return False
 
@@ -650,8 +676,13 @@ class FastCampaignProcessor:
                             filled_count += 1
                         except Exception: continue
 
-            # Take screenshot of the filled form
+            # Take screenshot of the filled form (before submit)
             screenshot_url, screenshot_bytes = self.take_screenshot(f'filled_{location}')
+
+            # Submit the form after screenshot
+            if filled_count > 0:
+                self.submit_form(form)
+                self.page.wait_for_timeout(2000)
             
             # SUCCESS CRITERIA: If we filled ANY fields, it counts as success
             if filled_count > 0:
@@ -686,9 +717,33 @@ class FastCampaignProcessor:
             }
 
     def submit_form(self, form) -> bool:
-        """Submit form and verify success (DISABLED - ALWAYS RETURNS TRUE)"""
-        # Submission disabled as per user request. We only fill and screenshot.
-        return True
+        """Submit the form by clicking submit button or calling form.submit(). Returns True if submit was attempted."""
+        try:
+            # Prefer clicking submit button so JS submit handlers run
+            submit_selectors = [
+                'input[type="submit"]',
+                'button[type="submit"]',
+                'button[type="button"]',  # some forms use type=button with onclick submit
+                '[type="submit"]',
+                'button',
+                'input[type="image"]',
+            ]
+            for sel in submit_selectors:
+                try:
+                    btn = form.query_selector(sel)
+                    if btn and btn.is_visible():
+                        self.log('info', 'Submitting', 'Clicking submit button')
+                        btn.click()
+                        return True
+                except Exception:
+                    continue
+            # Fallback: native form submit (may not trigger React/JS handlers)
+            form.evaluate('el => el.submit()')
+            self.log('info', 'Submitting', 'Form submitted via submit()')
+            return True
+        except Exception as e:
+            self.log('warning', 'Submit Failed', str(e))
+            return False
 
     def detect_captcha(self, form) -> bool:
         """Detect CAPTCHA in form"""
