@@ -337,8 +337,7 @@ def process_pdf_async(self, job_id, input_path, operation, **kwargs):
 
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
-@celery_app.task(bind=True)
-def process_campaign_sequential(self, campaign_id, company_ids=None):
+def process_campaign_sequential(campaign_id, company_ids=None):
     """
     Process a campaign sequentially (one-by-one)
     Ensures stability and real-time monitoring via WebSockets
@@ -537,9 +536,4 @@ def process_campaign_sequential(self, campaign_id, company_ids=None):
             db.session.commit()
         return {'error': str(e)}
 
-celery_app.conf.beat_schedule = {
-    'cleanup-old-files': {
-        'task': 'tasks.cleanup_old_files',
-        'schedule': crontab(minute=0),  # Run every hour
-    },
-}
+# Cleanup tasks could be added here later if needed

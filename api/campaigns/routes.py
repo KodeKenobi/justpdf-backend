@@ -3,6 +3,7 @@ import os
 from sqlalchemy import desc, or_, func
 from datetime import datetime
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import threading
 
 # Add project root for path resolution
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -801,14 +802,28 @@ def rapid_process_batch(campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
             
-        # Trigger Celery task
-        # We pass company_ids to allow partial reruns if requested
-        task = process_campaign_sequential.delay(campaign_id, company_ids)
+        # Trigger background processing via threading instead of Celery (Option 2)
+        from flask import current_app
+        # We need to capture the current app context to pass it to the thread
+        app = current_app._get_current_object()
+        
+        def run_in_background(app_context, campaign_id, company_ids):
+            with app_context.app_context():
+                try:
+                    process_campaign_sequential(campaign_id, company_ids)
+                except Exception as e:
+                    print(f"Background thread error: {e}")
+
+        thread = threading.Thread(
+            target=run_in_background,
+            args=(app, campaign_id, company_ids)
+        )
+        thread.daemon = True
+        thread.start()
         
         return jsonify({
             'success': True,
-            'message': 'Sequential processing started in background',
-            'task_id': task.id,
+            'message': 'Sequential processing started in background thread',
             'campaign_id': campaign_id
         }), 202
 
