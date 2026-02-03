@@ -613,9 +613,12 @@ class FastCampaignProcessor:
                 
         except Exception as e:
             self.log('error', 'Form Fill Error', str(e))
+            path, screenshot_bytes = self.take_screenshot('form_error')
             return {
                 'success': False,
-                'error': f'Form processing error: {str(e)}'
+                'error': f'Form processing error: {str(e)}',
+                'screenshot_url': path,
+                'screenshot_bytes': screenshot_bytes,
             }
 
     def submit_form(self, form) -> bool:
