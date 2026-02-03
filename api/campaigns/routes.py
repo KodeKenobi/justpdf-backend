@@ -793,7 +793,7 @@ def rapid_process_batch(campaign_id):
     try:
         from models import Campaign, Company
         from database import db
-        from tasks import process_campaign_sequential
+        from campaign_sequential import process_campaign_sequential  # no Celery/Redis
         
         data = request.get_json() or {}
         company_ids = data.get('company_ids') # Optional: if None, processes all pending
