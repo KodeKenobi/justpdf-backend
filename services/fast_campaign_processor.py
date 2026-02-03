@@ -601,8 +601,9 @@ class FastCampaignProcessor:
                     self.log('warning', 'Field Fill Failed', f'Field error: {str(e)}')
                     continue
             
-            # Handle Selects (Dropdowns) — country: click, find option by text or value, select
+            # Handle Selects (Dropdowns) — country first, then generic (branch, department, etc.)
             country_keywords = ['country', 'nation', 'ext', 'region', 'location', 'countrycode', 'country_code', 'dialcode']
+            select_keywords_priority = ['branch', 'office', 'department', 'location', 'region', 'enquiry', 'inquiry', 'subject', 'topic', 'how', 'hear', 'source']
             for select in selects:
                 name = (select.get_attribute('name') or '').lower()
                 placeholder = (select.get_attribute('placeholder') or '').lower()
@@ -613,7 +614,8 @@ class FastCampaignProcessor:
                     options = select.query_selector_all('option')
                     if not options:
                         continue
-                    # Country/region dropdown: use sender_country and match option text or value
+                    handled = False
+                    # Country/region dropdown
                     if any(kw in text for kw in country_keywords):
                         wanted_country = (self.sender_data.get('sender_country') or 'United Kingdom').strip().lower()
                         target_val = None
@@ -624,12 +626,10 @@ class FastCampaignProcessor:
                             if not opt_text and not opt_val:
                                 continue
                             opt_text_lower = opt_text.lower()
-                            # Match by label containing country name (e.g. "United Kingdom", "South Africa")
                             if wanted_country in opt_text_lower or opt_text_lower in wanted_country:
                                 target_val = opt_val or opt_text
                                 target_label = opt_text
                                 break
-                            # Match common variants (e.g. "UK" vs "United Kingdom")
                             if wanted_country == 'united kingdom' and ('united kingdom' in opt_text_lower or 'uk' in opt_text_lower or (opt_val and 'uk' in opt_val.lower())):
                                 target_val = opt_val or opt_text
                                 target_label = opt_text
@@ -652,6 +652,68 @@ class FastCampaignProcessor:
                                     select.select_option(index=1 if len(options) > 1 else 0)
                             filled_count += 1
                             self.log('info', 'Field Filled', f'Country selected: {target_label or target_val}')
+                            handled = True
+                    # Generic select (branch, department, enquiry type, etc.): skip placeholder option, pick first real one
+                    if not handled:
+                        first_val = options[0].get_attribute('value')
+                        first_text = (options[0].inner_text() or '').strip().lower()
+                        is_placeholder = (not first_val or first_val == '' or
+                                          first_text in ('select', 'choose', '--', 'please select', 'select one', 'select...'))
+                        idx = 1 if (is_placeholder and len(options) > 1) else 0
+                        opt = options[idx]
+                        val = opt.get_attribute('value')
+                        label = (opt.inner_text() or '').strip()
+                        if val is not None or label:
+                            try:
+                                select.select_option(value=val or label)
+                            except Exception:
+                                try:
+                                    select.select_option(index=idx)
+                                except Exception:
+                                    pass
+                            else:
+                                try:
+                                    select.select_option(index=idx)
+                                except Exception:
+                                    pass
+                            filled_count += 1
+                            self.log('info', 'Field Filled', f'Select "{name or select_id}" -> {label or val or idx}')
+                except Exception:
+                    continue
+
+            # Handle Radio groups: ensure one option selected per name (required for many forms)
+            radios_by_name = {}
+            for inp in inputs:
+                if inp.get_attribute('type') == 'radio':
+                    name = inp.get_attribute('name')
+                    if name and inp.is_visible():
+                        if name not in radios_by_name:
+                            radios_by_name[name] = []
+                        radios_by_name[name].append(inp)
+            for name, group in radios_by_name.items():
+                try:
+                    # Prefer option whose label/value matches enquiry, email, phone, general
+                    name_lower = name.lower()
+                    group_text = ' '.join([
+                        (el.get_attribute('value') or '') + ' ' +
+                        (el.get_attribute('aria-label') or '') +
+                        (el.evaluate("el => el.parentElement?.innerText || ''") or '')
+                        for el in group
+                    ]).lower()
+                    preferred = ['email', 'phone', 'general', 'enquiry', 'inquiry', 'business', 'sales', 'support']
+                    chosen = None
+                    for opt in group:
+                        val = (opt.get_attribute('value') or '').lower()
+                        parent = (opt.evaluate("el => el.parentElement?.innerText || ''") or '').lower()
+                        if any(p in val or p in parent for p in preferred):
+                            chosen = opt
+                            break
+                    if chosen is None:
+                        chosen = group[0]
+                    if chosen and not chosen.evaluate('el => el.checked'):
+                        chosen.click()
+                        filled_count += 1
+                        self.log('info', 'Field Filled', f'Radio "{name}" selected')
                 except Exception:
                     continue
 
@@ -676,6 +738,38 @@ class FastCampaignProcessor:
                             filled_count += 1
                         except Exception: continue
 
+            # Fill any remaining required fields we missed (placeholder or first option for select, "—" for text)
+            try:
+                required_inputs = form.query_selector_all('input[required], textarea[required], select[required]')
+                for el in required_inputs or []:
+                    if el.get_attribute('type') in ('hidden', 'submit', 'button'):
+                        continue
+                    tag = el.evaluate('el => el.tagName.toLowerCase()')
+                    if tag == 'select':
+                        opts = el.query_selector_all('option')
+                        if opts and len(opts) > 1:
+                            first_text = (opts[1].inner_text() or '').strip().lower()
+                            if first_text not in ('select', 'choose', '--', 'please select', 'select one', 'select...'):
+                                try:
+                                    el.select_option(index=1)
+                                    filled_count += 1
+                                    self.log('info', 'Required Field', 'Select required: chose first real option')
+                                except Exception:
+                                    pass
+                    elif tag == 'textarea' or (el.get_attribute('type') or 'text') == 'text':
+                        try:
+                            current = (el.evaluate('el => el.value') or '') if callable(getattr(el, 'evaluate', None)) else ''
+                            if not (current and str(current).strip()):
+                                el.fill('General enquiry')
+                                el.dispatch_event('input')
+                                el.dispatch_event('change')
+                                filled_count += 1
+                                self.log('info', 'Required Field', 'Filled empty required text/textarea')
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # Take screenshot of the filled form (before submit)
             screenshot_url, screenshot_bytes = self.take_screenshot(f'filled_{location}')
 
@@ -683,6 +777,48 @@ class FastCampaignProcessor:
             if filled_count > 0:
                 self.submit_form(form)
                 self.page.wait_for_timeout(2000)
+                # Detect validation failure: form still present and invalid inputs or visible error text
+                try:
+                    invalid = form.query_selector_all('input:invalid, textarea:invalid, select:invalid')
+                    error_els = form.query_selector_all('[class*="error" i], [id*="error" i], [role="alert"]')
+                    still_has_form = len(form.query_selector_all('input, textarea, select')) > 0
+                    has_invalid = invalid and len(invalid) > 0
+                    has_visible_error = False
+                    for el in (error_els or []):
+                        try:
+                            if el.is_visible() and (el.inner_text() or '').strip():
+                                has_visible_error = True
+                                break
+                        except Exception:
+                            pass
+                    has_validation_error = has_invalid or has_visible_error
+                    if still_has_form and has_validation_error:
+                        self.log('warning', 'Validation', 'Form reported validation errors after submit; attempting to fix required/empty fields')
+                        for el in (invalid or []):
+                            tag = el.evaluate('el => el.tagName.toLowerCase()')
+                            name = (el.get_attribute('name') or el.get_attribute('id') or '').lower()
+                            try:
+                                if tag == 'select':
+                                    opts = el.query_selector_all('option')
+                                    if opts and len(opts) > 1:
+                                        el.select_option(index=1)
+                                        filled_count += 1
+                                elif tag == 'textarea' or el.get_attribute('type') in ('text', 'email', None):
+                                    current = el.evaluate('el => el.value') or ''
+                                    if not (current and str(current).strip()):
+                                        if 'email' in name:
+                                            el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
+                                        else:
+                                            el.fill('General enquiry')
+                                        el.dispatch_event('input')
+                                        el.dispatch_event('change')
+                                        filled_count += 1
+                            except Exception:
+                                pass
+                        self.submit_form(form)
+                        self.page.wait_for_timeout(2000)
+                except Exception:
+                    pass
             
             # SUCCESS CRITERIA: If we filled ANY fields, it counts as success
             if filled_count > 0:
