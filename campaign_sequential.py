@@ -132,7 +132,9 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                     if local_path:
                         try:
                             project_root = os.path.dirname(os.path.abspath(__file__))
-                            full_path = os.path.join(project_root, local_path)
+                            # Normalize: strip leading slash so join() works on Windows and Linux
+                            path_part = local_path.lstrip('/').replace('/', os.sep)
+                            full_path = os.path.join(project_root, path_part)
                             if os.path.exists(full_path):
                                 with open(full_path, 'rb') as f:
                                     sb_url = upload_screenshot(f.read(), campaign_id, company.id)
@@ -140,10 +142,16 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                         company.screenshot_url = sb_url
                                         os.remove(full_path)
                                     else:
-                                        company.screenshot_url = local_path
+                                        # Fallback: store path for frontend (Next.js rewrites /static/screenshots to backend)
+                                        company.screenshot_url = local_path if local_path.startswith('/') else '/' + local_path.replace('\\', '/')
+                            else:
+                                print(f"Screenshot file not found: {full_path} (local_path={local_path})")
                         except Exception as e:
                             print(f"Screenshot error: {e}")
-                            company.screenshot_url = local_path
+                            import traceback
+                            traceback.print_exc()
+                            if local_path:
+                                company.screenshot_url = local_path if local_path.startswith('/') else '/' + local_path.replace('\\', '/')
 
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
