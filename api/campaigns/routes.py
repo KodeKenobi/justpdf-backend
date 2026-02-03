@@ -608,17 +608,17 @@ def rapid_process_single(campaign_id, company_id):
         try:
             # Parse message_template
             message_template_str = campaign.message_template
-            subject_str = 'Partnership Inquiry'  # Default subject
+            subject_str = 'Partnership Inquiry'
+            sender_data = {}
             
             try:
-                if isinstance(campaign.message_template, str):
+                if isinstance(campaign.message_template, str) and (campaign.message_template.strip().startswith('{') or campaign.message_template.strip().startswith('[')):
                     message_template_parsed = json.loads(campaign.message_template)
                     if isinstance(message_template_parsed, dict):
                         message_template_str = message_template_parsed.get('message', campaign.message_template)
                         subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
-                    else:
-                        message_template_str = campaign.message_template
-            except (json.JSONDecodeError, AttributeError):
+                        sender_data = message_template_parsed
+            except Exception:
                 message_template_str = campaign.message_template if isinstance(campaign.message_template, str) else str(campaign.message_template)
             
             try:
@@ -641,7 +641,8 @@ def rapid_process_single(campaign_id, company_id):
                         message_template=message_template_str,
                         campaign_id=campaign_id,
                         company_id=company_id,
-                        subject=subject_str
+                        subject=subject_str,
+                        sender_data=sender_data
                     )
                     
                     # Execute
@@ -786,184 +787,55 @@ def rapid_process_single(campaign_id, company_id):
 @campaigns_api.route('/<int:campaign_id>/rapid-process-batch', methods=['POST'])
 def rapid_process_batch(campaign_id):
     """
-    REVAMPED: Fast campaign processing using fast-contact-analyzer logic
-    - Stops after finding ONE contact method per site (optimized)
-    - Submits forms when found
-    - Sends emails when no form but email found
-    Based on scripts/fast-contact-analyzer.js strategy
+    Trigger asynchronous sequential campaign processing
     """
     try:
-        from models import Company, Campaign
+        from models import Campaign, Company
         from database import db
-        from services.fast_campaign_processor import FastCampaignProcessor
-        from playwright.sync_api import sync_playwright
-        import time
+        from tasks import process_campaign_sequential
         
-        data = request.get_json()
-        company_ids = data.get('company_ids', [])
-        
-        if not company_ids:
-            return jsonify({'error': 'No company IDs provided'}), 400
+        data = request.get_json() or {}
+        company_ids = data.get('company_ids') # Optional: if None, processes all pending
         
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+            
+        # Trigger Celery task
+        # We pass company_ids to allow partial reruns if requested
+        task = process_campaign_sequential.delay(campaign_id, company_ids)
         
-        # Fetch all companies
-        companies = Company.query.filter(
-            Company.id.in_(company_ids),
-            Company.campaign_id == campaign_id
-        ).all()
+        return jsonify({
+            'success': True,
+            'message': 'Sequential processing started in background',
+            'task_id': task.id,
+            'campaign_id': campaign_id
+        }), 202
+
+    except Exception as e:
+        print(f"Error triggering batch: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/<int:campaign_id>/stop', methods=['POST'])
+def stop_campaign(campaign_id):
+    """
+    Stop a running campaign
+    """
+    try:
+        from models import Campaign
+        from database import db
         
-        if not companies:
-            return jsonify({'error': 'No companies found'}), 404
-        
-        # Verify all companies have the same website URL
-        website_url = companies[0].website_url
-        if not all(c.website_url == website_url for c in companies):
-            return jsonify({'error': 'All companies must have same URL for batch processing'}), 400
-        
-        # Mark all as processing
-        for company in companies:
-            company.status = 'processing'
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+            
+        campaign.status = 'stopping'
         db.session.commit()
         
-        start_time = time.time()
-        results = []
+        return jsonify({
+            'success': True,
+            'message': 'Campaign stopping requested'
+        }), 200
         
-        try:
-            # Create logger function
-            def logger(level, action, message):
-                print(f"[{level}] {action}: {message}")
-            
-            # Parse message_template if it's a JSON string
-            import json
-            import subprocess
-            from datetime import datetime
-            import os
-            
-            message_template_str = campaign.message_template
-            subject_str = 'Partnership Inquiry'
-            
-            try:
-                if isinstance(campaign.message_template, str):
-                    message_template_parsed = json.loads(campaign.message_template)
-                    if isinstance(message_template_parsed, dict):
-                        message_template_str = message_template_parsed.get('message', campaign.message_template)
-                        subject_str = message_template_parsed.get('subject', 'Partnership Inquiry')
-            except:
-                pass
-
-            # Process each company using Python FastCampaignProcessor
-            from services.fast_campaign_processor import FastCampaignProcessor
-            from playwright.sync_api import sync_playwright
-            
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-                
-                for idx, company in enumerate(companies):
-                    try:
-                        logger('info', f'Batch Processing [{idx+1}/{len(companies)}]', f'Processing {company.company_name}')
-                        page = browser.new_page()
-                        
-                        # Setup processor
-                        company_data = company.to_dict()
-                        processor = FastCampaignProcessor(
-                            page=page,
-                            company_data=company_data,
-                            message_template=message_template_str,
-                            campaign_id=campaign_id,
-                            company_id=company.id,
-                            subject=subject_str
-                        )
-                        
-                        # Execute
-                        result = processor.process_company()
-                        page.close()
-
-                        # Update company
-                        if result.get('success'):
-                            if result.get('method') == 'email_found':
-                                company.status = 'contact_info_found'
-                                company.contact_method = 'email_found'
-                                if result.get('contact_info'):
-                                    company.contact_info = json.dumps(result['contact_info'])
-                            else:
-                                company.status = 'completed'
-                                company.contact_method = result.get('method', 'form_submitted')
-                                company.fields_filled = result.get('fields_filled', 0)
-                        else:
-                            error_msg = result.get('error', '').lower()
-                            if 'captcha' in error_msg or result.get('method') in ['form_with_captcha', 'form_in_iframe']:
-                                company.status = 'captcha'
-                                company.contact_method = result.get('method', 'form_with_captcha')
-                            else:
-                                company.status = 'failed'
-                            company.error_message = result.get('error', 'Processing failed')
-                        
-                        # Screenshot upload
-                        local_path = result.get('screenshot_url')
-                        if local_path:
-                            # Handle both relative and absolute-style URLs from processor
-                            check_path = local_path.lstrip('/')
-                            full_path = os.path.join(project_root, check_path)
-                            
-                            if os.path.exists(full_path):
-                                try:
-                                    from utils.supabase_storage import upload_screenshot
-                                    with open(full_path, 'rb') as f:
-                                        sb = upload_screenshot(f.read(), campaign_id, company.id)
-                                    if sb:
-                                        company.screenshot_url = sb
-                                        os.remove(full_path)
-                                    else:
-                                        company.screenshot_url = local_path
-                                except:
-                                    company.screenshot_url = local_path
-                        
-                        company.processed_at = datetime.utcnow()
-                        db.session.commit()
-                        
-                        results.append({
-                            'companyId': company.id,
-                            'status': company.status,
-                            'screenshotUrl': company.screenshot_url,
-                            'errorMessage': company.error_message
-                        })
-                    except Exception as e:
-                        logger('error', 'Batch Company Error', str(e))
-                        company.status = 'failed'
-                        # Group common technical errors into friendlier strings for the frontend
-                        error_str = str(e)
-                        if "Playwright" in error_str or "browser" in error_str:
-                            company.error_message = "Browser system error. Please try again."
-                        elif "Timeout" in error_str:
-                            company.error_message = "Website took too long to load."
-                        else:
-                            company.error_message = error_str
-                        db.session.commit()
-
-                browser.close()
-            
-            # Final response
-            processing_time = time.time() - start_time
-            from sqlalchemy import or_
-            campaign.processed_count = Company.query.filter_by(campaign_id=campaign_id).filter(Company.status != 'pending').count()
-            campaign.success_count = Company.query.filter_by(campaign_id=campaign_id).filter(or_(Company.status == 'completed', Company.status == 'contact_info_found')).count()
-            campaign.failed_count = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
-            campaign.progress_percentage = int((campaign.processed_count / campaign.total_companies) * 100) if campaign.total_companies > 0 else 0
-            db.session.commit()
-            
-            return jsonify({
-                'success': True,
-                'companiesProcessed': len(companies),
-                'processingTime': round(processing_time, 2),
-                'results': results
-            }), 200
-
-        except Exception as e:
-            logger('error', 'Batch Loop Error', str(e))
-            return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
-        print(f"Outer Batch Error: {e}")
         return jsonify({'error': str(e)}), 500

@@ -4,9 +4,8 @@ Based on fast-contact-analyzer.js logic with form submission and email fallback
 Optimized for speed - stops after finding ONE contact method per site
 """
 
+import json
 import re
-import time
-import os
 from typing import Dict, List, Optional, Tuple
 
 
@@ -14,30 +13,43 @@ class FastCampaignProcessor:
     """Fast, optimized campaign processing with early exit strategy"""
 
     def __init__(self, page, company_data: Dict, message_template: str, 
-                 campaign_id: int = None, company_id: int = None, logger=None, subject: str = None):
+                 campaign_id: int = None, company_id: int = None, logger=None, subject: str = None, sender_data: Dict = None):
         self.page = page
         self.company = company_data
-        self.message_template = message_template
         self.campaign_id = campaign_id
         self.company_id = company_id
         self.logger = logger
-        self.subject = subject or 'Partnership Inquiry'
         self.found_form = False
         self.found_contact_page = False
         self.website_url = self.company.get('website_url', '')
 
+        # Parse message template (could be plain text or JSON)
+        self.sender_data = sender_data or {}
+        try:
+            if isinstance(message_template, str) and (message_template.strip().startswith('{') or message_template.strip().startswith('[')):
+                parsed = json.loads(message_template)
+                if isinstance(parsed, dict):
+                    # If we don't have explicit sender_data, use the parsed one
+                    if not self.sender_data:
+                        self.sender_data = parsed
+                    self.message_body = parsed.get('message', '')
+                    self.subject = subject or parsed.get('subject') or 'Partnership Inquiry'
+                else:
+                    self.message_body = message_template
+                    self.subject = subject or 'Partnership Inquiry'
+            else:
+                self.message_body = message_template
+                self.subject = subject or 'Partnership Inquiry'
+        except Exception:
+            self.message_body = message_template
+            self.subject = subject or 'Partnership Inquiry'
+
     def log(self, level: str, action: str, message: str):
-        """Log with live scraper educational format"""
+        """Unified logging for campaign activity"""
         if self.logger:
             self.logger(level, action, message)
         else:
-            print(f"[{level}] {action}: {message}")
-
-    def log_for_live_scraper(self, method: str, selector: str, reason: str, success: bool):
-        """Educational logging for live scraper"""
-        icon = '✅' if success else '❌'
-        message = f"LIVE_SCRAPER: {icon} Method: {method} | Selector: \"{selector}\" | {reason}"
-        self.log('info', 'LIVE_SCRAPER', message)
+            print(f"[{level.upper()}] {action}: {message}")
 
     def process_company(self) -> Dict:
         """
@@ -72,9 +84,9 @@ class FastCampaignProcessor:
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
-                self.page.goto(website_url, wait_until='domcontentloaded', timeout=20000)
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=30000) # Increased to 30s
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_timeout(2000)
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
@@ -84,9 +96,7 @@ class FastCampaignProcessor:
             homepage_forms = self.page.query_selector_all('form')
             
             if homepage_forms:
-                self.log('success', 'Homepage Forms', f'Found {len(homepage_forms)} form(s) on homepage')
-                self.log_for_live_scraper('Homepage form check', 'form', 
-                                         'Direct form detection on homepage - fastest method', True)
+                self.log('success', 'Form Detection', f'Found {len(homepage_forms)} form(s) on homepage')
                 
                 # Try to fill and submit first form
                 form_result = self.fill_and_submit_form(homepage_forms[0], 'homepage')
@@ -119,22 +129,29 @@ class FastCampaignProcessor:
                     full_href = self.make_absolute_url(href)
                     
                     try:
-                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=15000)
+                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000) # Increased to 30s
                         self.handle_cookie_modal()
+                        
+                        # Add scrolling to trigger lazy-loaded forms/content (common on 2020 Innovation)
+                        self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
+                        self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        self.page.wait_for_timeout(1500)
+                        self.page.evaluate("window.scrollTo(0, 0)")
+                        self.page.wait_for_timeout(1000)
+
                         # Wait for dynamic forms (HubSpot, React, etc.)
-                        self.log('info', 'Contact Page', 'Waiting for form to initialize...')
+                        self.log('info', 'Contact Page', 'Waiting for form/inputs/iframes to initialize...')
                         try:
-                            self.page.wait_for_selector('form', timeout=5000)
-                            self.page.wait_for_timeout(1000)
+                            # Search for form OR email input OR textarea OR iframe to be more flexible
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=15000)
+                            self.page.wait_for_timeout(2000)
                         except:
-                            self.log('info', 'Contact Page', 'No standard form appeared within 5s, checking immediately')
+                            self.log('info', 'Contact Page', 'No form elements/iframes appeared within 15s, checking immediately')
                         
                         # Check for form on contact page
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
-                            self.log('success', 'Contact Page Forms', f'Found {len(contact_page_forms)} form(s)')
-                            self.log_for_live_scraper('Contact page form check', 'form', 
-                                                     'Check for form after navigating to contact page', True)
+                            self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
                             
                             form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
                             if form_result['success']:
@@ -161,10 +178,29 @@ class FastCampaignProcessor:
 
             # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
+            
+            # Give frames a moment to load their content
+            self.page.wait_for_timeout(2000)
+            
             for idx, frame in enumerate(self.page.frames):
                 if frame == self.page.main_frame: continue
                 try:
+                    # Wait slightly for each frame to be ready
+                    self.log('info', 'Checking Frame', f'Checking frame {idx}: {frame.url[:50]}...')
+                    
+                    # Try to find forms in this frame
                     frame_forms = frame.query_selector_all('form')
+                    if not frame_forms:
+                        # Sometimes forms in iframes don't use <form> but have inputs
+                        frame_inputs = frame.query_selector_all('input[type="email"], textarea')
+                        if frame_inputs:
+                            self.log('success', 'Frame Inputs Found', f'Found form-like inputs in frame: {frame.url[:50]}...')
+                            form_result = self.fill_and_submit_form(frame, f'frame_{idx}_heuristic', is_iframe=True, is_heuristic=True, frame=frame)
+                            if form_result['success']:
+                                result.update(form_result)
+                                result['method'] = 'form_submitted_iframe_heuristic'
+                                return result
+                    
                     if frame_forms:
                         self.log('success', 'Frame Form Found', f'Found form in frame: {frame.url[:50]}...')
                         form_result = self.fill_and_submit_form(frame_forms[0], f'frame_{idx}', is_iframe=True, frame=frame)
@@ -172,7 +208,9 @@ class FastCampaignProcessor:
                             result.update(form_result)
                             result['method'] = 'form_submitted_iframe'
                             return result
-                except Exception: continue
+                except Exception as e: 
+                    self.log('warning', 'Frame Check Failed', f'Error checking frame {idx}: {str(e)}')
+                    continue
 
             # STRATEGY 4: Heuristic Field Search (No <form> tag)
             self.log('info', 'Strategy 4', 'Searching for inputs by label heuristics...')
@@ -193,6 +231,7 @@ class FastCampaignProcessor:
             page_title = self.page.title()
             page_content_snippet = (self.page.content() or "")[:1000].replace('\n', ' ')
             self.log('error', 'Discovery Failed', f"Title: {page_title} | Snippet: {page_content_snippet}")
+            return result
             
         except Exception as e:
             self.log('error', 'Processing Error', str(e))
@@ -383,7 +422,7 @@ class FastCampaignProcessor:
             message_filled = False
             
             # Prepare message
-            message = self.replace_variables(self.message_template)
+            message = self.replace_variables(self.message_body)
             
             for input_element in inputs:
                 input_id = (input_element.get_attribute('id') or '').lower()
@@ -401,58 +440,82 @@ class FastCampaignProcessor:
                     
                     # 1. Fill email field (Highest priority)
                     if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
-                        email = self.company.get('contact_email', 'contact@business.com')
+                        email = self.sender_data.get('sender_email') or self.company.get('contact_email', 'contact@business.com')
                         input_element.click()
-                        input_element.type(email, delay=50)
+                        input_element.fill(email)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         email_filled = True
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Email field filled: {email}')
                         continue
 
                     # 2. Fill name fields
-                    if any(kw in field_text for kw in ['first-name', 'fname', 'firstname', 'given-name']):
-                        input_element.fill(self.company.get('contact_person', 'Business').split()[0])
+                    if any(kw in field_text for kw in ['first-name', 'fname', 'firstname', 'given-name', 'givenname', 'first_name']):
+                        fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
+                        input_element.click()
+                        input_element.fill(fname)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'First Name field filled')
+                        self.log('info', 'Field Filled', f'First Name field filled: {fname}')
                         continue
 
-                    if any(kw in field_text for kw in ['last-name', 'lname', 'lastname', 'surname', 'family-name']):
-                        name_parts = self.company.get('contact_person', 'Contact').split()
-                        last_name = name_parts[-1] if len(name_parts) > 1 else 'Contact'
-                        input_element.fill(last_name)
+                    if any(kw in field_text for kw in ['last-name', 'lname', 'lastname', 'surname', 'family-name', 'familyname', 'last_name']):
+                        lname = self.sender_data.get('sender_last_name')
+                        if not lname:
+                            name_parts = self.company.get('contact_person', 'Contact').split()
+                            lname = name_parts[-1] if len(name_parts) > 1 else 'Contact'
+                        input_element.click()
+                        input_element.fill(lname)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Last Name field filled')
+                        self.log('info', 'Field Filled', f'Last Name field filled: {lname}')
                         continue
 
-                    if any(kw in field_text for kw in ['name', 'full-name', 'fullname', 'your-name']) and 'company' not in field_text:
-                        input_element.fill(self.company.get('contact_person', 'Business Contact'))
+                    if any(kw in field_text for kw in ['name', 'full-name', 'fullname', 'your-name', 'full_name']) and 'company' not in field_text:
+                        fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
+                        input_element.click()
+                        input_element.fill(fullname)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Name field filled')
+                        self.log('info', 'Field Filled', f'Name field filled: {fullname}')
                         continue
                     
-                    # 3. Fill Company field (avoid matching email placeholders)
-                    if any(kw in field_text for kw in ['company', 'organization', 'business-name', 'firm']) and 'email' not in field_text:
-                        input_element.fill(self.company.get('company_name', 'Your Company'))
+                    # 3. Fill Company field
+                    if any(kw in field_text for kw in ['company', 'organization', 'business-name', 'firm', 'business_name', 'org_name']) and 'email' not in field_text:
+                        company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
+                        input_element.click()
+                        input_element.fill(company_val)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Company field filled')
+                        self.log('info', 'Field Filled', f'Company field filled: {company_val}')
                         continue
 
                     # 4. Fill phone field
                     if any(kw in field_text for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
-                        phone = self.company.get('phone') or self.company.get('phone_number')
+                        phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
                         if phone:
-                            # Use type for phone as well just in case
                             input_element.click()
-                            input_element.type(phone, delay=50)
+                            input_element.fill(phone)
+                            input_element.dispatch_event('input')
+                            input_element.dispatch_event('change')
                             filled_count += 1
                             self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
                     
                     # Fill subject field
-                    if 'subject' in field_text or 'topic' in field_text:
-                        input_element.fill(self.subject)
+                    if any(kw in field_text for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
+                        subject_val = self.subject
+                        input_element.click()
+                        input_element.fill(subject_val)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
                         filled_count += 1
-                        self.log('info', 'Field Filled', f'Subject field: {self.subject}')
+                        self.log('info', 'Field Filled', f'Subject field: {subject_val}')
                         continue
                     
                     # Fill message/comment textarea
@@ -460,6 +523,8 @@ class FastCampaignProcessor:
                     if tag_name == 'textarea':
                         if not message_filled and any(kw in field_text for kw in ['message', 'comment', 'inquiry', 'details', 'body']):
                             input_element.fill(message)
+                            input_element.dispatch_event('input')
+                            input_element.dispatch_event('change')
                             message_filled = True
                             filled_count += 1
                             self.log('info', 'Field Filled', f'Message field filled')
@@ -515,40 +580,28 @@ class FastCampaignProcessor:
                             filled_count += 1
                         except Exception: continue
 
-            # Require at least email and message to be filled
-            if not (email_filled and message_filled):
-                self.log('warning', 'Form Incomplete', f'Could not fill required fields (email: {email_filled}, message: {message_filled})')
-                return {
-                    'success': False,
-                    'error': 'Could not fill required form fields',
-                    'fields_filled': filled_count,
-                    'screenshot_url': self.take_screenshot(f'failed_fill_{location}')
-                }
+            # Take screenshot of the filled form
+            screenshot_url = self.take_screenshot(f'filled_{location}')
             
-            self.log('success', 'Form Filled', f'Filled {filled_count} fields successfully')
-            
-            # Submit the form
-            submit_success = self.submit_form(form)
-            
-            if submit_success:
-                self.log('success', 'Form Submitted', 'Form submission successful')
-                
-                # Take screenshot
-                screenshot_url = self.take_screenshot(f'submit_{location}')
-                
-                return {
+            # SUCCESS CRITERIA: If we filled ANY fields, it counts as success
+            if filled_count > 0:
+                self.log('success', 'Form Processed', f'Successfully filled {filled_count} fields and captured screenshot')
+                res = {
                     'success': True,
-                    'method': 'form_submitted',
+                    'method': 'form_filled',
                     'fields_filled': filled_count,
                     'screenshot_url': screenshot_url
                 }
+                return res
             else:
-                return {
+                self.log('warning', 'Form Empty', 'No fields were filled')
+                res = {
                     'success': False,
-                    'error': 'Form submission failed',
-                    'fields_filled': filled_count,
-                    'screenshot_url': self.take_screenshot(f'failed_submit_{location}')
+                    'error': 'No fields were filled',
+                    'fields_filled': 0,
+                    'screenshot_url': screenshot_url
                 }
+                return res
                 
         except Exception as e:
             self.log('error', 'Form Fill Error', str(e))
@@ -558,65 +611,9 @@ class FastCampaignProcessor:
             }
 
     def submit_form(self, form) -> bool:
-        """Submit form and verify success"""
-        try:
-            # Find submit button
-            submit_selectors = [
-                'button[type="submit"]',
-                'input[type="submit"]',
-                'button:has-text("Send")',
-                'button:has-text("Submit")',
-                'button:has-text("Contact")',
-                'button:has-text("Get in Touch")'
-            ]
-            
-            submit_button = None
-            for selector in submit_selectors:
-                try:
-                    submit_button = form.query_selector(selector)
-                    if submit_button and submit_button.is_visible():
-                        break
-                except:
-                    continue
-            
-            if not submit_button:
-                # Try finding any button within form
-                submit_button = form.query_selector('button')
-            
-            if submit_button:
-                # Click and wait for response
-                self.log('warning', 'SIMULATION', 'Submission disabled for testing - not clicking button')
-                return True
-                # submit_button.click()
-                # self.page.wait_for_timeout(2000)  # Wait for submission
-                
-                # Check for success indicators
-                success_indicators = [
-                    'thank',
-                    'success',
-                    'received',
-                    'sent',
-                    'submitted',
-                    'will be in touch',
-                    'get back to you',
-                    'message has been sent'
-                ]
-                
-                page_text = self.page.text_content().lower()
-                if any(indicator in page_text for indicator in success_indicators):
-                    self.log('success', 'Success Indicator', 'Success message detected on page')
-                    return True
-                
-                # If no clear success message, assume success if no error
-                self.log('info', 'Submission Complete', 'No error detected, assuming success')
-                return True
-            else:
-                self.log('warning', 'No Submit Button', 'Could not find submit button')
-                return False
-            
-        except Exception as e:
-            self.log('error', 'Form Submit Error', str(e))
-            return False
+        """Submit form and verify success (DISABLED - ALWAYS RETURNS TRUE)"""
+        # Submission disabled as per user request. We only fill and screenshot.
+        return True
 
     def detect_captcha(self, form) -> bool:
         """Detect CAPTCHA in form"""
@@ -634,19 +631,19 @@ class FastCampaignProcessor:
             for selector in captcha_selectors:
                 try:
                     element = form.query_selector(selector)
-                    if element:
+                    if element and element.is_visible():
+                        self.log('info', 'Captcha', f'Detected visible captcha: {selector}')
                         return True
-                except:
-                    continue
+                except: continue
             
-            # Also check page-level (outside form)
-            for selector in captcha_selectors:
+            # Also check page-level (outside form) but only if it's very likely blocking
+            for selector in ['.g-recaptcha', '.h-captcha', 'iframe[src*="recaptcha"]']:
                 try:
                     element = self.page.query_selector(selector)
-                    if element:
+                    if element and element.is_visible():
+                        self.log('info', 'Captcha', f'Detected page-level captcha: {selector}')
                         return True
-                except:
-                    continue
+                except: continue
             
             return False
         except:
