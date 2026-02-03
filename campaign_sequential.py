@@ -4,9 +4,79 @@ No Celery/Redis imports - safe to use when Redis is not running (e.g. Start butt
 """
 import os
 import json
+import re
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from models import Campaign, Company, db
+
+# Map technical log (action / message) to user-friendly English for the right-hand panel
+def _user_friendly_message(level, action, message):
+    action_lower = (action or '').lower()
+    msg_lower = (message or '').lower()
+    # Success
+    if level == 'success':
+        if 'form detected' in msg_lower or 'form found' in msg_lower:
+            return "Form found on page."
+        if 'form processed' in msg_lower or 'successfully filled' in msg_lower:
+            return "Form filled and screenshot saved."
+        if 'email sent' in msg_lower:
+            return "Email sent successfully."
+        if 'contact link' in msg_lower or 'contact page' in msg_lower:
+            return "Contact page found."
+        if 'frame' in msg_lower and 'found' in msg_lower:
+            return "Form found in embedded section."
+    # Info → friendly one-liners
+    if level == 'info':
+        if 'opening' in msg_lower or 'navigation' in msg_lower:
+            return "Opening website…"
+        if 'strategy 1' in msg_lower or 'homepage' in msg_lower:
+            return "Checking homepage for a form…"
+        if 'strategy 2' in msg_lower or 'contact link' in msg_lower:
+            return "Looking for contact or about page…"
+        if 'strategy 3' in msg_lower or 'frame' in msg_lower:
+            return "Checking embedded forms…"
+        if 'strategy 4' in msg_lower or 'heuristic' in msg_lower:
+            return "Scanning page for form fields…"
+        if 'form filling' in msg_lower or 'starting' in msg_lower:
+            return "Filling out the form…"
+        if 'field filled' in msg_lower or 'field filled' in action_lower:
+            return "Field completed."
+        if 'country' in msg_lower and ('selected' in msg_lower or 'filled' in msg_lower):
+            return "Country selected."
+        if 'checkbox' in msg_lower:
+            return "Option selected."
+        if 'contact page' in msg_lower and ('scroll' in msg_lower or 'wait' in msg_lower):
+            return "Loading contact page…"
+        if 'testing link' in msg_lower:
+            return "Checking a link…"
+        if 'discovery' in msg_lower:
+            return "Searching for contact options…"
+        if 'sending email' in msg_lower:
+            return "Sending email…"
+    # Warnings
+    if level == 'warning':
+        if 'captcha' in msg_lower:
+            return "This form uses CAPTCHA; we can't submit it automatically."
+        if 'no fields' in msg_lower or 'form empty' in msg_lower:
+            return "No form fields could be filled."
+        if 'field fill failed' in msg_lower:
+            return "One field could not be filled."
+    # Errors
+    if level == 'error':
+        if 'no contact found' in msg_lower:
+            return "No contact form or email found on this site."
+        if 'navigation' in msg_lower or 'failed' in msg_lower or 'timed out' in msg_lower:
+            return "Could not load this page."
+        if 'form fill error' in msg_lower or 'form processing' in msg_lower:
+            return "Something went wrong while filling the form."
+        if 'execution error' in action_lower:
+            return "An error occurred; this lead was skipped."
+    # Fallback: shorten technical message (remove file paths, long URLs)
+    if message and len(message) > 80:
+        short = re.sub(r'https?://\S+', '[link]', message)
+        short = short[:77] + '…' if len(short) > 80 else short
+        return short
+    return message or "Processing…"
 
 
 def process_campaign_sequential(campaign_id, company_ids=None):
@@ -84,6 +154,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
 
                 def live_logger(level, action, message):
                     print(f"[{level}] {action}: {message}")
+                    user_msg = _user_friendly_message(level, action, message)
                     ws_manager.broadcast_event(campaign_id, {
                         'type': 'activity',
                         'data': {
@@ -92,6 +163,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             'level': level,
                             'action': action,
                             'message': message,
+                            'user_message': user_msg,
                             'timestamp': datetime.utcnow().isoformat()
                         }
                     })

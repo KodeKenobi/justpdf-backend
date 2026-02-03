@@ -530,6 +530,17 @@ class FastCampaignProcessor:
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Subject field: {subject_val}')
                         continue
+
+                    # Fill country field (text input)
+                    if any(kw in field_text for kw in ['country', 'nation', 'region', 'location', 'país', 'pays', 'land']):
+                        country_val = self.sender_data.get('sender_country') or 'United Kingdom'
+                        input_element.click()
+                        input_element.fill(country_val)
+                        input_element.dispatch_event('input')
+                        input_element.dispatch_event('change')
+                        filled_count += 1
+                        self.log('info', 'Field Filled', f'Country field filled: {country_val}')
+                        continue
                     
                     # Fill message/comment textarea
                     tag_name = input_element.evaluate('el => el.tagName.toLowerCase()')
@@ -547,7 +558,8 @@ class FastCampaignProcessor:
                     self.log('warning', 'Field Fill Failed', f'Field error: {str(e)}')
                     continue
             
-            # Handle Selects (Dropdowns)
+            # Handle Selects (Dropdowns) — country: click, find option by text or value, select
+            country_keywords = ['country', 'nation', 'ext', 'region', 'location', 'countrycode', 'country_code', 'dialcode']
             for select in selects:
                 name = (select.get_attribute('name') or '').lower()
                 placeholder = (select.get_attribute('placeholder') or '').lower()
@@ -556,21 +568,49 @@ class FastCampaignProcessor:
                 
                 try:
                     options = select.query_selector_all('option')
-                    if not options: continue
-                    
-                    # Try to match country or industry
-                    if any(kw in text for kw in ['country', 'ext', 'region', 'location']):
+                    if not options:
+                        continue
+                    # Country/region dropdown: use sender_country and match option text or value
+                    if any(kw in text for kw in country_keywords):
+                        wanted_country = (self.sender_data.get('sender_country') or 'United Kingdom').strip().lower()
                         target_val = None
+                        target_label = None
                         for opt in options:
-                            if 'united kingdom' in (opt.inner_text() or '').lower():
-                                target_val = opt.get_attribute('value')
+                            opt_val = opt.get_attribute('value')
+                            opt_text = (opt.inner_text() or '').strip()
+                            if not opt_text and not opt_val:
+                                continue
+                            opt_text_lower = opt_text.lower()
+                            # Match by label containing country name (e.g. "United Kingdom", "South Africa")
+                            if wanted_country in opt_text_lower or opt_text_lower in wanted_country:
+                                target_val = opt_val or opt_text
+                                target_label = opt_text
                                 break
-                        if not target_val:
-                            target_val = options[1].get_attribute('value') if len(options) > 1 else options[0].get_attribute('value')
-                        
-                        select.select_option(value=target_val)
-                        filled_count += 1
-                except Exception: continue
+                            # Match common variants (e.g. "UK" vs "United Kingdom")
+                            if wanted_country == 'united kingdom' and ('united kingdom' in opt_text_lower or 'uk' in opt_text_lower or (opt_val and 'uk' in opt_val.lower())):
+                                target_val = opt_val or opt_text
+                                target_label = opt_text
+                                break
+                            if wanted_country == 'south africa' and ('south africa' in opt_text_lower or 'za' in opt_text_lower or (opt_val and 'za' in opt_val.lower())):
+                                target_val = opt_val or opt_text
+                                target_label = opt_text
+                                break
+                        if target_val is None and len(options) > 1:
+                            target_val = options[1].get_attribute('value') or (options[1].inner_text() or '').strip()
+                        elif target_val is None:
+                            target_val = options[0].get_attribute('value') or (options[0].inner_text() or '').strip()
+                        if target_val:
+                            try:
+                                select.select_option(value=target_val)
+                            except Exception:
+                                try:
+                                    select.select_option(label=target_label or target_val)
+                                except Exception:
+                                    select.select_option(index=1 if len(options) > 1 else 0)
+                            filled_count += 1
+                            self.log('info', 'Field Filled', f'Country selected: {target_label or target_val}')
+                except Exception:
+                    continue
 
             # Handle Checkboxes
             for cb in inputs:
