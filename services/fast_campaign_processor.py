@@ -115,24 +115,14 @@ class FastCampaignProcessor:
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
-                self.page.goto(website_url, wait_until='domcontentloaded', timeout=30000) # Increased to 30s
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=20000)
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(2000)
+                self.page.wait_for_timeout(600)
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
 
-            # FETCH-FIRST: Scroll full page so below-fold content (e.g. contact form) is in DOM, then scan ALL forms
-            self.log('info', 'Loading', 'Loading page…')
-            try:
-                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                self.page.wait_for_timeout(1500)
-                self.page.evaluate("window.scrollTo(0, 0)")
-                self.page.wait_for_timeout(1000)
-            except Exception:
-                pass
-
-            # STRATEGY 1: Check ALL forms on current page (not just the first) — contact form may be 2nd or below fold
+            # STRATEGY 1 (fast path): Check forms immediately — many sites have form above fold
             self.log('info', 'Strategy 1', 'Checking homepage for a form…')
             all_forms = self.page.query_selector_all('form')
             if all_forms:
@@ -144,8 +134,8 @@ class FastCampaignProcessor:
                             continue
                         self.log('info', 'Strategy 1', f'Trying form {idx + 1}…')
                         try:
-                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=5000)
-                            self.page.wait_for_timeout(800)
+                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=3000)
+                            self.page.wait_for_timeout(400)
                         except Exception:
                             pass
                         # Re-get form after scroll (handles may go stale)
@@ -163,6 +153,38 @@ class FastCampaignProcessor:
                         self.log('warning', 'Strategy 1', f'Form {idx + 1} failed: {e}')
                         continue
                 self.log('info', 'Strategy 1', f'No form with 2+ fillable fields succeeded among {len(all_forms)} form(s)')
+
+            # Quick scroll and retry Strategy 1 once (below-fold form)
+            try:
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                self.page.wait_for_timeout(400)
+                self.page.evaluate("window.scrollTo(0, 0)")
+                self.page.wait_for_timeout(400)
+            except Exception:
+                pass
+            all_forms = self.page.query_selector_all('form')
+            if all_forms:
+                for idx in range(len(all_forms)):
+                    try:
+                        form_el = all_forms[idx]
+                        if self._count_contact_like_fields(form_el) < 2:
+                            continue
+                        try:
+                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=3000)
+                            self.page.wait_for_timeout(300)
+                        except Exception:
+                            pass
+                        forms_after = self.page.query_selector_all('form')
+                        if idx < len(forms_after):
+                            form_result = self.fill_and_submit_form(forms_after[idx], 'homepage')
+                            if form_result['success']:
+                                result.update(form_result)
+                                result['method'] = 'form_submitted_homepage'
+                                self.found_form = True
+                                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_homepage'))
+                                return result
+                    except Exception:
+                        continue
 
             # STRATEGY 1b: No <form> tag? Scan page for input/textarea (contact form may be div-based)
             self.log('info', 'Strategy 1b', 'Checking for inputs/textareas on page (no form tag)...')
@@ -248,26 +270,25 @@ class FastCampaignProcessor:
                             anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
                             self.log('info', 'Contact Page', 'Loading contact section…')
                             try:
-                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=5000)
-                                self.page.wait_for_timeout(1500)
+                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=3000)
+                                self.page.wait_for_timeout(500)
                             except Exception:
                                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                                self.page.wait_for_timeout(1500)
+                                self.page.wait_for_timeout(500)
                             self.handle_cookie_modal()
                         else:
-                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000)
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=20000)
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(800)
-                            self.handle_cookie_modal()
+                            self.page.wait_for_timeout(400)
                             self.log('info', 'Contact Page', 'Loading contact page…')
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(1500)
+                            self.page.wait_for_timeout(500)
                             self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(1000)
+                            self.page.wait_for_timeout(400)
                             self.handle_cookie_modal()
                         try:
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=15000)
-                            self.page.wait_for_timeout(2000)
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=6000)
+                            self.page.wait_for_timeout(800)
                         except Exception:
                             self.log('info', 'Contact Page', 'No form elements/iframes appeared within 15s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
@@ -277,8 +298,8 @@ class FastCampaignProcessor:
                                 if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
                                     continue
                                 try:
-                                    self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=3000)
-                                    self.page.wait_for_timeout(500)
+                                    self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
+                                    self.page.wait_for_timeout(300)
                                 except Exception:
                                     pass
                                 forms_refresh = self.page.query_selector_all('form')
@@ -332,9 +353,7 @@ class FastCampaignProcessor:
 
             # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
-            
-            # Give frames a moment to load their content
-            self.page.wait_for_timeout(2000)
+            self.page.wait_for_timeout(500)
             
             for idx, frame in enumerate(self.page.frames):
                 if frame == self.page.main_frame: continue
@@ -861,7 +880,7 @@ class FastCampaignProcessor:
                 filled_count, filled_field_patterns = self._fill_using_field_list(form, extracted)
                 if filled_count >= 2:
                     if self.submit_form(form):
-                        self.page.wait_for_timeout(2000)
+                        self.page.wait_for_timeout(1000)
                     path, screenshot_bytes = self.take_screenshot('form_filled')
                     self.log('success', 'Form Processed', f'Filled {filled_count} fields (extract-then-fill) and submitted')
                     return {
@@ -977,7 +996,7 @@ class FastCampaignProcessor:
                         continue
                     
                     # 3. Fill Company field
-                    if any(kw in field_text for kw in ['company', 'organization', 'business-name', 'firm', 'business_name', 'org_name']) and 'email' not in field_text:
+                    if any(kw in field_text for kw in ['company', 'organization', 'organisation', 'business-name', 'firm', 'business_name', 'org_name']) and 'email' not in field_text:
                         company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
                         input_element.click()
                         input_element.fill(company_val)
@@ -1216,18 +1235,15 @@ class FastCampaignProcessor:
                     parent_text = (cb.evaluate("el => el.parentElement.innerText") or '').lower()
                     aria_label = (cb.get_attribute('aria-label') or '').lower()
                     
-                    if any(kw in f"{name} {parent_text} {aria_label}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent', 'optin', 'policy']):
-                        try:
-                            cb.check()
-                            filled_count += 1
-                            self.log('info', 'Checkbox Checked', f'Checkbox filled ({name})')
-                        except Exception: continue
-                    else:
-                        # For 2020 Innovation and others, if we have a checkbox and we don't know what it is, just check it to be safe
-                        try:
-                            cb.check()
-                            filled_count += 1
-                        except Exception: continue
+                    # Only check when label clearly indicates opt-in / marketing / consent; do not blindly check (e.g. terms acceptance)
+                    if any(kw in f"{name} {parent_text} {aria_label}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent', 'optin', 'marketing', 'newsletter']):
+                        if not any(kw in f"{name} {parent_text} {aria_label}" for kw in ['terms', 'conditions', 'terms and conditions']):
+                            try:
+                                cb.check()
+                                filled_count += 1
+                                self.log('info', 'Checkbox Checked', f'Checkbox filled ({name})')
+                            except Exception:
+                                pass
 
             # Fill remaining required selects only (first real option). Do NOT blindly fill required text inputs with "General enquiry" — that overwrites first/last name when label matching missed them.
             try:
@@ -1262,13 +1278,157 @@ class FastCampaignProcessor:
             except Exception:
                 pass
 
+            # Pre-submit pass: fill only fields we can match; select valid options for select/radio; do not type into unknown fields
+            try:
+                # Required radio groups: ensure one option selected (pick by preference or first)
+                for el in (form.query_selector_all('input[type=radio]') or []):
+                    try:
+                        name = el.get_attribute('name')
+                        if not name:
+                            continue
+                        group = form.query_selector_all(f'input[type=radio][name="{name}"]')
+                        if not group or len(group) < 2:
+                            continue
+                        any_checked = any(e.evaluate('el => el.checked') for e in group)
+                        if any_checked:
+                            continue
+                        preferred = ['email', 'phone', 'general', 'enquiry', 'inquiry', 'business', 'sales', 'support', 'other']
+                        chosen = None
+                        for opt in group:
+                            val = (opt.get_attribute('value') or '').lower()
+                            parent = (opt.evaluate("el => el.parentElement?.innerText || ''") or '').lower()
+                            if any(p in val or p in parent for p in preferred):
+                                chosen = opt
+                                break
+                        # Only select when we matched a preferred option; do not guess "first"
+                        if chosen:
+                            chosen.click()
+                            filled_count += 1
+                            self.log('info', 'Required Field', f'Pre-submit: selected radio "{name}"')
+                    except Exception:
+                        pass
+                # Required checkboxes: only check when label clearly indicates opt-in/marketing; do not check terms/conditions
+                for el in (form.query_selector_all('input[type=checkbox][required]') or []):
+                    try:
+                        if el.evaluate('el => el.checked'):
+                            continue
+                        name = (el.get_attribute('name') or '').lower()
+                        aria = (el.get_attribute('aria-label') or '').lower()
+                        parent_text = (el.evaluate("el => el.parentElement?.innerText || ''") or '').lower()
+                        hint = f"{name} {aria} {parent_text}"
+                        if any(kw in hint for kw in ['agree', 'consent', 'optin', 'marketing', 'newsletter']) and not any(kw in hint for kw in ['terms', 'conditions', 'terms and conditions']):
+                            el.check()
+                            filled_count += 1
+                            self.log('info', 'Required Field', 'Pre-submit: checked required opt-in checkbox')
+                    except Exception:
+                        pass
+                for sel in ['input[required]', 'textarea[required]', 'select[required]']:
+                    for el in (form.query_selector_all(sel) or []):
+                        try:
+                            tag = el.evaluate('el => el.tagName.toLowerCase()')
+                            current = (el.evaluate('el => el.value') or '') if tag != 'select' else ''
+                            if tag == 'select':
+                                opts = el.query_selector_all('option')
+                                if not opts or len(opts) < 2:
+                                    continue
+                                selected_val = el.evaluate('el => (el.options[el.selectedIndex] && el.options[el.selectedIndex].value) || ""')
+                                if selected_val and str(selected_val).strip():
+                                    continue
+                            elif current and str(current).strip():
+                                continue
+                            name = (el.get_attribute('name') or '').lower()
+                            elem_id = (el.get_attribute('id') or '').lower()
+                            placeholder = (el.get_attribute('placeholder') or '').lower()
+                            aria = (el.get_attribute('aria-label') or '').lower()
+                            label_text = ''
+                            try:
+                                label_text = (el.evaluate('''el => {
+                                    const id = el.id;
+                                    if (id) {
+                                        const label = document.querySelector('label[for="' + id + '"]');
+                                        if (label) return (label.textContent || '').trim().toLowerCase();
+                                    }
+                                    let p = el.closest('label') || el.parentElement;
+                                    if (p && p.tagName === 'LABEL') return (p.textContent || '').trim().toLowerCase();
+                                    for (let n = el.previousElementSibling; n; n = n.previousElementSibling) {
+                                        if (n.tagName === 'LABEL') return (n.textContent || '').trim().toLowerCase();
+                                        var t = (n.textContent || '').trim().toLowerCase();
+                                        if (t.length >= 2 && t.length <= 60) return t;
+                                    }
+                                    return (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                                }''') or '')
+                            except Exception:
+                                pass
+                            field_hint = f"{name} {elem_id} {placeholder} {aria} {label_text}"
+                            if tag == 'select':
+                                el.select_option(index=1)
+                                filled_count += 1
+                                self.log('info', 'Required Field', 'Pre-submit: filled required select')
+                            elif tag == 'textarea':
+                                if any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
+                                    el.fill(message)
+                                    el.dispatch_event('input')
+                                    el.dispatch_event('change')
+                                    filled_count += 1
+                                    self.log('info', 'Required Field', 'Pre-submit: filled required message textarea')
+                                else:
+                                    el.fill('N/A')
+                                    el.dispatch_event('input')
+                                    el.dispatch_event('change')
+                                    filled_count += 1
+                                    self.log('info', 'Required Field', 'Pre-submit: filled required textarea with N/A')
+                            else:
+                                input_type = (el.get_attribute('type') or 'text').lower()
+                                filled_this = False
+                                if input_type == 'email' or 'email' in field_hint:
+                                    el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
+                                    el.fill(self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0])
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'last_name']):
+                                    lname = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len(self.company.get('contact_person', 'Contact').split()) > 1 else 'Contact')
+                                    el.fill(lname)
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['full name', 'your name', 'name', 'full-name', 'fullname']) and 'company' not in field_hint and 'first' not in field_hint and 'last' not in field_hint:
+                                    el.fill(self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact'))
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['company', 'organization', 'organisation', 'business-name', 'firm']) and 'email' not in field_hint:
+                                    el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'))
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
+                                    phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
+                                    if phone:
+                                        el.fill(phone)
+                                        filled_this = True
+                                elif any(kw in field_hint for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
+                                    el.fill(self.subject)
+                                    filled_this = True
+                                elif any(kw in field_hint for kw in ['country', 'nation', 'region', 'location']):
+                                    el.fill(self.sender_data.get('sender_country') or 'United Kingdom')
+                                    filled_this = True
+                                else:
+                                    # Unknown required text/textarea: use N/A so validation can pass
+                                    if input_type != 'email':
+                                        el.fill('N/A')
+                                        filled_this = True
+                                if filled_this:
+                                    el.dispatch_event('input')
+                                    el.dispatch_event('change')
+                                    filled_count += 1
+                                    self.log('info', 'Required Field', f'Pre-submit: filled required field ({field_hint[:50]})')
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
             # Take screenshot of the filled form (before submit)
             screenshot_url, screenshot_bytes = self.take_screenshot(f'filled_{location}')
 
             # Submit the form after screenshot
             if filled_count > 0:
                 self.submit_form(form)
-                self.page.wait_for_timeout(2000)
+                self.page.wait_for_timeout(1000)
                 # Detect validation failure: form still present and invalid inputs or visible error text
                 try:
                     invalid = form.query_selector_all('input:invalid, textarea:invalid, select:invalid')
@@ -1301,12 +1461,15 @@ class FastCampaignProcessor:
                                         filled_count += 1
                                 elif tag == 'textarea':
                                     current = el.evaluate('el => el.value') or ''
-                                    if not (current and str(current).strip()) and any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
-                                        el.fill(message)
+                                    if not (current and str(current).strip()):
+                                        if any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
+                                            el.fill(message)
+                                        else:
+                                            el.fill('N/A')
                                         el.dispatch_event('input')
                                         el.dispatch_event('change')
                                         filled_count += 1
-                                elif el.get_attribute('type') in ('text', 'email', None):
+                                elif el.get_attribute('type') in ('text', 'email', 'tel', None):
                                     current = el.evaluate('el => el.value') or ''
                                     if not (current and str(current).strip()):
                                         if 'email' in field_hint or el.get_attribute('type') == 'email':
@@ -1332,16 +1495,42 @@ class FastCampaignProcessor:
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
+                                        elif any(kw in field_hint for kw in ['company', 'organization', 'organisation', 'business-name', 'firm']) and 'email' not in field_hint:
+                                            el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'))
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or el.get_attribute('type') == 'tel':
+                                            phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
+                                            if phone:
+                                                el.fill(phone)
+                                                el.dispatch_event('input')
+                                                el.dispatch_event('change')
+                                                filled_count += 1
+                                        elif any(kw in field_hint for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
+                                            el.fill(self.subject)
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['country', 'nation', 'region', 'location']):
+                                            el.fill(self.sender_data.get('sender_country') or 'United Kingdom')
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
                                         elif any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'details', 'body']):
                                             el.fill(message)
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
-                                        # Do NOT fill unknown fields with "General enquiry" — avoids overwriting name fields when label was wrong
+                                        elif el.get_attribute('type') != 'email':
+                                            el.fill('N/A')
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
                             except Exception:
                                 pass
                         self.submit_form(form)
-                        self.page.wait_for_timeout(2000)
+                        self.page.wait_for_timeout(1000)
                 except Exception:
                     pass
             
