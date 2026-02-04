@@ -127,12 +127,12 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             companies = Company.query.filter(
                 Company.id.in_(company_ids),
                 Company.campaign_id == campaign_id
-            ).all()
+            ).order_by(Company.id).all()
         else:
             companies = Company.query.filter_by(
                 campaign_id=campaign_id,
                 status='pending'
-            ).all()
+            ).order_by(Company.id).all()
 
         if not companies:
             campaign.status = 'completed'
@@ -160,6 +160,15 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             }
         })
 
+        # Mark first company as processing immediately so UI shows "Processing" right after Start
+        first = companies[0]
+        first.status = 'processing'
+        db.session.commit()
+        ws_manager.broadcast_event(campaign_id, {
+            'type': 'company_processing',
+            'data': {'company_id': first.id, 'company_name': getattr(first, 'company_name', '')}
+        })
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
             context = browser.new_context()
@@ -180,14 +189,18 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                 page.set_default_timeout(25000)
                 page.set_default_navigation_timeout(30000)
 
+                # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
+                _company_id = company.id
+                _company_name = getattr(company, 'company_name', '') or ''
+
                 def live_logger(level, action, message):
                     print(f"[{level}] {action}: {message}")
                     user_msg = _user_friendly_message(level, action, message)
                     ws_manager.broadcast_event(campaign_id, {
                         'type': 'activity',
                         'data': {
-                            'company_id': company.id,
-                            'company_name': company.company_name,
+                            'company_id': _company_id,
+                            'company_name': _company_name,
                             'level': level,
                             'action': action,
                             'message': message,
@@ -198,37 +211,22 @@ def process_campaign_sequential(campaign_id, company_ids=None):
 
                 try:
                     result = None
-                    result_holder = []
+                    company_data = company.to_dict()
+                    processor = FastCampaignProcessor(
+                        page=page,
+                        company_data=company_data,
+                        message_template=message_template_str,
+                        campaign_id=campaign_id,
+                        company_id=_company_id,
+                        logger=live_logger,
+                        subject=subject_str,
+                        sender_data=sender_data
+                    )
+                    result = processor.process_company()
+                except Exception as e:
+                    result = {'success': False, 'error': str(e), 'method': 'error'}
 
-                    def run_processor():
-                        try:
-                            processor = FastCampaignProcessor(
-                                page=page,
-                                company_data=company.to_dict(),
-                                message_template=message_template_str,
-                                campaign_id=campaign_id,
-                                company_id=company.id,
-                                logger=live_logger,
-                                subject=subject_str,
-                                sender_data=sender_data
-                            )
-                            result_holder.append(processor.process_company())
-                        except Exception as e:
-                            result_holder.append({'success': False, 'error': str(e), 'method': 'error'})
-
-                    import threading
-                    thread = threading.Thread(target=run_processor, daemon=True)
-                    thread.start()
-                    thread.join(timeout=90)
-                    if thread.is_alive():
-                        live_logger('error', 'Timeout', 'Processing timed out after 90s')
-                        company.status = 'failed'
-                        company.error_message = 'Processing timed out. Try again or skip.'
-                        company.contact_method = 'timeout'
-                        result = None
-                    else:
-                        result = result_holder[0] if result_holder else None
-
+                try:
                     if result is not None:
                         if result.get('success'):
                             method = result.get('method', '')
@@ -236,7 +234,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 company.status = 'contact_info_found'
                             else:
                                 company.status = 'completed'
-                            company.contact_method = method
+                            company.contact_method = (method or '')[:20]
                             company.fields_filled = result.get('fields_filled', 0)
                             company.error_message = None
                         else:
@@ -251,58 +249,43 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 company.status = 'failed'
                                 if method == 'error':
                                     print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
-                            company.contact_method = result.get('method')
+                            company.contact_method = (result.get('method') or '')[:20]
                             if company.status == 'failed':
                                 company.error_message = _user_facing_error(result.get('error'))
-
-                        if result is not None:
-                            screenshot_bytes = result.get('screenshot_bytes')
-                            if not screenshot_bytes and result.get('screenshot_url'):
-                                local_path = result.get('screenshot_url')
-                                try:
-                                    path_part = local_path.lstrip('/').replace('/', os.sep)
-                                    roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
-                                    for root in roots:
-                                        candidate = os.path.join(root, path_part)
-                                        if os.path.exists(candidate):
-                                            with open(candidate, 'rb') as f:
-                                                screenshot_bytes = f.read()
-                                            try:
-                                                os.remove(candidate)
-                                            except OSError:
-                                                pass
-                                            break
-                                except Exception as e:
-                                    print(f"[WARN] Screenshot file read error: {e}")
-                            if screenshot_bytes:
-                                try:
-                                    sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                    if sb_url:
-                                        company.screenshot_url = sb_url
-                                except Exception as e:
-                                    print(f"[WARN] Screenshot upload error: {e}")
-                            # Fallback: exception in processor returns method='error' with no screenshot; capture current page
-                            if not company.screenshot_url and result.get('method') == 'error':
-                                try:
-                                    fb_bytes = page.screenshot()
-                                    if fb_bytes:
-                                        sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
-                                        if sb_url:
-                                            company.screenshot_url = sb_url
-                                except Exception as e:
-                                    print(f"[WARN] Fallback screenshot error: {e}")
-
-                    # When thread timed out (result is None), try to capture current page as screenshot
-                    if result is None and not company.screenshot_url:
-                        try:
-                            fb_bytes = page.screenshot()
-                            if fb_bytes:
-                                sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                        screenshot_bytes = result.get('screenshot_bytes')
+                        if not screenshot_bytes and result.get('screenshot_url'):
+                            local_path = result.get('screenshot_url')
+                            try:
+                                path_part = local_path.lstrip('/').replace('/', os.sep)
+                                roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
+                                for root in roots:
+                                    candidate = os.path.join(root, path_part)
+                                    if os.path.exists(candidate):
+                                        with open(candidate, 'rb') as f:
+                                            screenshot_bytes = f.read()
+                                        try:
+                                            os.remove(candidate)
+                                        except OSError:
+                                            pass
+                                        break
+                            except Exception as e:
+                                print(f"[WARN] Screenshot file read error: {e}")
+                        if screenshot_bytes:
+                            try:
+                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
                                 if sb_url:
                                     company.screenshot_url = sb_url
-                        except Exception as e:
-                            print(f"[WARN] Timeout fallback screenshot error: {e}")
-
+                            except Exception as e:
+                                print(f"[WARN] Screenshot upload error: {e}")
+                        if not company.screenshot_url and result.get('method') == 'error':
+                            try:
+                                fb_bytes = page.screenshot()
+                                if fb_bytes:
+                                    sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                    if sb_url:
+                                        company.screenshot_url = sb_url
+                            except Exception as e:
+                                print(f"[WARN] Fallback screenshot error: {e}")
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
                     campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
@@ -315,11 +298,10 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         'data': {
                             'company_id': company.id,
                             'status': company.status,
-                            'screenshot_url': company.screenshot_url,
+                            'screenshot_url': getattr(company, 'screenshot_url', None),
                             'progress': int((idx + 1) / len(companies) * 100)
                         }
                     })
-
                 except Exception as e:
                     live_logger('error', 'Execution Error', str(e))
                     company.status = 'failed'

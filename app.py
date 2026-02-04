@@ -54,6 +54,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+# Load .env so DATABASE_URL / SUPABASE_DATABASE_URL are set when running locally
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(current_dir, ".env"))
+except ImportError:
+    pass
+
 # Import database and auth modules
 print("[LOAD] Importing modules...")
 try:
@@ -103,6 +110,27 @@ def health_check():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
+@app.route("/env-check", methods=["GET"])
+def env_check():
+    """Safe check for deployment: database type only (no secrets). Use to verify Railway env."""
+    try:
+        uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+        if uri.startswith("sqlite"):
+            database = "sqlite"
+            ok = False
+        else:
+            database = "postgres"
+            ok = True
+        return jsonify({
+            "ok": ok,
+            "database": database,
+            "message": "Use Postgres in production (set SUPABASE_DATABASE_URL or DATABASE_URL)." if not ok else "Database env looks good.",
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "database": "unknown", "message": str(e)}), 500
+
+
 # Import blueprints with error handling (non-critical for health endpoint)
 print("[LOAD] Importing blueprints...")
 try:
@@ -125,6 +153,20 @@ try:
 except Exception as e:
     print(f"[WARN] Failed to import admin_api: {e}")
     admin_api = None
+
+try:
+    from api.admin.backup_routes import backup_admin_api
+    print("[OK] backup_admin_api imported")
+except Exception as e:
+    print(f"[WARN] Failed to import backup_admin_api: {e}")
+    backup_admin_api = None
+
+try:
+    from api.admin.ad_service_routes import ad_service_admin_api
+    print("[OK] ad_service_admin_api imported")
+except Exception as e:
+    print(f"[WARN] Failed to import ad_service_admin_api: {e}")
+    ad_service_admin_api = None
 
 try:
     from api.client.routes import client_api
@@ -5198,7 +5240,12 @@ atexit.register(cleanup_all_processes)
 
 if __name__ == "__main__":
     print("[START] Starting Flask application...")
-    print(f"[INFO] Database URL: {os.getenv('DATABASE_URL', 'sqlite:///trevnoctilla_api.db')}")
+    db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if db_uri.startswith("sqlite"):
+        print(f"[INFO] Database: SQLite")
+    else:
+        masked = db_uri.split("@")[-1] if "@" in db_uri else db_uri[:50]
+        print(f"[INFO] Database: PostgreSQL ...@{masked}")
     print(f"[KEY] Secrets derived from SUPABASE_SERVICE_ROLE_KEY: {bool(os.getenv('SUPABASE_SERVICE_ROLE_KEY'))}")
     
     # Database is already initialized above

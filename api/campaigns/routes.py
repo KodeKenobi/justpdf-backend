@@ -949,20 +949,35 @@ def rapid_process_batch(campaign_id):
             }), 403
             
         # Trigger background processing via threading instead of Celery (Option 2)
-        from flask import current_app
-        # We need to capture the current app context to pass it to the thread
-        app = current_app._get_current_object()
-        
-        def run_in_background(app_context, campaign_id, company_ids):
-            with app_context.app_context():
+        # Thread must run with Flask app context so db.session works. Get app from the
+        # module where it is created (not current_app) so the background thread has a
+        # valid application context and avoids "Working outside of application context".
+        def run_in_background(campaign_id_arg, company_ids_arg):
+            # Use app from the module where it is created so the thread has a valid app context
+            # (current_app in the thread has no context and causes "Working outside of application context")
+            import sys
+            flask_app = None
+            if 'app' in sys.modules:
+                flask_app = getattr(sys.modules['app'], 'app', None)
+            if flask_app is None:
                 try:
-                    process_campaign_sequential(campaign_id, company_ids)
+                    from app import app as flask_app
+                except ImportError:
+                    pass
+            if flask_app is None:
+                print("[Rapid Process] Cannot get Flask app for background thread; skipping.")
+                return
+            with flask_app.app_context():
+                try:
+                    process_campaign_sequential(campaign_id_arg, company_ids_arg)
                 except Exception as e:
                     print(f"Background thread error: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         thread = threading.Thread(
             target=run_in_background,
-            args=(app, campaign_id, company_ids)
+            args=(campaign_id, company_ids)
         )
         thread.daemon = True
         thread.start()
@@ -974,7 +989,9 @@ def rapid_process_batch(campaign_id):
         }), 202
 
     except Exception as e:
-        print(f"Error triggering batch: {e}")
+        print(f"[Rapid Process] Error triggering batch: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @campaigns_api.route('/<int:campaign_id>/stop', methods=['POST'])

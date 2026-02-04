@@ -121,24 +121,58 @@ class FastCampaignProcessor:
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
-            
-            # STRATEGY 1: Check homepage for forms FIRST — only treat as contact form if it has 2+ fillable fields (skip newsletter/search)
-            self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
-            homepage_forms = self.page.query_selector_all('form')
-            
-            if homepage_forms:
-                contact_like_count = self._count_contact_like_fields(homepage_forms[0])
-                if contact_like_count >= 2:
-                    self.log('success', 'Form Detection', f'Found contact-like form on homepage ({contact_like_count} fillable fields)')
-                    form_result = self.fill_and_submit_form(homepage_forms[0], 'homepage')
-                    if form_result['success']:
-                        result.update(form_result)
-                        result['method'] = 'form_submitted_homepage'
-                        self.found_form = True
-                        self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_homepage'))
-                        return result
-                else:
-                    self.log('info', 'Strategy 1', f'Skipping homepage form (only {contact_like_count} fillable field(s) — likely newsletter/search)')
+
+            # FETCH-FIRST: Scroll full page so below-fold content (e.g. contact form) is in DOM, then scan ALL forms
+            self.log('info', 'Fetch-first', 'Scrolling page to load full content (like Cursor fetch)...')
+            try:
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                self.page.wait_for_timeout(1500)
+                self.page.evaluate("window.scrollTo(0, 0)")
+                self.page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+            # STRATEGY 1: Check ALL forms on current page (not just the first) — contact form may be 2nd or below fold
+            self.log('info', 'Strategy 1', 'Scanning all forms on page (fetch-first)...')
+            all_forms = self.page.query_selector_all('form')
+            if all_forms:
+                for idx in range(len(all_forms)):
+                    try:
+                        form_el = all_forms[idx]
+                        contact_like_count = self._count_contact_like_fields(form_el)
+                        if contact_like_count < 2:
+                            continue
+                        self.log('info', 'Strategy 1', f'Form {idx + 1}/{len(all_forms)} has {contact_like_count} fillable fields; scrolling into view and trying...')
+                        try:
+                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=5000)
+                            self.page.wait_for_timeout(800)
+                        except Exception:
+                            pass
+                        # Re-get form after scroll (handles may go stale)
+                        forms_after = self.page.query_selector_all('form')
+                        if idx < len(forms_after):
+                            form_result = self.fill_and_submit_form(forms_after[idx], 'homepage')
+                            if form_result['success']:
+                                self.log('success', 'Form Detection', f'Filled form {idx + 1} on page ({contact_like_count} fields)')
+                                result.update(form_result)
+                                result['method'] = 'form_submitted_homepage'
+                                self.found_form = True
+                                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_homepage'))
+                                return result
+                    except Exception as e:
+                        self.log('warning', 'Strategy 1', f'Form {idx + 1} failed: {e}')
+                        continue
+                self.log('info', 'Strategy 1', f'No form with 2+ fillable fields succeeded among {len(all_forms)} form(s)')
+
+            # STRATEGY 1b: No <form> tag? Scan page for input/textarea (contact form may be div-based)
+            self.log('info', 'Strategy 1b', 'Checking for inputs/textareas on page (no form tag)...')
+            heuristics_result = self.search_by_heuristics()
+            if heuristics_result['success']:
+                result.update(heuristics_result)
+                result['method'] = 'form_submitted_homepage_heuristics'
+                self.found_form = True
+                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), heuristics_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_homepage_heuristics'))
+                return result
             
             # STRATEGY 2: Find contact link and navigate (footer first — contact links are almost always in footer)
             self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link (footer first)...')
@@ -149,44 +183,88 @@ class FastCampaignProcessor:
             
             contact_link = None
             try:
-                links = []
+                # Collect (href, text) from footer/selector while still on homepage so we don't hold stale handles after navigation
+                candidates = []
                 footer_containers = self.page.query_selector_all('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer')
                 for footer_el in (footer_containers or []):
                     try:
                         footer_links = footer_el.query_selector_all('a[href]')
                         for link in (footer_links or []):
-                            href = link.get_attribute('href')
-                            text = (link.inner_text() or '').strip().lower()
-                            if not href or href.startswith('mailto:') or href.startswith('tel:'):
-                                continue
-                            if any(kw in (href or '').lower() or kw in text for kw in contact_keywords):
-                                links.append(link)
+                            try:
+                                href = link.get_attribute('href')
+                                text = (link.inner_text() or '').strip().lower()
+                                if not href or href.startswith('mailto:') or href.startswith('tel:'):
+                                    continue
+                                if any(kw in (href or '').lower() or kw in text for kw in contact_keywords):
+                                    candidates.append((href, text))
+                            except Exception:
+                                pass
                     except Exception:
                         pass
-                if not links:
-                    links = self.page.query_selector_all(selector)
-                self.log('info', 'Discovery', f'Found {len(links)} potential contact links (footer-first)')
-                
-                for i, link in enumerate(links[:5]):
-                    href = link.get_attribute('href')
-                    text = (link.inner_text() or '').strip().lower()
+                if not candidates:
+                    fallback_links = self.page.query_selector_all(selector)
+                    for link in (fallback_links or []):
+                        try:
+                            href = link.get_attribute('href')
+                            text = (link.inner_text() or '').strip().lower()
+                            if href and not href.startswith('mailto:') and not href.startswith('tel:'):
+                                candidates.append((href, text))
+                        except Exception:
+                            pass
+                # Dedupe by normalized href (keep first)
+                seen = set()
+                unique = []
+                for href, text in candidates:
+                    h = (href or '').strip().lower()
+                    if h and h not in seen:
+                        seen.add(h)
+                        unique.append((href, text))
+                # Prioritize: "contact" / "get-in-touch" / "enquiry" first; "support" / "about-us" last (so we don't open "fire-rated fixings & support" instead of Contact)
+                def contact_priority(item):
+                    href, text = item
+                    h, t = (href or '').lower(), (text or '').lower()
+                    if 'contact' in h or 'contact' in t or 'get in touch' in t or 'get-in-touch' in h:
+                        return 0
+                    if 'enquiry' in h or 'enquiry' in t or 'inquiry' in h or 'inquiry' in t:
+                        return 1
+                    if 'support' in h or 'support' in t:
+                        return 2
+                    if 'about-us' in h or 'about-us' in t or 'about us' in t:
+                        return 3
+                    return 2
+                unique.sort(key=contact_priority)
+                self.log('info', 'Discovery', f'Found {len(unique)} potential contact links (contact/enquiry first, support last)')
+
+                for i, (href, text) in enumerate(unique[:5]):
                     if not href:
                         continue
-                    matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in text), None)
+                    matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in (text or '')), None)
                     self._contact_keyword_used = matched_kw
                     full_href = self.make_absolute_url(href)
-                    self.log('info', 'Testing Link', f'Link {i+1}: {text} ({href})')
+                    self.log('info', 'Testing Link', f'Link {i+1}: {text or "(no text)"} ({href})')
                     try:
-                        self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000)
-                        self.handle_cookie_modal()
-                        self.page.wait_for_timeout(800)
-                        self.handle_cookie_modal()
-                        self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
-                        self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        self.page.wait_for_timeout(1500)
-                        self.page.evaluate("window.scrollTo(0, 0)")
-                        self.page.wait_for_timeout(1000)
-                        self.handle_cookie_modal()
+                        # Same-page anchor (#contact, #contact-us): scroll to it, don't goto
+                        if (href or '').strip().startswith('#'):
+                            anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
+                            self.log('info', 'Contact Page', f'Scrolling to same-page anchor #{anchor_id}...')
+                            try:
+                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=5000)
+                                self.page.wait_for_timeout(1500)
+                            except Exception:
+                                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                                self.page.wait_for_timeout(1500)
+                            self.handle_cookie_modal()
+                        else:
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000)
+                            self.handle_cookie_modal()
+                            self.page.wait_for_timeout(800)
+                            self.handle_cookie_modal()
+                            self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
+                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            self.page.wait_for_timeout(1500)
+                            self.page.evaluate("window.scrollTo(0, 0)")
+                            self.page.wait_for_timeout(1000)
+                            self.handle_cookie_modal()
                         try:
                             self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=15000)
                             self.page.wait_for_timeout(2000)
@@ -195,15 +273,25 @@ class FastCampaignProcessor:
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
-                            form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
-                            if form_result['success']:
-                                result.update(form_result)
-                                result['method'] = 'form_submitted_contact_page'
-                                self.found_form = True
-                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
-                                return result
-                            else:
-                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
+                            for form_idx in range(len(contact_page_forms)):
+                                if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
+                                    continue
+                                try:
+                                    self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=3000)
+                                    self.page.wait_for_timeout(500)
+                                except Exception:
+                                    pass
+                                forms_refresh = self.page.query_selector_all('form')
+                                if form_idx < len(forms_refresh):
+                                    form_result = self.fill_and_submit_form(forms_refresh[form_idx], 'contact_page')
+                                    if form_result['success']:
+                                        result.update(form_result)
+                                        result['method'] = 'form_submitted_contact_page'
+                                        self.found_form = True
+                                        self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
+                                        return result
+                                    self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
+                            continue  # No form succeeded on this link, try next
                         else:
                             self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
                             contact_info = self.extract_contact_info()
@@ -484,8 +572,8 @@ class FastCampaignProcessor:
         try:
             contact_info = {}
             
-            # Extract emails
-            page_text = self.page.text_content() or ''
+            # Extract emails (Page.text_content requires selector; use body)
+            page_text = (self.page.locator('body').text_content() or '')
             email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
             emails = re.findall(email_pattern, page_text)
             
@@ -508,8 +596,224 @@ class FastCampaignProcessor:
             self.log('error', 'Contact Info Extraction', str(e))
             return None
 
+    def _extract_form_fields(self, form) -> List[Dict]:
+        """Extract field list from the current form (same shape as extract-contact-form-fields.js). One website at a time: extract then fill."""
+        out = []
+        try:
+            inputs = form.query_selector_all('input, textarea')
+            for el in (inputs or []):
+                try:
+                    itype = (el.get_attribute('type') or 'text').lower()
+                    if itype in ('hidden', 'submit', 'button', 'image'):
+                        continue
+                    name = el.get_attribute('name')
+                    id_ = el.get_attribute('id')
+                    placeholder = el.get_attribute('placeholder')
+                    tag = el.evaluate('el => el.tagName.toLowerCase()') or 'input'
+                    label = ''
+                    try:
+                        label = (el.evaluate('''el => {
+                            const id = el.id;
+                            if (id) { const l = document.querySelector('label[for="' + id + '"]'); if (l) return (l.textContent || '').trim(); }
+                            const p = el.closest('label') || el.previousElementSibling;
+                            if (p && (p.tagName === 'LABEL' || p.textContent)) return (p.textContent || '').trim();
+                            return el.getAttribute('aria-label') || '';
+                        }''') or '')
+                    except Exception:
+                        pass
+                    out.append({'tag': tag, 'type': itype, 'name': name, 'id': id_, 'placeholder': placeholder, 'label': label})
+                except Exception:
+                    continue
+            selects = form.query_selector_all('select')
+            for el in (selects or []):
+                try:
+                    name = el.get_attribute('name')
+                    id_ = el.get_attribute('id')
+                    label = ''
+                    try:
+                        label = (el.evaluate('''el => {
+                            const id = el.id;
+                            if (id) { const l = document.querySelector('label[for="' + id + '"]'); if (l) return (l.textContent || '').trim(); }
+                            const p = el.previousElementSibling; return p ? (p.textContent || '').trim() : (el.getAttribute('aria-label') || '');
+                        }''') or '')
+                    except Exception:
+                        pass
+                    options = []
+                    for opt in (el.query_selector_all('option') or []):
+                        try:
+                            options.append({'value': opt.get_attribute('value'), 'text': (opt.inner_text() or '').strip()})
+                        except Exception:
+                            pass
+                    out.append({'tag': 'select', 'type': 'select', 'name': name, 'id': id_, 'label': label, 'options': options})
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return out
+
+    def _fill_using_field_list(self, form, field_list: List[Dict]) -> Tuple[int, List[Dict]]:
+        """Fill form using extracted field list (extract on this website, then fill). Returns (filled_count, filled_field_patterns)."""
+        filled_count = 0
+        filled_field_patterns = []
+        if not field_list or not isinstance(field_list, list):
+            return 0, []
+        message = self.replace_variables(self.message_body)
+        email_val = self.sender_data.get('sender_email') or self.company.get('contact_email', 'contact@business.com')
+        fname_val = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
+        lname_val = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len((self.company.get('contact_person') or 'Contact').split()) > 1 else 'Contact')
+        fullname_val = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
+        company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
+        phone_val = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number') or ''
+        subject_val = self.subject
+        country_val = self.sender_data.get('sender_country') or 'United Kingdom'
+
+        def field_hint(f):
+            name = (f.get('name') or '').lower()
+            label = (f.get('label') or '').lower()
+            placeholder = (f.get('placeholder') or '').lower()
+            return f"{name} {label} {placeholder}"
+
+        for field in field_list:
+            tag = (field.get('tag') or 'input').lower()
+            ftype = (field.get('type') or 'text').lower()
+            name = field.get('name')
+            id_ = field.get('id')
+            if not name and not id_:
+                continue
+            hint = field_hint(field)
+            try:
+                name_safe = (name or '').replace('\\', '\\\\').replace('"', '\\"')
+                id_safe = (id_ or '').replace('\\', '\\\\').replace('"', '\\"')
+                if tag == 'select':
+                    sel = f'select[name="{name_safe}"]' if name else f'select[id="{id_safe}"]'
+                else:
+                    sel = f'{tag}[name="{name_safe}"]' if name else f'{tag}[id="{id_safe}"]'
+                el = form.locator(sel).first
+                if not el.count():
+                    continue
+                if not el.is_visible():
+                    continue
+            except Exception:
+                continue
+
+            filled_this = False
+            if ftype == 'email' or 'email' in hint or 'e-mail' in hint:
+                try:
+                    el.fill(email_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'email', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Email -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
+                try:
+                    el.fill(fname_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'first_name', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'First name -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['last name', 'last-name', 'lname', 'lastname', 'last_name']):
+                try:
+                    el.fill(lname_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'last_name', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Last name -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['full name', 'your name', 'name']) and 'company' not in hint and 'first' not in hint and 'last' not in hint:
+                try:
+                    el.fill(fullname_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'full_name', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Full name -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['company', 'organization', 'business']) and 'email' not in hint:
+                try:
+                    el.fill(company_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'company', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Company -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and (ftype == 'tel' or 'phone' in hint or 'tel' in hint) and phone_val:
+                try:
+                    el.fill(phone_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'phone', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Phone -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['subject', 'topic', 'reason']):
+                try:
+                    el.fill(subject_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'subject', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Subject -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and any(k in hint for k in ['country', 'nation', 'region']) and tag != 'select':
+                try:
+                    el.fill(country_val)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Country -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and (tag == 'textarea' or any(k in hint for k in ['message', 'comment', 'inquiry', 'details', 'body'])):
+                try:
+                    el.fill(message)
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'message', 'name': name or '', 'label': field.get('label') or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Message -> {name or id_}')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and tag == 'select' and any(k in hint for k in ['country', 'nation', 'region']):
+                try:
+                    opts = field.get('options') or []
+                    for o in opts:
+                        v = o.get('value') or o.get('text') or ''
+                        if v and 'united' in v.lower():
+                            el.select_option(value=v) if o.get('value') else el.select_option(label=v)
+                            filled_count += 1
+                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
+                            self.log('info', 'Field Filled (mapped)', f'Country select -> {name or id_}')
+                            break
+                except Exception:
+                    pass
+
+        return filled_count, filled_field_patterns
+
     def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False, frame=None) -> Dict:
-        """Fill and submit form with smart field detection"""
+        """Fill and submit form with smart field detection. Uses pre-extracted field_mappings when present (intelligent fill)."""
         try:
             context_name = "iframe" if is_iframe else ("heuristic" if is_heuristic else "standard")
             self.log('info', 'Form Filling', f'Starting {context_name} fill on {location}')
@@ -523,11 +827,31 @@ class FastCampaignProcessor:
                     'method': 'form_with_captcha'
                 }
             
-            # Get all inputs, textareas, and selects
+            # Per company: extract form fields on this page, then fill (one website at a time: extract → fill)
+            extracted = self._extract_form_fields(form)
+            if extracted:
+                self.log('info', 'Form Filling', f'Extracted {len(extracted)} fields from this form; filling by mapping')
+                filled_count, filled_field_patterns = self._fill_using_field_list(form, extracted)
+                if filled_count >= 2:
+                    if self.submit_form(form):
+                        self.page.wait_for_timeout(2000)
+                    path, screenshot_bytes = self.take_screenshot('form_filled')
+                    self.log('success', 'Form Processed', f'Filled {filled_count} fields (extract-then-fill) and submitted')
+                    return {
+                        'success': True,
+                        'method': 'form_filled',
+                        'fields_filled': filled_count,
+                        'screenshot_url': path,
+                        'screenshot_bytes': screenshot_bytes,
+                        'filled_field_patterns': filled_field_patterns,
+                    }
+                elif filled_count == 1:
+                    self.log('warning', 'Form Partial', 'Only one field filled from extract; falling back to discovery')
+
+            # Fallback: fill by iterating inputs (when extract-then-fill did not get enough)
+            filled_count = 0
             inputs = form.query_selector_all('input, textarea')
             selects = form.query_selector_all('select')
-            
-            filled_count = 0
             email_filled = False
             message_filled = False
             filled_field_patterns = []  # For mandatory brain recording: role, name, label per filled field

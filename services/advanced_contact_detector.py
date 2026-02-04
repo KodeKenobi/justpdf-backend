@@ -198,8 +198,8 @@ class AdvancedContactDetector:
         try:
             contact_info = {}
 
-            # Extract email addresses using regex
-            page_text = self.page.text_content()
+            # Extract email addresses using regex (Page.text_content requires selector; use body)
+            page_text = (self.page.locator('body').text_content() or '')
             email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
             emails = re.findall(email_pattern, page_text)
 
@@ -498,7 +498,7 @@ class AdvancedContactDetector:
                         'message received', 'inquiry submitted', 'form submitted'
                     ]
 
-                    page_text = self.page.text_content().lower()
+                    page_text = (self.page.locator('body').text_content() or '').lower()
                     if any(indicator in page_text for indicator in success_indicators):
                         return True
 
