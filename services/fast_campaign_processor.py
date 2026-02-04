@@ -106,8 +106,12 @@ class FastCampaignProcessor:
                 self.log('error', 'Malformed URL', f'The URL "{website_url}" is invalid. Please ensure it starts with http/https and has a valid domain (e.g. .com, .co.uk)')
                 result['error'] = f'Malformed URL: {website_url}'
                 result['method'] = 'invalid_url'
+                self._record_brain_mandatory(None, [], False, 'invalid_url')
                 return result
 
+            # Track contact keyword when we follow a link (for mandatory brain recording)
+            self._contact_keyword_used = None
+            
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
@@ -118,24 +122,26 @@ class FastCampaignProcessor:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
             
-            # STRATEGY 1: Check homepage for forms FIRST (fastest)
+            # STRATEGY 1: Check homepage for forms FIRST — only treat as contact form if it has 2+ fillable fields (skip newsletter/search)
             self.log('info', 'Strategy 1', 'Checking homepage for forms - fastest method')
             homepage_forms = self.page.query_selector_all('form')
             
             if homepage_forms:
-                self.log('success', 'Form Detection', f'Found {len(homepage_forms)} form(s) on homepage')
-                
-                # Try to fill and submit first form
-                form_result = self.fill_and_submit_form(homepage_forms[0], 'homepage')
-                if form_result['success']:
-                    result.update(form_result)
-                    result['method'] = 'form_submitted_homepage'
-                    self.found_form = True
-                    _brain_record_event('outcome', 'form_submitted', metadata={'location': 'homepage'})
-                    return result  # EARLY EXIT - found and submitted form
+                contact_like_count = self._count_contact_like_fields(homepage_forms[0])
+                if contact_like_count >= 2:
+                    self.log('success', 'Form Detection', f'Found contact-like form on homepage ({contact_like_count} fillable fields)')
+                    form_result = self.fill_and_submit_form(homepage_forms[0], 'homepage')
+                    if form_result['success']:
+                        result.update(form_result)
+                        result['method'] = 'form_submitted_homepage'
+                        self.found_form = True
+                        self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_homepage'))
+                        return result
+                else:
+                    self.log('info', 'Strategy 1', f'Skipping homepage form (only {contact_like_count} fillable field(s) — likely newsletter/search)')
             
-            # STRATEGY 2: Find contact link and navigate (many sites have emails only on contact/about pages)
-            self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link...')
+            # STRATEGY 2: Find contact link and navigate (footer first — contact links are almost always in footer)
+            self.log('info', 'Strategy 2', 'No form on homepage, searching for contact link (footer first)...')
             contact_keywords = _brain_get_keywords('contact_keyword', ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us'])
             self.log('info', 'Discovery', 'Strategy 2: Searching for contact links')
             selector = ', '.join([f'a[href*="{kw}"]' for kw in contact_keywords]) + ', ' + \
@@ -143,8 +149,23 @@ class FastCampaignProcessor:
             
             contact_link = None
             try:
-                links = self.page.query_selector_all(selector)
-                self.log('info', 'Discovery', f'Found {len(links)} potential contact links')
+                links = []
+                footer_containers = self.page.query_selector_all('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer')
+                for footer_el in (footer_containers or []):
+                    try:
+                        footer_links = footer_el.query_selector_all('a[href]')
+                        for link in (footer_links or []):
+                            href = link.get_attribute('href')
+                            text = (link.inner_text() or '').strip().lower()
+                            if not href or href.startswith('mailto:') or href.startswith('tel:'):
+                                continue
+                            if any(kw in (href or '').lower() or kw in text for kw in contact_keywords):
+                                links.append(link)
+                    except Exception:
+                        pass
+                if not links:
+                    links = self.page.query_selector_all(selector)
+                self.log('info', 'Discovery', f'Found {len(links)} potential contact links (footer-first)')
                 
                 for i, link in enumerate(links[:5]):
                     href = link.get_attribute('href')
@@ -152,16 +173,20 @@ class FastCampaignProcessor:
                     if not href:
                         continue
                     matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in text), None)
+                    self._contact_keyword_used = matched_kw
                     full_href = self.make_absolute_url(href)
                     self.log('info', 'Testing Link', f'Link {i+1}: {text} ({href})')
                     try:
                         self.page.goto(full_href, wait_until='domcontentloaded', timeout=30000)
+                        self.handle_cookie_modal()
+                        self.page.wait_for_timeout(800)
                         self.handle_cookie_modal()
                         self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
                         self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                         self.page.wait_for_timeout(1500)
                         self.page.evaluate("window.scrollTo(0, 0)")
                         self.page.wait_for_timeout(1000)
+                        self.handle_cookie_modal()
                         try:
                             self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=15000)
                             self.page.wait_for_timeout(2000)
@@ -170,23 +195,20 @@ class FastCampaignProcessor:
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
-                            if matched_kw:
-                                _brain_record_pattern('contact_keyword', matched_kw, success=True)
-                            _brain_record_event('contact_page', 'form_found', pattern_value=matched_kw, metadata={'forms': len(contact_page_forms)})
                             form_result = self.fill_and_submit_form(contact_page_forms[0], 'contact_page')
                             if form_result['success']:
                                 result.update(form_result)
                                 result['method'] = 'form_submitted_contact_page'
                                 self.found_form = True
+                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
                                 return result
+                            else:
+                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
                         else:
                             self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
                             contact_info = self.extract_contact_info()
                             if contact_info and contact_info.get('emails'):
                                 self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
-                                if matched_kw:
-                                    _brain_record_pattern('contact_keyword', matched_kw, success=True)
-                                _brain_record_event('contact_page', 'email_sent', pattern_value=matched_kw, metadata={'emails': len(contact_info['emails'])})
                                 email_sent = self.send_email_to_contact(contact_info['emails'][0])
                                 if email_sent:
                                     path, screenshot_bytes = self.take_screenshot('email_sent')
@@ -197,13 +219,12 @@ class FastCampaignProcessor:
                                         'screenshot_url': path,
                                         'screenshot_bytes': screenshot_bytes,
                                     })
+                                    self._record_brain_mandatory(self._contact_keyword_used, [], True, 'email_sent')
                                     return result
-                            if matched_kw:
-                                _brain_record_pattern('contact_keyword', matched_kw, success=False)
+                            self._record_brain_mandatory(matched_kw, [], False, 'contact_page_no_form')
                     except Exception as e:
                         self.log('warn', 'Link Failed', f'Could not open {full_href}: {str(e)}')
-                        if matched_kw:
-                            _brain_record_pattern('contact_keyword', matched_kw, success=False)
+                        self._record_brain_mandatory(self._contact_keyword_used, [], False, 'link_failed')
                         continue
             except Exception as e:
                 self.log('error', 'Strategy 2 Error', str(e))
@@ -231,6 +252,7 @@ class FastCampaignProcessor:
                             if form_result['success']:
                                 result.update(form_result)
                                 result['method'] = 'form_submitted_iframe_heuristic'
+                                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_iframe_heuristic'))
                                 return result
                     
                     if frame_forms:
@@ -239,6 +261,7 @@ class FastCampaignProcessor:
                         if form_result['success']:
                             result.update(form_result)
                             result['method'] = 'form_submitted_iframe'
+                            self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_iframe'))
                             return result
                 except Exception as e: 
                     self.log('warning', 'Frame Check Failed', f'Error checking frame {idx}: {str(e)}')
@@ -250,6 +273,7 @@ class FastCampaignProcessor:
             if heuristics_result['success']:
                 result.update(heuristics_result)
                 result['method'] = 'form_submitted_heuristics'
+                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), heuristics_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_heuristics'))
                 return result
 
             # Last resort: email-only on current page (no form but may have visible emails)
@@ -267,12 +291,13 @@ class FastCampaignProcessor:
                         'screenshot_url': path,
                         'screenshot_bytes': screenshot_bytes,
                     })
+                    self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], True, 'email_sent')
                     return result
 
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
             result['error'] = f'No discovery method succeeded for {website_url}'
-            _brain_record_event('outcome', 'no_contact_found', metadata={'strategies': 4})
+            self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], False, 'no_contact_found')
             
             # Log page source on discovery failure
             _path, _bytes = self.take_screenshot('failed_discovery')
@@ -291,8 +316,26 @@ class FastCampaignProcessor:
             _path, _bytes = self.take_screenshot('error_processing')
             result['screenshot_url'] = _path
             result['screenshot_bytes'] = _bytes
+            self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], False, 'error_processing')
         
         return result
+
+    def _count_contact_like_fields(self, form) -> int:
+        """Count inputs/selects that look like contact form fields (not hidden/submit/button). Used to skip newsletter/search forms."""
+        try:
+            count = 0
+            inputs = form.query_selector_all('input, textarea')
+            selects = form.query_selector_all('select')
+            for el in inputs or []:
+                t = (el.get_attribute('type') or 'text').lower()
+                if t in ('hidden', 'submit', 'button', 'image'):
+                    continue
+                count += 1
+            for _ in selects or []:
+                count += 1
+            return count
+        except Exception:
+            return 0
 
     def make_absolute_url(self, href: str) -> str:
         """Converts a relative URL to an absolute URL."""
@@ -300,6 +343,17 @@ class FastCampaignProcessor:
             return href
         from urllib.parse import urljoin
         return urljoin(self.website_url, href)
+
+    def _record_brain_mandatory(self, contact_keyword_used: Optional[str], field_patterns: List[Dict], success: bool, outcome: str) -> None:
+        """Always record to brain: contact link, field patterns used, outcome. Not optional."""
+        if contact_keyword_used:
+            _brain_record_pattern('contact_keyword', contact_keyword_used, success=success)
+        for fp in (field_patterns or []):
+            role = fp.get('role') or 'unknown'
+            pattern_value = (fp.get('name') or fp.get('label') or '').strip() or 'unknown'
+            if pattern_value and role != 'unknown':
+                _brain_record_pattern(f'field_{role}', pattern_value, success=success)
+        _brain_record_event('outcome', outcome, metadata={'success': success, 'field_count': len(field_patterns or [])})
 
     def search_by_heuristics(self) -> Dict:
         """Fallback: look for inputs directly on page when no <form> tag exists"""
@@ -476,6 +530,7 @@ class FastCampaignProcessor:
             filled_count = 0
             email_filled = False
             message_filled = False
+            filled_field_patterns = []  # For mandatory brain recording: role, name, label per filled field
             
             # Prepare message
             message = self.replace_variables(self.message_body)
@@ -485,9 +540,35 @@ class FastCampaignProcessor:
                 name = (input_element.get_attribute('name') or '').lower()
                 placeholder = (input_element.get_attribute('placeholder') or '').lower()
                 input_type = (input_element.get_attribute('type') or 'text').lower()
-                
-                field_text = f"{name} {placeholder} {input_id}"
-                self.log('info', 'Checking Field', f'Type: {input_type}, Name: {name}, Text: {field_text}')
+                # Include visible label so "First name", "Last Name", "Branch" etc. are matched.
+                # Many sites use <span>First name</span><input> or <div>First name</div><input> — use previous sibling text when it looks like a label (short, not dropdown phrasing).
+                label_text = ''
+                try:
+                    label_text = (input_element.evaluate('''el => {
+                        const id = el.id;
+                        if (id) {
+                            const label = document.querySelector('label[for="' + id + '"]');
+                            if (label) return (label.textContent || '').trim().toLowerCase();
+                        }
+                        let p = el.closest('label') || el.parentElement;
+                        if (p && p.tagName === 'LABEL') return (p.textContent || '').trim().toLowerCase();
+                        for (let n = el.previousElementSibling; n; n = n.previousElementSibling) {
+                            if (n.tagName === 'LABEL') return (n.textContent || '').trim().toLowerCase();
+                            var t = (n.textContent || '').trim().toLowerCase();
+                            if (t.length >= 2 && t.length <= 60 && !/^(choose|select|please select|general enquiry|--|select one)/.test(t) && !/branch\\s*$/.test(t))
+                                return t;
+                        }
+                        const aria = el.getAttribute('aria-label');
+                        if (aria) return aria.trim().toLowerCase();
+                        return '';
+                    }''') or '')
+                except Exception:
+                    pass
+                # If label looks like dropdown phrasing (e.g. "General enquiry" from wrong element), don't use it so we don't mis-identify name fields
+                if label_text and any(kw in label_text for kw in ['general enquiry', 'choose a branch', 'choose branch', 'select a branch', 'please select']):
+                    label_text = ''
+                field_text = f"{name} {placeholder} {input_id} {label_text}"
+                self.log('info', 'Checking Field', f'Type: {input_type}, Name: {name}, Label: {label_text[:50]}, Text: {field_text[:80]}')
                 
                 try:
                     # Skip hidden, submit, button fields
@@ -503,21 +584,23 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('change')
                         email_filled = True
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'email', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Email field filled: {email}')
                         continue
 
-                    # 2. Fill name fields
-                    if any(kw in field_text for kw in ['first-name', 'fname', 'firstname', 'given-name', 'givenname', 'first_name']):
+                    # 2. Fill name fields (include "first name" from label text)
+                    if any(kw in field_text for kw in ['first name', 'first-name', 'fname', 'firstname', 'given-name', 'givenname', 'first_name']):
                         fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
                         input_element.click()
                         input_element.fill(fname)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'first_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'First Name field filled: {fname}')
                         continue
 
-                    if any(kw in field_text for kw in ['last-name', 'lname', 'lastname', 'surname', 'family-name', 'familyname', 'last_name']):
+                    if any(kw in field_text for kw in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'family-name', 'familyname', 'last_name']):
                         lname = self.sender_data.get('sender_last_name')
                         if not lname:
                             name_parts = self.company.get('contact_person', 'Contact').split()
@@ -527,16 +610,18 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'last_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Last Name field filled: {lname}')
                         continue
 
-                    if any(kw in field_text for kw in ['name', 'full-name', 'fullname', 'your-name', 'full_name']) and 'company' not in field_text:
+                    if any(kw in field_text for kw in ['full name', 'your name', 'name', 'full-name', 'fullname', 'your-name', 'full_name']) and 'company' not in field_text and 'first' not in field_text and 'last' not in field_text:
                         fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
                         input_element.click()
                         input_element.fill(fullname)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'full_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Name field filled: {fullname}')
                         continue
                     
@@ -548,6 +633,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'company', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Company field filled: {company_val}')
                         continue
 
@@ -560,6 +646,7 @@ class FastCampaignProcessor:
                             input_element.dispatch_event('input')
                             input_element.dispatch_event('change')
                             filled_count += 1
+                            filled_field_patterns.append({'role': 'phone', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                             self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
                     
@@ -571,6 +658,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'subject', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Subject field: {subject_val}')
                         continue
 
@@ -582,6 +670,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
+                        filled_field_patterns.append({'role': 'country', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                         self.log('info', 'Field Filled', f'Country field filled: {country_val}')
                         continue
                     
@@ -594,6 +683,7 @@ class FastCampaignProcessor:
                             input_element.dispatch_event('change')
                             message_filled = True
                             filled_count += 1
+                            filled_field_patterns.append({'role': 'message', 'name': input_element.get_attribute('name') or '', 'label': label_text})
                             self.log('info', 'Field Filled', f'Message field filled')
                             continue
                             
@@ -604,20 +694,48 @@ class FastCampaignProcessor:
             # Handle Selects (Dropdowns) — country first, then generic (branch, department, etc.)
             country_keywords = ['country', 'nation', 'ext', 'region', 'location', 'countrycode', 'country_code', 'dialcode']
             select_keywords_priority = ['branch', 'office', 'department', 'location', 'region', 'enquiry', 'inquiry', 'subject', 'topic', 'how', 'hear', 'source']
+            # Reuse same label resolution as inputs so "Country", "Branch" etc. are matched from visible label
+            _get_label_js = '''el => {
+                const id = el.id;
+                if (id) {
+                    const label = document.querySelector('label[for="' + id + '"]');
+                    if (label) return (label.textContent || '').trim().toLowerCase();
+                }
+                let p = el.closest('label') || el.parentElement;
+                if (p && p.tagName === 'LABEL') return (p.textContent || '').trim().toLowerCase();
+                for (let n = el.previousElementSibling; n; n = n.previousElementSibling) {
+                    if (n.tagName === 'LABEL') return (n.textContent || '').trim().toLowerCase();
+                    var t = (n.textContent || '').trim().toLowerCase();
+                    if (t.length >= 2 && t.length <= 60) return t;
+                }
+                const aria = el.getAttribute('aria-label');
+                if (aria) return aria.trim().toLowerCase();
+                return '';
+            }'''
             for select in selects:
                 name = (select.get_attribute('name') or '').lower()
                 placeholder = (select.get_attribute('placeholder') or '').lower()
                 select_id = (select.get_attribute('id') or '').lower()
-                text = f"{name} {placeholder} {select_id}"
+                select_label = ''
+                try:
+                    select_label = (select.evaluate(_get_label_js) or '')
+                except Exception:
+                    pass
+                text = f"{name} {placeholder} {select_id} {select_label}"
                 
                 try:
                     options = select.query_selector_all('option')
                     if not options:
                         continue
                     handled = False
-                    # Country/region dropdown
+                    # Country/region dropdown — use campaign sender_country so user-defined country is applied
                     if any(kw in text for kw in country_keywords):
-                        wanted_country = (self.sender_data.get('sender_country') or 'United Kingdom').strip().lower()
+                        raw = (self.sender_data.get('sender_country') or 'United Kingdom').strip().lower()
+                        wanted_country = raw
+                        if wanted_country == 'uk':
+                            wanted_country = 'united kingdom'
+                        elif wanted_country == 'usa' or wanted_country == 'us':
+                            wanted_country = 'united states'
                         target_val = None
                         target_label = None
                         for opt in options:
@@ -630,11 +748,15 @@ class FastCampaignProcessor:
                                 target_val = opt_val or opt_text
                                 target_label = opt_text
                                 break
-                            if wanted_country == 'united kingdom' and ('united kingdom' in opt_text_lower or 'uk' in opt_text_lower or (opt_val and 'uk' in opt_val.lower())):
+                            if wanted_country == 'united kingdom' and any(x in opt_text_lower or (opt_val and x in (opt_val or '').lower()) for x in ('united kingdom', 'uk', 'britain', 'great britain', 'england')):
                                 target_val = opt_val or opt_text
                                 target_label = opt_text
                                 break
-                            if wanted_country == 'south africa' and ('south africa' in opt_text_lower or 'za' in opt_text_lower or (opt_val and 'za' in opt_val.lower())):
+                            if wanted_country == 'south africa' and any(x in opt_text_lower or (opt_val and x in (opt_val or '').lower()) for x in ('south africa', 'za')):
+                                target_val = opt_val or opt_text
+                                target_label = opt_text
+                                break
+                            if wanted_country == 'united states' and any(x in opt_text_lower or (opt_val and x in (opt_val or '').lower()) for x in ('united states', 'usa', 'us', 'america')):
                                 target_val = opt_val or opt_text
                                 target_label = opt_text
                                 break
@@ -651,10 +773,21 @@ class FastCampaignProcessor:
                                 except Exception:
                                     select.select_option(index=1 if len(options) > 1 else 0)
                             filled_count += 1
+                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': select_label})
                             self.log('info', 'Field Filled', f'Country selected: {target_label or target_val}')
                             handled = True
-                    # Generic select (branch, department, enquiry type, etc.): skip placeholder option, pick first real one
+                    # Generic select (branch, department, enquiry type, etc.): skip placeholder option, pick first real one; match sender_branch if present
                     if not handled:
+                        # Branch/location: try to match sender_branch or sender_location from campaign, else first real option
+                        branch_val = (self.sender_data.get('sender_branch') or self.sender_data.get('sender_location') or '').strip().lower()
+                        target_opt_val = None
+                        if branch_val:
+                            for o in options:
+                                ot = (o.inner_text() or '').strip().lower()
+                                ov = (o.get_attribute('value') or '').lower()
+                                if branch_val in ot or branch_val in ov or ot in branch_val:
+                                    target_opt_val = o.get_attribute('value') or (o.inner_text() or '').strip()
+                                    break
                         first_val = options[0].get_attribute('value')
                         first_text = (options[0].inner_text() or '').strip().lower()
                         is_placeholder = (not first_val or first_val == '' or
@@ -663,21 +796,28 @@ class FastCampaignProcessor:
                         opt = options[idx]
                         val = opt.get_attribute('value')
                         label = (opt.inner_text() or '').strip()
+                        if target_opt_val:
+                            val = target_opt_val
+                            label = target_opt_val
                         if val is not None or label:
                             try:
                                 select.select_option(value=val or label)
                             except Exception:
                                 try:
-                                    select.select_option(index=idx)
+                                    select.select_option(label=label or val)
                                 except Exception:
-                                    pass
-                            else:
-                                try:
-                                    select.select_option(index=idx)
-                                except Exception:
-                                    pass
-                            filled_count += 1
-                            self.log('info', 'Field Filled', f'Select "{name or select_id}" -> {label or val or idx}')
+                                    try:
+                                        select.select_option(index=idx)
+                                    except Exception:
+                                        pass
+                        else:
+                            try:
+                                select.select_option(index=idx)
+                            except Exception:
+                                pass
+                        filled_count += 1
+                        filled_field_patterns.append({'role': 'branch', 'name': name or '', 'label': select_label})
+                        self.log('info', 'Field Filled', f'Select "{name or select_id}" -> {label or val or idx}')
                 except Exception:
                     continue
 
@@ -738,35 +878,36 @@ class FastCampaignProcessor:
                             filled_count += 1
                         except Exception: continue
 
-            # Fill any remaining required fields we missed (placeholder or first option for select, "—" for text)
+            # Fill remaining required selects only (first real option). Do NOT blindly fill required text inputs with "General enquiry" — that overwrites first/last name when label matching missed them.
             try:
-                required_inputs = form.query_selector_all('input[required], textarea[required], select[required]')
-                for el in required_inputs or []:
-                    if el.get_attribute('type') in ('hidden', 'submit', 'button'):
-                        continue
-                    tag = el.evaluate('el => el.tagName.toLowerCase()')
-                    if tag == 'select':
-                        opts = el.query_selector_all('option')
-                        if opts and len(opts) > 1:
-                            first_text = (opts[1].inner_text() or '').strip().lower()
-                            if first_text not in ('select', 'choose', '--', 'please select', 'select one', 'select...'):
-                                try:
-                                    el.select_option(index=1)
-                                    filled_count += 1
-                                    self.log('info', 'Required Field', 'Select required: chose first real option')
-                                except Exception:
-                                    pass
-                    elif tag == 'textarea' or (el.get_attribute('type') or 'text') == 'text':
-                        try:
-                            current = (el.evaluate('el => el.value') or '') if callable(getattr(el, 'evaluate', None)) else ''
-                            if not (current and str(current).strip()):
-                                el.fill('General enquiry')
-                                el.dispatch_event('input')
-                                el.dispatch_event('change')
+                required_selects = form.query_selector_all('select[required]')
+                for el in required_selects or []:
+                    opts = el.query_selector_all('option')
+                    if opts and len(opts) > 1:
+                        first_text = (opts[1].inner_text() or '').strip().lower()
+                        if first_text not in ('select', 'choose', '--', 'please select', 'select one', 'select...'):
+                            try:
+                                el.select_option(index=1)
                                 filled_count += 1
-                                self.log('info', 'Required Field', 'Filled empty required text/textarea')
-                        except Exception:
-                            pass
+                                self.log('info', 'Required Field', 'Select required: chose first real option')
+                            except Exception:
+                                pass
+                # Only fill empty required textarea if it looks like message/comment (never put generic text in name/email fields)
+                required_textareas = form.query_selector_all('textarea[required]')
+                for el in required_textareas or []:
+                    try:
+                        current = (el.evaluate('el => el.value') or '') or ''
+                        if current and str(current).strip():
+                            continue
+                        name = (el.get_attribute('name') or el.get_attribute('id') or '').lower()
+                        if any(kw in name for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
+                            el.fill(message)
+                            el.dispatch_event('input')
+                            el.dispatch_event('change')
+                            filled_count += 1
+                            self.log('info', 'Required Field', 'Required message textarea filled')
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
@@ -796,23 +937,56 @@ class FastCampaignProcessor:
                         self.log('warning', 'Validation', 'Form reported validation errors after submit; attempting to fix required/empty fields')
                         for el in (invalid or []):
                             tag = el.evaluate('el => el.tagName.toLowerCase()')
-                            name = (el.get_attribute('name') or el.get_attribute('id') or '').lower()
+                            name = (el.get_attribute('name') or '').lower()
+                            elem_id = (el.get_attribute('id') or '').lower()
+                            placeholder = (el.get_attribute('placeholder') or '').lower()
+                            aria = (el.get_attribute('aria-label') or '').lower()
+                            field_hint = f"{name} {elem_id} {placeholder} {aria}"
                             try:
                                 if tag == 'select':
                                     opts = el.query_selector_all('option')
                                     if opts and len(opts) > 1:
                                         el.select_option(index=1)
                                         filled_count += 1
-                                elif tag == 'textarea' or el.get_attribute('type') in ('text', 'email', None):
+                                elif tag == 'textarea':
                                     current = el.evaluate('el => el.value') or ''
-                                    if not (current and str(current).strip()):
-                                        if 'email' in name:
-                                            el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
-                                        else:
-                                            el.fill('General enquiry')
+                                    if not (current and str(current).strip()) and any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
+                                        el.fill(message)
                                         el.dispatch_event('input')
                                         el.dispatch_event('change')
                                         filled_count += 1
+                                elif el.get_attribute('type') in ('text', 'email', None):
+                                    current = el.evaluate('el => el.value') or ''
+                                    if not (current and str(current).strip()):
+                                        if 'email' in field_hint or el.get_attribute('type') == 'email':
+                                            el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
+                                            fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
+                                            el.fill(fname)
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'last_name']):
+                                            lname = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len(self.company.get('contact_person', 'Contact').split()) > 1 else 'Contact')
+                                            el.fill(lname)
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['name', 'full name', 'your name']) and 'company' not in field_hint and 'first' not in field_hint and 'last' not in field_hint:
+                                            fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
+                                            el.fill(fullname)
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        elif any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'details', 'body']):
+                                            el.fill(message)
+                                            el.dispatch_event('input')
+                                            el.dispatch_event('change')
+                                            filled_count += 1
+                                        # Do NOT fill unknown fields with "General enquiry" — avoids overwriting name fields when label was wrong
                             except Exception:
                                 pass
                         self.submit_form(form)
@@ -820,8 +994,8 @@ class FastCampaignProcessor:
                 except Exception:
                     pass
             
-            # SUCCESS CRITERIA: If we filled ANY fields, it counts as success
-            if filled_count > 0:
+            # SUCCESS CRITERIA: Require at least 2 fields filled so we don't mark newsletter/search as contact success
+            if filled_count >= 2:
                 self.log('success', 'Form Processed', f'Successfully filled {filled_count} fields and captured screenshot')
                 res = {
                     'success': True,
@@ -829,6 +1003,18 @@ class FastCampaignProcessor:
                     'fields_filled': filled_count,
                     'screenshot_url': screenshot_url,
                     'screenshot_bytes': screenshot_bytes,
+                    'filled_field_patterns': filled_field_patterns,
+                }
+                return res
+            elif filled_count == 1:
+                self.log('warning', 'Form Partial', 'Only one field filled — likely newsletter/search, not contact form')
+                res = {
+                    'success': False,
+                    'error': 'Only one field filled; not treated as contact form',
+                    'fields_filled': 1,
+                    'screenshot_url': screenshot_url,
+                    'screenshot_bytes': screenshot_bytes,
+                    'filled_field_patterns': filled_field_patterns,
                 }
                 return res
             else:
@@ -839,6 +1025,7 @@ class FastCampaignProcessor:
                     'fields_filled': 0,
                     'screenshot_url': screenshot_url,
                     'screenshot_bytes': screenshot_bytes,
+                    'filled_field_patterns': filled_field_patterns,
                 }
                 return res
                 
@@ -850,6 +1037,7 @@ class FastCampaignProcessor:
                 'error': f'Form processing error: {str(e)}',
                 'screenshot_url': path,
                 'screenshot_bytes': screenshot_bytes,
+                'filled_field_patterns': [],
             }
 
     def submit_form(self, form) -> bool:
