@@ -411,10 +411,11 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         if text_content:
             payload['text'] = text_content
         
-        # Add CC if provided
+        # Add CC if provided (Resend expects 'cc' as array; Next API converts string to [cc])
         if cc_email and cc_email.strip():
             payload['cc'] = cc_email.strip()
-        
+            print(f" [EMAIL] CC included: {cc_email.strip()} (copy will be sent to this address)")
+
         # Add attachments if provided
         # Format: [{ filename: "invoice.pdf", content: base64String, contentType: "application/pdf" }]
         if attachments:

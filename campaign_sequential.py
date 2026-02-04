@@ -184,6 +184,12 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             for idx, company in enumerate(companies):
                 db.session.refresh(campaign)
                 if campaign.status in ['stopping', 'cancelled']:
+                    # Reset any company still "processing" so UI doesn't show it stuck
+                    Company.query.filter_by(
+                        campaign_id=campaign_id,
+                        status='processing'
+                    ).update({'status': 'pending'})
+                    db.session.commit()
                     ws_manager.broadcast_event(campaign_id, {
                         'type': 'campaign_stopped',
                         'data': {'message': 'Processing stopped by user'}

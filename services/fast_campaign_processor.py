@@ -1325,8 +1325,11 @@ class FastCampaignProcessor:
                                     break
                         first_val = options[0].get_attribute('value')
                         first_text = (options[0].inner_text() or '').strip().lower()
+                        placeholder_exact = ('select', 'choose', '--', 'please select', 'select one', 'select...')
+                        placeholder_phrases = ('choose a branch', 'choose branch', 'choose a ', 'select a ', 'select one', 'pick one', 'choose one', '-- select --', '-- choose --')
                         is_placeholder = (not first_val or first_val == '' or
-                                          first_text in ('select', 'choose', '--', 'please select', 'select one', 'select...'))
+                                          first_text in placeholder_exact or
+                                          any(p in first_text for p in placeholder_phrases))
                         idx = 1 if (is_placeholder and len(options) > 1) else 0
                         opt = options[idx]
                         val = opt.get_attribute('value')
@@ -1410,20 +1413,22 @@ class FastCampaignProcessor:
                             except Exception:
                                 pass
 
-            # Fill remaining required selects only (first real option). Do NOT blindly fill required text inputs with "General enquiry" — that overwrites first/last name when label matching missed them.
+            # Fill remaining required selects only (first real option). Include aria-required so "Branch" etc. are filled when only asterisk/aria marks them required.
             try:
-                required_selects = form.query_selector_all('select[required]')
+                required_selects = form.query_selector_all('select[required], select[aria-required="true"]')
                 for el in required_selects or []:
                     opts = el.query_selector_all('option')
                     if opts and len(opts) > 1:
-                        first_text = (opts[1].inner_text() or '').strip().lower()
-                        if first_text not in ('select', 'choose', '--', 'please select', 'select one', 'select...'):
-                            try:
-                                el.select_option(index=1)
-                                filled_count += 1
-                                self.log('info', 'Required Field', 'Select required: chose first real option')
-                            except Exception:
-                                pass
+                        first_text = (opts[0].inner_text() or '').strip().lower()
+                        placeholder_ok = any(p in first_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
+                        # If first option is placeholder, pick index 1; else if first is real, pick 0
+                        pick_idx = 1 if placeholder_ok else 0
+                        try:
+                            el.select_option(index=pick_idx)
+                            filled_count += 1
+                            self.log('info', 'Required Field', f'Select required: chose option index {pick_idx}')
+                        except Exception:
+                            pass
                 # Only fill empty required textarea if it looks like message/comment (never put generic text in name/email fields)
                 required_textareas = form.query_selector_all('textarea[required]')
                 for el in required_textareas or []:
@@ -1487,14 +1492,14 @@ class FastCampaignProcessor:
                             self.log('info', 'Required Field', 'Pre-submit: checked required opt-in checkbox')
                     except Exception:
                         pass
-                for sel in ['input[required]', 'textarea[required]', 'select[required]']:
+                for sel in ['input[required]', 'textarea[required]', 'select[required]', 'select[aria-required="true"]']:
                     for el in (form.query_selector_all(sel) or []):
                         try:
                             tag = el.evaluate('el => el.tagName.toLowerCase()')
                             current = (el.evaluate('el => el.value') or '') if tag != 'select' else ''
                             if tag == 'select':
                                 opts = el.query_selector_all('option')
-                                if not opts or len(opts) < 2:
+                                if not opts or len(opts) < 1:
                                     continue
                                 selected_val = el.evaluate('el => (el.options[el.selectedIndex] && el.options[el.selectedIndex].value) || ""')
                                 if selected_val and str(selected_val).strip():
@@ -1526,9 +1531,14 @@ class FastCampaignProcessor:
                                 pass
                             field_hint = f"{name} {elem_id} {placeholder} {aria} {label_text}"
                             if tag == 'select':
-                                el.select_option(index=1)
-                                filled_count += 1
-                                self.log('info', 'Required Field', 'Pre-submit: filled required select')
+                                opts = el.query_selector_all('option')
+                                if opts and len(opts) >= 1:
+                                    first_opt_text = (opts[0].inner_text() or '').strip().lower()
+                                    is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
+                                    pick_idx = 1 if (is_ph and len(opts) > 1) else 0
+                                    el.select_option(index=pick_idx)
+                                    filled_count += 1
+                                    self.log('info', 'Required Field', f'Pre-submit: filled required select (index {pick_idx})')
                             elif tag == 'textarea':
                                 if any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
                                     el.fill(message)
@@ -1621,8 +1631,11 @@ class FastCampaignProcessor:
                             try:
                                 if tag == 'select':
                                     opts = el.query_selector_all('option')
-                                    if opts and len(opts) > 1:
-                                        el.select_option(index=1)
+                                    if opts and len(opts) >= 1:
+                                        first_opt_text = (opts[0].inner_text() or '').strip().lower()
+                                        is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
+                                        pick_idx = 1 if (is_ph and len(opts) > 1) else 0
+                                        el.select_option(index=pick_idx)
                                         filled_count += 1
                                 elif tag == 'textarea':
                                     current = el.evaluate('el => el.value') or ''
