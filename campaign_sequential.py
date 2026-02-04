@@ -75,6 +75,10 @@ def _user_friendly_message(level, action, message):
             return "Something went wrong while filling the form."
         if 'execution error' in action_lower:
             return "An error occurred; this lead was skipped."
+    # Never expose technical jargon (Cursor, fetch, scroll, lazy-loading, etc.)
+    msg_lower = (message or '').lower()
+    if any(x in msg_lower for x in ('cursor', 'fetch', 'scroll', 'lazy', 'scrolling', 'fetch-first', 'into view')):
+        return "Processing…"
     # Fallback: shorten technical message (remove file paths, long URLs)
     if message and len(message) > 80:
         short = re.sub(r'https?://\S+', '[link]', message)

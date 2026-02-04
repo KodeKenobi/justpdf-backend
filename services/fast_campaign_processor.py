@@ -123,7 +123,7 @@ class FastCampaignProcessor:
                 # Continue anyway, Strategy 2 might still work if we have a partial load
 
             # FETCH-FIRST: Scroll full page so below-fold content (e.g. contact form) is in DOM, then scan ALL forms
-            self.log('info', 'Fetch-first', 'Scrolling page to load full content (like Cursor fetch)...')
+            self.log('info', 'Loading', 'Loading page…')
             try:
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 self.page.wait_for_timeout(1500)
@@ -133,7 +133,7 @@ class FastCampaignProcessor:
                 pass
 
             # STRATEGY 1: Check ALL forms on current page (not just the first) — contact form may be 2nd or below fold
-            self.log('info', 'Strategy 1', 'Scanning all forms on page (fetch-first)...')
+            self.log('info', 'Strategy 1', 'Checking homepage for a form…')
             all_forms = self.page.query_selector_all('form')
             if all_forms:
                 for idx in range(len(all_forms)):
@@ -142,7 +142,7 @@ class FastCampaignProcessor:
                         contact_like_count = self._count_contact_like_fields(form_el)
                         if contact_like_count < 2:
                             continue
-                        self.log('info', 'Strategy 1', f'Form {idx + 1}/{len(all_forms)} has {contact_like_count} fillable fields; scrolling into view and trying...')
+                        self.log('info', 'Strategy 1', f'Trying form {idx + 1}…')
                         try:
                             self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=5000)
                             self.page.wait_for_timeout(800)
@@ -246,7 +246,7 @@ class FastCampaignProcessor:
                         # Same-page anchor (#contact, #contact-us): scroll to it, don't goto
                         if (href or '').strip().startswith('#'):
                             anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
-                            self.log('info', 'Contact Page', f'Scrolling to same-page anchor #{anchor_id}...')
+                            self.log('info', 'Contact Page', 'Loading contact section…')
                             try:
                                 self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=5000)
                                 self.page.wait_for_timeout(1500)
@@ -259,7 +259,7 @@ class FastCampaignProcessor:
                             self.handle_cookie_modal()
                             self.page.wait_for_timeout(800)
                             self.handle_cookie_modal()
-                            self.log('info', 'Contact Page', 'Scrolling to trigger lazy-loading...')
+                            self.log('info', 'Contact Page', 'Loading contact page…')
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                             self.page.wait_for_timeout(1500)
                             self.page.evaluate("window.scrollTo(0, 0)")
