@@ -32,18 +32,24 @@ DAILY_LIMITS = {
     'client': -1,
 }
 
+def _normalize_tier(tier):
+    """Tier may be stored as 'Enterprise' etc.; limits use lowercase keys."""
+    return (tier or '').strip().lower() if tier else ''
+
 def get_campaign_limit(user_tier=None):
     """Get campaign company limit for a given user tier"""
-    if not user_tier or user_tier not in CAMPAIGN_LIMITS:
+    key = _normalize_tier(user_tier)
+    if not key or key not in CAMPAIGN_LIMITS:
         return CAMPAIGN_LIMITS['guest']
-    limit = CAMPAIGN_LIMITS[user_tier]
+    limit = CAMPAIGN_LIMITS[key]
     return float('inf') if limit == -1 else limit
 
 def get_daily_limit(user_tier=None):
     """Get daily processed-company limit for a given user tier"""
-    if not user_tier or user_tier not in DAILY_LIMITS:
+    key = _normalize_tier(user_tier)
+    if not key or key not in DAILY_LIMITS:
         return DAILY_LIMITS['guest']
-    limit = DAILY_LIMITS[user_tier]
+    limit = DAILY_LIMITS[key]
     return float('inf') if limit == -1 else limit
 
 def get_daily_used(user_id=None, session_id=None):
