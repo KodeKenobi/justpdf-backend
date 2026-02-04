@@ -122,13 +122,144 @@ class FastCampaignProcessor:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
 
-            # STRATEGY 1 (fast path): Check forms immediately — many sites have form above fold
-            self.log('info', 'Strategy 1', 'Checking homepage for a form…')
+            # STRATEGY 0: Footer first — contact links are almost always in footer; go to contact page before trying homepage forms
+            self.log('info', 'Strategy 0', 'Checking footer first for contact link…')
+            contact_keywords = _brain_get_keywords('contact_keyword', ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us'])
+            footer_candidates = []
+            try:
+                footer_containers = self.page.query_selector_all('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer')
+                for footer_el in (footer_containers or []):
+                    try:
+                        footer_links = footer_el.query_selector_all('a[href]')
+                        for link in (footer_links or []):
+                            try:
+                                href = link.get_attribute('href')
+                                text = (link.inner_text() or '').strip().lower()
+                                if not href or href.startswith('mailto:') or href.startswith('tel:'):
+                                    continue
+                                if any(kw in (href or '').lower() or kw in text for kw in contact_keywords):
+                                    footer_candidates.append((href, text))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                seen = set()
+                unique = []
+                for href, text in footer_candidates:
+                    h = (href or '').strip().lower()
+                    if h and h not in seen:
+                        seen.add(h)
+                        unique.append((href, text))
+                def _contact_priority(item):
+                    href, text = item
+                    h, t = (href or '').lower(), (text or '').lower()
+                    if 'contact' in h or 'contact' in t or 'get in touch' in t or 'get-in-touch' in h:
+                        return 0
+                    if 'enquiry' in h or 'enquiry' in t or 'inquiry' in h or 'inquiry' in t:
+                        return 1
+                    if 'support' in h or 'support' in t:
+                        return 2
+                    if 'about-us' in h or 'about-us' in t or 'about us' in t:
+                        return 3
+                    return 2
+                unique.sort(key=_contact_priority)
+                if unique:
+                    self.log('info', 'Strategy 0', f'Found {len(unique)} contact link(s) in footer; trying contact page first')
+                    href, text = unique[0]
+                    matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in (text or '')), None)
+                    self._contact_keyword_used = matched_kw
+                    full_href = self.make_absolute_url(href)
+                    if not (href or '').strip().startswith('#'):
+                        try:
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=20000)
+                            self.handle_cookie_modal()
+                            self.page.wait_for_timeout(400)
+                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            self.page.wait_for_timeout(400)
+                            self.page.evaluate("window.scrollTo(0, 0)")
+                            self.page.wait_for_timeout(300)
+                            try:
+                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=6000)
+                                self.page.wait_for_timeout(500)
+                            except Exception:
+                                pass
+                            contact_page_forms = self.page.query_selector_all('form')
+                            if contact_page_forms:
+                                for form_idx in range(len(contact_page_forms)):
+                                    if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
+                                        continue
+                                    if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
+                                        continue
+                                    try:
+                                        self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
+                                        self.page.wait_for_timeout(300)
+                                    except Exception:
+                                        pass
+                                    forms_refresh = self.page.query_selector_all('form')
+                                    if form_idx < len(forms_refresh):
+                                        form_result = self.fill_and_submit_form(forms_refresh[form_idx], 'contact_page')
+                                        if form_result['success']:
+                                            self.log('success', 'Form Detection', 'Filled contact form from footer link')
+                                            result.update(form_result)
+                                            result['method'] = 'form_submitted_contact_page'
+                                            self.found_form = True
+                                            self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
+                                            return result
+                                        self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
+                                self.log('info', 'Strategy 0', 'Contact page form(s) did not succeed; falling back to homepage')
+                            else:
+                                self.log('info', 'Strategy 0', 'No form on contact page; falling back to homepage')
+                            self.page.goto(website_url, wait_until='domcontentloaded', timeout=15000)
+                            self.handle_cookie_modal()
+                            self.page.wait_for_timeout(400)
+                        except Exception as e:
+                            self.log('warning', 'Strategy 0', f'Footer contact link failed: {e}; continuing to homepage forms')
+                            try:
+                                self.page.goto(website_url, wait_until='domcontentloaded', timeout=15000)
+                                self.handle_cookie_modal()
+                                self.page.wait_for_timeout(400)
+                            except Exception:
+                                pass
+                    else:
+                        # Same-page anchor: scroll to section
+                        anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
+                        try:
+                            self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=3000)
+                            self.page.wait_for_timeout(500)
+                        except Exception:
+                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            self.page.wait_for_timeout(500)
+                        contact_page_forms = self.page.query_selector_all('form')
+                        if contact_page_forms:
+                            for form_idx in range(len(contact_page_forms)):
+                                if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
+                                    continue
+                                if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
+                                    continue
+                                forms_refresh = self.page.query_selector_all('form')
+                                if form_idx < len(forms_refresh):
+                                    form_result = self.fill_and_submit_form(forms_refresh[form_idx], 'contact_page')
+                                    if form_result['success']:
+                                        result.update(form_result)
+                                        result['method'] = 'form_submitted_contact_page'
+                                        self.found_form = True
+                                        self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
+                                        return result
+            except Exception as e:
+                self.log('warning', 'Strategy 0', str(e))
+            if not unique:
+                self.log('info', 'Strategy 0', 'No contact link in footer; will try homepage forms')
+
+            # STRATEGY 1: Check homepage forms (skip newsletter/signup — e.g. "Stay in the loop", "Newsletter Sign up")
+            self.log('info', 'Strategy 1', 'Checking homepage for a contact form (skipping newsletter/signup)…')
             all_forms = self.page.query_selector_all('form')
             if all_forms:
                 for idx in range(len(all_forms)):
                     try:
                         form_el = all_forms[idx]
+                        if self._is_newsletter_or_signup_form(form_el):
+                            self.log('info', 'Strategy 1', f'Skipping form {idx + 1} (newsletter/signup)')
+                            continue
                         contact_like_count = self._count_contact_like_fields(form_el)
                         if contact_like_count < 2:
                             continue
@@ -167,6 +298,8 @@ class FastCampaignProcessor:
                 for idx in range(len(all_forms)):
                     try:
                         form_el = all_forms[idx]
+                        if self._is_newsletter_or_signup_form(form_el):
+                            continue
                         if self._count_contact_like_fields(form_el) < 2:
                             continue
                         try:
@@ -296,6 +429,8 @@ class FastCampaignProcessor:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
                             for form_idx in range(len(contact_page_forms)):
                                 if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
+                                    continue
+                                if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
                                     continue
                                 try:
                                     self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
@@ -453,6 +588,36 @@ class FastCampaignProcessor:
             self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], False, 'error_processing')
         
         return result
+
+    def _is_newsletter_or_signup_form(self, form) -> bool:
+        """Return True if form is clearly newsletter/signup (e.g. footer 'Stay in the loop', 'Newsletter Sign up') — do not fill or count as contact success."""
+        try:
+            # Form inside footer is almost always newsletter/signup
+            in_footer = form.evaluate('''el => {
+                const footer = el.closest('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer');
+                return !!footer;
+            }''')
+            if in_footer:
+                return True
+            # Form context: id, name, class, action, aria-label, or nearby text
+            ctx = form.evaluate('''el => {
+                const id = (el.id || '').toLowerCase();
+                const name = (el.getAttribute('name') || '').toLowerCase();
+                const cls = (el.className || '').toLowerCase();
+                const action = (el.getAttribute('action') || '').toLowerCase();
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                let prev = '';
+                let p = el.previousElementSibling;
+                for (let i = 0; i < 3 && p; i++) { prev += (p.textContent || '').toLowerCase(); p = p.previousElementSibling; }
+                const inner = (el.textContent || '').toLowerCase().slice(0, 500);
+                return id + ' ' + name + ' ' + cls + ' ' + action + ' ' + aria + ' ' + prev + ' ' + inner;
+            }''') or ''
+            newsletter_keywords = ['newsletter', 'sign up', 'signup', 'stay in the loop', 'subscribe', 'subscribe to our', 'join our list', 'get the latest', 'email signup', 'mailing list']
+            if any(kw in ctx for kw in newsletter_keywords):
+                return True
+            return False
+        except Exception:
+            return False
 
     def _count_contact_like_fields(self, form) -> int:
         """Count inputs/selects that look like contact form fields (not hidden/submit/button). Used to skip newsletter/search forms."""

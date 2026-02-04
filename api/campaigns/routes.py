@@ -447,8 +447,8 @@ def get_campaign_companies(campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
         
-        # Get all companies for this campaign
-        companies = Company.query.filter_by(campaign_id=campaign_id).all()
+        # Get all companies for this campaign in upload order (same order as CSV/file)
+        companies = Company.query.filter_by(campaign_id=campaign_id).order_by(Company.id).all()
         
         return jsonify({
             'success': True,
