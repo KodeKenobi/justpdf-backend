@@ -182,6 +182,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             context = browser.new_context()
 
             for idx, company in enumerate(companies):
+                page = None
                 db.session.refresh(campaign)
                 if campaign.status in ['stopping', 'cancelled']:
                     # Reset any company still "processing" so UI doesn't show it stuck
@@ -199,9 +200,32 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                 company.status = 'processing'
                 db.session.commit()
 
-                page = context.new_page()
-                page.set_default_timeout(25000)
-                page.set_default_navigation_timeout(30000)
+                try:
+                    page = context.new_page()
+                    page.set_default_timeout(25000)
+                    page.set_default_navigation_timeout(30000)
+                except Exception as page_err:
+                    print(f"[Sequential] new_page() failed for company {company.id}: {page_err}")
+                    company.status = 'failed'
+                    company.error_message = _user_facing_error(str(page_err))
+                    company.processed_at = datetime.utcnow()
+                    db.session.commit()
+                    campaign.processed_count = Company.query.filter(
+                        Company.campaign_id == campaign.id,
+                        Company.status != 'pending',
+                        Company.status != 'processing'
+                    ).count()
+                    db.session.commit()
+                    ws_manager.broadcast_event(campaign_id, {
+                        'type': 'company_completed',
+                        'data': {
+                            'company_id': company.id,
+                            'status': company.status,
+                            'screenshot_url': None,
+                            'progress': int((idx + 1) / len(companies) * 100)
+                        }
+                    })
+                    continue
 
                 # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
                 _company_id = company.id
@@ -256,7 +280,11 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                     result = {'success': False, 'error': str(e), 'method': 'error'}
 
                 try:
-                    if result is not None:
+                    if result is None:
+                        company.status = 'failed'
+                        company.contact_method = 'error'
+                        company.error_message = _user_facing_error('No result from worker')
+                    elif result is not None:
                         if result.get('success'):
                             method = result.get('method', '')
                             if method == 'contact_info_found' or method.startswith('email'):
@@ -350,20 +378,24 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         pass
                     db.session.commit()
                 finally:
-                    if not timed_out:
-                        page.close()
-                    # If timed out, worker may still be using page; skip close to avoid conflict
+                    # Always close the page so we don't accumulate pages (causes next new_page() to fail and kill the loop)
+                    try:
+                        if page:
+                            page.close()
+                    except Exception as e:
+                        print(f"[WARN] Page close error (timed-out company): {e}")
 
             browser.close()
 
-        campaign.status = 'completed'
-        campaign.completed_at = datetime.utcnow()
-        db.session.commit()
-
-        ws_manager.broadcast_event(campaign_id, {
-            'type': 'campaign_complete',
-            'data': {'campaign_id': campaign_id}
-        })
+        # Only mark completed if we didn't break out due to stop/cancel
+        if campaign.status not in ['stopping', 'cancelled']:
+            campaign.status = 'completed'
+            campaign.completed_at = datetime.utcnow()
+            db.session.commit()
+            ws_manager.broadcast_event(campaign_id, {
+                'type': 'campaign_complete',
+                'data': {'campaign_id': campaign_id}
+            })
 
         return {'status': 'success', 'processed': len(companies)}
 
