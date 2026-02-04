@@ -1113,7 +1113,7 @@ class FastCampaignProcessor:
             from email_service import send_email
             
             # Create message
-            message_content = self.replace_variables(self.message_template)
+            message_content = self.replace_variables(self.message_body)
             company_name = self.company.get('company_name', 'your company')
             
             # Create HTML email content

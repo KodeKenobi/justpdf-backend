@@ -249,6 +249,8 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 company.error_message = 'No contact form found on this site.'
                             else:
                                 company.status = 'failed'
+                                if method == 'error':
+                                    print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
                             company.contact_method = result.get('method')
                             if company.status == 'failed':
                                 company.error_message = _user_facing_error(result.get('error'))
@@ -279,6 +281,27 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                         company.screenshot_url = sb_url
                                 except Exception as e:
                                     print(f"[WARN] Screenshot upload error: {e}")
+                            # Fallback: exception in processor returns method='error' with no screenshot; capture current page
+                            if not company.screenshot_url and result.get('method') == 'error':
+                                try:
+                                    fb_bytes = page.screenshot()
+                                    if fb_bytes:
+                                        sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                        if sb_url:
+                                            company.screenshot_url = sb_url
+                                except Exception as e:
+                                    print(f"[WARN] Fallback screenshot error: {e}")
+
+                    # When thread timed out (result is None), try to capture current page as screenshot
+                    if result is None and not company.screenshot_url:
+                        try:
+                            fb_bytes = page.screenshot()
+                            if fb_bytes:
+                                sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                if sb_url:
+                                    company.screenshot_url = sb_url
+                        except Exception as e:
+                            print(f"[WARN] Timeout fallback screenshot error: {e}")
 
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
@@ -301,6 +324,14 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                     live_logger('error', 'Execution Error', str(e))
                     company.status = 'failed'
                     company.error_message = _user_facing_error(str(e))
+                    try:
+                        fb_bytes = page.screenshot()
+                        if fb_bytes:
+                            sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                            if sb_url:
+                                company.screenshot_url = sb_url
+                    except Exception:
+                        pass
                     db.session.commit()
                 finally:
                     page.close()
