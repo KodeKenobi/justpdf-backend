@@ -532,9 +532,13 @@ def update_company(company_id):
         
         db.session.commit()
         
-        # Update campaign statistics
+        # Update campaign statistics (processed = finished only, exclude "processing")
         campaign = company.campaign
-        campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+        campaign.processed_count = Company.query.filter(
+            Company.campaign_id == campaign.id,
+            Company.status != 'pending',
+            Company.status != 'processing'
+        ).count()
         # Count success as both 'success' status and companies with emails_sent (email fallback)
         success_companies = Company.query.filter_by(campaign_id=campaign.id).filter(
             db.or_(Company.status == 'success', Company.emails_sent.isnot(None))

@@ -5,9 +5,13 @@ No Celery/Redis imports - safe to use when Redis is not running (e.g. Start butt
 import os
 import json
 import re
+import threading
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from models import Campaign, Company, db
+
+# Per-company timeout so one slow site doesn't hang the whole run (e.g. 5th company)
+PER_COMPANY_TIMEOUT_SEC = 90
 
 # Map technical log (action / message) to user-friendly English for the right-hand panel
 def _user_friendly_message(level, action, message):
@@ -209,8 +213,9 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         }
                     })
 
+                result = None
+                timed_out = False
                 try:
-                    result = None
                     company_data = company.to_dict()
                     processor = FastCampaignProcessor(
                         page=page,
@@ -222,7 +227,21 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         subject=subject_str,
                         sender_data=sender_data
                     )
-                    result = processor.process_company()
+                    result_holder = [None]
+                    def run_processor():
+                        try:
+                            result_holder[0] = processor.process_company()
+                        except Exception as e:
+                            result_holder[0] = {'success': False, 'error': str(e), 'method': 'error'}
+                    worker = threading.Thread(target=run_processor, daemon=True)
+                    worker.start()
+                    worker.join(timeout=PER_COMPANY_TIMEOUT_SEC)
+                    if worker.is_alive():
+                        timed_out = True
+                        result = {'success': False, 'error': f'Processing timed out ({PER_COMPANY_TIMEOUT_SEC}s)', 'method': 'timeout'}
+                        live_logger('error', 'Timeout', f'Company {_company_id} timed out after {PER_COMPANY_TIMEOUT_SEC}s')
+                    else:
+                        result = result_holder[0]
                 except Exception as e:
                     result = {'success': False, 'error': str(e), 'method': 'error'}
 
@@ -288,7 +307,12 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 print(f"[WARN] Fallback screenshot error: {e}")
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
-                    campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+                    # Processed = finished only (exclude "processing" so counts add up)
+                    campaign.processed_count = Company.query.filter(
+                        Company.campaign_id == campaign.id,
+                        Company.status != 'pending',
+                        Company.status != 'processing'
+                    ).count()
                     campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
                         Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
                     campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
@@ -316,7 +340,9 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         pass
                     db.session.commit()
                 finally:
-                    page.close()
+                    if not timed_out:
+                        page.close()
+                    # If timed out, worker may still be using page; skip close to avoid conflict
 
             browser.close()
 

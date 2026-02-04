@@ -112,8 +112,12 @@ def register_websocket_routes(sock):
             
             db.session.commit()
             
-            # Update campaign statistics and status
-            campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
+            # Update campaign statistics (processed = finished only, exclude "processing")
+            campaign.processed_count = Company.query.filter(
+                Company.campaign_id == campaign.id,
+                Company.status != 'pending',
+                Company.status != 'processing'
+            ).count()
             campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count()
             campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
             campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
