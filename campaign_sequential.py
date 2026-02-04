@@ -79,6 +79,32 @@ def _user_friendly_message(level, action, message):
     return message or "Processing…"
 
 
+def _user_facing_error(err: str) -> str:
+    """Short, clear error for UI (no stack traces or long URLs)."""
+    if not err or not str(err).strip():
+        return "Something went wrong. Try again or skip."
+    s = str(err).strip()
+    if len(s) > 200:
+        s = s[:197] + "..."
+    s = re.sub(r'https?://\S+', '[url]', s)
+    lower = s.lower()
+    if 'timeout' in lower or 'timed out' in lower:
+        return "Request timed out. Try again or skip."
+    if 'captcha' in lower:
+        return "This form uses CAPTCHA; we can't submit it."
+    if 'no contact' in lower or 'no discovery' in lower:
+        return "No contact form or email found on this site."
+    if 'only one field' in lower or 'not treated as contact' in lower:
+        return "Only one field filled; skipped (likely newsletter/search)."
+    if 'no fields were filled' in lower:
+        return "Form could not be filled. Cookie or layout may be blocking."
+    if 'navigation' in lower or 'failed or timed out' in lower:
+        return "Page did not load in time."
+    if 'form' in lower and 'error' in lower:
+        return "Form error. Try again or skip."
+    return s
+
+
 def process_campaign_sequential(campaign_id, company_ids=None):
     """
     Process a campaign sequentially (one-by-one)
@@ -151,6 +177,8 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                 db.session.commit()
 
                 page = context.new_page()
+                page.set_default_timeout(25000)
+                page.set_default_navigation_timeout(30000)
 
                 def live_logger(level, action, message):
                     print(f"[{level}] {action}: {message}")
@@ -168,20 +196,39 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         }
                     })
 
-                try:
-                    processor = FastCampaignProcessor(
-                        page=page,
-                        company_data=company.to_dict(),
-                        message_template=message_template_str,
-                        campaign_id=campaign_id,
-                        company_id=company.id,
-                        logger=live_logger,
-                        subject=subject_str,
-                        sender_data=sender_data
-                    )
+                result = None
+                result_holder = []
 
-                    result = processor.process_company()
+                def run_processor():
+                    try:
+                        processor = FastCampaignProcessor(
+                            page=page,
+                            company_data=company.to_dict(),
+                            message_template=message_template_str,
+                            campaign_id=campaign_id,
+                            company_id=company.id,
+                            logger=live_logger,
+                            subject=subject_str,
+                            sender_data=sender_data
+                        )
+                        result_holder.append(processor.process_company())
+                    except Exception as e:
+                        result_holder.append({'success': False, 'error': str(e), 'method': 'error'})
 
+                import threading
+                thread = threading.Thread(target=run_processor, daemon=True)
+                thread.start()
+                thread.join(timeout=90)
+                if thread.is_alive():
+                    live_logger('error', 'Timeout', 'Processing timed out after 90s')
+                    company.status = 'failed'
+                    company.error_message = 'Processing timed out. Try again or skip.'
+                    company.contact_method = 'timeout'
+                    result = None
+                else:
+                    result = result_holder[0] if result_holder else None
+
+                if result is not None:
                     if result.get('success'):
                         method = result.get('method', '')
                         if method.startswith('email'):
@@ -193,25 +240,25 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         company.error_message = None
                     else:
                         error_msg = (result.get('error') or '').lower()
-                        if 'captcha' in error_msg or result.get('method') == 'form_with_captcha':
+                        method = result.get('method') or ''
+                        if 'captcha' in error_msg or method == 'form_with_captcha':
                             company.status = 'captcha'
+                        elif method == 'no_contact_found':
+                            company.status = 'no_contact_found'
+                            company.error_message = 'No contact form found on this site.'
                         else:
                             company.status = 'failed'
-                        company.error_message = result.get('error')
                         company.contact_method = result.get('method')
+                        if company.status == 'failed':
+                            company.error_message = _user_facing_error(result.get('error'))
 
-                    # Screenshots stored only on Supabase. Prefer bytes (no path resolution); fallback to file.
-                    screenshot_bytes = result.get('screenshot_bytes')
-                    if not screenshot_bytes:
-                        print(f"[SCREENSHOT] Company {company.id}: no screenshot_bytes in result (take_screenshot may have failed)")
-                        local_path = result.get('screenshot_url')
-                        if local_path:
+                    if result is not None:
+                        screenshot_bytes = result.get('screenshot_bytes')
+                        if not screenshot_bytes and result.get('screenshot_url'):
+                            local_path = result.get('screenshot_url')
                             try:
                                 path_part = local_path.lstrip('/').replace('/', os.sep)
-                                roots = [
-                                    os.path.dirname(os.path.abspath(__file__)),
-                                    os.getcwd(),
-                                ]
+                                roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
                                 for root in roots:
                                     candidate = os.path.join(root, path_part)
                                     if os.path.exists(candidate):
@@ -224,30 +271,21 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                         break
                             except Exception as e:
                                 print(f"[WARN] Screenshot file read error: {e}")
-                    if not screenshot_bytes:
-                        print(f"[SCREENSHOT] Company {company.id}: no bytes after fallback; screenshot_url will stay null")
-                    if screenshot_bytes:
-                        try:
-                            sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                            if sb_url:
-                                company.screenshot_url = sb_url
-                                print(f"[SCREENSHOT] Set company_id={company.id} screenshot_url (len={len(sb_url)})")
-                            else:
-                                print(f"[WARN] Supabase upload returned None for company {company.id}; screenshot_url not set")
-                        except Exception as e:
-                            print(f"[WARN] Screenshot upload error: {e}")
-                            import traceback
-                            traceback.print_exc()
+                        if screenshot_bytes:
+                            try:
+                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
+                                if sb_url:
+                                    company.screenshot_url = sb_url
+                            except Exception as e:
+                                print(f"[WARN] Screenshot upload error: {e}")
 
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
-
                     campaign.processed_count = Company.query.filter_by(campaign_id=campaign.id).filter(Company.status != 'pending').count()
                     campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
                         Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
                     campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
                     db.session.commit()
-
                     ws_manager.broadcast_event(campaign_id, {
                         'type': 'company_completed',
                         'data': {
@@ -261,7 +299,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                 except Exception as e:
                     live_logger('error', 'Execution Error', str(e))
                     company.status = 'failed'
-                    company.error_message = str(e)
+                    company.error_message = _user_facing_error(str(e))
                     db.session.commit()
                 finally:
                     page.close()

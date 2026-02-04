@@ -731,6 +731,10 @@ def rapid_process_single(campaign_id, company_id):
                     company.status = 'contact_info_found'
                     company.contact_method = 'contact_page_only'
                     company.error_message = result.get('error')
+                elif result.get('method') == 'no_contact_found':
+                    company.status = 'no_contact_found'
+                    company.contact_method = 'no_contact_found'
+                    company.error_message = 'No contact form found on this site.'
                 else:
                     company.status = 'failed'
                     company.error_message = result.get('error', 'Processing failed')
