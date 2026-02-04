@@ -196,88 +196,89 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         }
                     })
 
-                result = None
-                result_holder = []
-
-                def run_processor():
-                    try:
-                        processor = FastCampaignProcessor(
-                            page=page,
-                            company_data=company.to_dict(),
-                            message_template=message_template_str,
-                            campaign_id=campaign_id,
-                            company_id=company.id,
-                            logger=live_logger,
-                            subject=subject_str,
-                            sender_data=sender_data
-                        )
-                        result_holder.append(processor.process_company())
-                    except Exception as e:
-                        result_holder.append({'success': False, 'error': str(e), 'method': 'error'})
-
-                import threading
-                thread = threading.Thread(target=run_processor, daemon=True)
-                thread.start()
-                thread.join(timeout=90)
-                if thread.is_alive():
-                    live_logger('error', 'Timeout', 'Processing timed out after 90s')
-                    company.status = 'failed'
-                    company.error_message = 'Processing timed out. Try again or skip.'
-                    company.contact_method = 'timeout'
+                try:
                     result = None
-                else:
-                    result = result_holder[0] if result_holder else None
+                    result_holder = []
 
-                if result is not None:
-                    if result.get('success'):
-                        method = result.get('method', '')
-                        if method.startswith('email'):
-                            company.status = 'contact_info_found'
-                        else:
-                            company.status = 'completed'
-                        company.contact_method = method
-                        company.fields_filled = result.get('fields_filled', 0)
-                        company.error_message = None
+                    def run_processor():
+                        try:
+                            processor = FastCampaignProcessor(
+                                page=page,
+                                company_data=company.to_dict(),
+                                message_template=message_template_str,
+                                campaign_id=campaign_id,
+                                company_id=company.id,
+                                logger=live_logger,
+                                subject=subject_str,
+                                sender_data=sender_data
+                            )
+                            result_holder.append(processor.process_company())
+                        except Exception as e:
+                            result_holder.append({'success': False, 'error': str(e), 'method': 'error'})
+
+                    import threading
+                    thread = threading.Thread(target=run_processor, daemon=True)
+                    thread.start()
+                    thread.join(timeout=90)
+                    if thread.is_alive():
+                        live_logger('error', 'Timeout', 'Processing timed out after 90s')
+                        company.status = 'failed'
+                        company.error_message = 'Processing timed out. Try again or skip.'
+                        company.contact_method = 'timeout'
+                        result = None
                     else:
-                        error_msg = (result.get('error') or '').lower()
-                        method = result.get('method') or ''
-                        if 'captcha' in error_msg or method == 'form_with_captcha':
-                            company.status = 'captcha'
-                        elif method == 'no_contact_found':
-                            company.status = 'no_contact_found'
-                            company.error_message = 'No contact form found on this site.'
-                        else:
-                            company.status = 'failed'
-                        company.contact_method = result.get('method')
-                        if company.status == 'failed':
-                            company.error_message = _user_facing_error(result.get('error'))
+                        result = result_holder[0] if result_holder else None
 
                     if result is not None:
-                        screenshot_bytes = result.get('screenshot_bytes')
-                        if not screenshot_bytes and result.get('screenshot_url'):
-                            local_path = result.get('screenshot_url')
-                            try:
-                                path_part = local_path.lstrip('/').replace('/', os.sep)
-                                roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
-                                for root in roots:
-                                    candidate = os.path.join(root, path_part)
-                                    if os.path.exists(candidate):
-                                        with open(candidate, 'rb') as f:
-                                            screenshot_bytes = f.read()
-                                        try:
-                                            os.remove(candidate)
-                                        except OSError:
-                                            pass
-                                        break
-                            except Exception as e:
-                                print(f"[WARN] Screenshot file read error: {e}")
-                        if screenshot_bytes:
-                            try:
-                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                if sb_url:
-                                    company.screenshot_url = sb_url
-                            except Exception as e:
-                                print(f"[WARN] Screenshot upload error: {e}")
+                        if result.get('success'):
+                            method = result.get('method', '')
+                            if method.startswith('email'):
+                                company.status = 'contact_info_found'
+                            else:
+                                company.status = 'completed'
+                            company.contact_method = method
+                            company.fields_filled = result.get('fields_filled', 0)
+                            company.error_message = None
+                        else:
+                            error_msg = (result.get('error') or '').lower()
+                            method = result.get('method') or ''
+                            if 'captcha' in error_msg or method == 'form_with_captcha':
+                                company.status = 'captcha'
+                            elif method == 'no_contact_found':
+                                company.status = 'no_contact_found'
+                                company.error_message = 'No contact form found on this site.'
+                            else:
+                                company.status = 'failed'
+                            company.contact_method = result.get('method')
+                            if company.status == 'failed':
+                                company.error_message = _user_facing_error(result.get('error'))
+
+                        if result is not None:
+                            screenshot_bytes = result.get('screenshot_bytes')
+                            if not screenshot_bytes and result.get('screenshot_url'):
+                                local_path = result.get('screenshot_url')
+                                try:
+                                    path_part = local_path.lstrip('/').replace('/', os.sep)
+                                    roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
+                                    for root in roots:
+                                        candidate = os.path.join(root, path_part)
+                                        if os.path.exists(candidate):
+                                            with open(candidate, 'rb') as f:
+                                                screenshot_bytes = f.read()
+                                            try:
+                                                os.remove(candidate)
+                                            except OSError:
+                                                pass
+                                            break
+                                except Exception as e:
+                                    print(f"[WARN] Screenshot file read error: {e}")
+                            if screenshot_bytes:
+                                try:
+                                    sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
+                                    if sb_url:
+                                        company.screenshot_url = sb_url
+                                except Exception as e:
+                                    print(f"[WARN] Screenshot upload error: {e}")
 
                     company.processed_at = datetime.utcnow()
                     db.session.commit()
