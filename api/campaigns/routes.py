@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 import os
 from sqlalchemy import desc, or_, func
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import threading
 
@@ -12,7 +12,7 @@ project_root = os.path.dirname(os.path.dirname(current_dir))
 # Create Blueprint - All endpoints are public, no authentication required
 campaigns_api = Blueprint('campaigns_api', __name__, url_prefix='/api/campaigns')
 
-# Campaign company limits by subscription tier
+# Per-campaign company limits by subscription tier
 CAMPAIGN_LIMITS = {
     'guest': 5,        # Anonymous users
     'free': 50,        # Signed up free users
@@ -22,13 +22,49 @@ CAMPAIGN_LIMITS = {
     'client': -1,      # Unlimited (client tier)
 }
 
+# Daily processed-company limits by tier (companies processed per day)
+DAILY_LIMITS = {
+    'guest': 5,
+    'free': 50,
+    'testing': 50,
+    'premium': 100,
+    'enterprise': -1,
+    'client': -1,
+}
+
 def get_campaign_limit(user_tier=None):
     """Get campaign company limit for a given user tier"""
     if not user_tier or user_tier not in CAMPAIGN_LIMITS:
         return CAMPAIGN_LIMITS['guest']
-    
     limit = CAMPAIGN_LIMITS[user_tier]
     return float('inf') if limit == -1 else limit
+
+def get_daily_limit(user_tier=None):
+    """Get daily processed-company limit for a given user tier"""
+    if not user_tier or user_tier not in DAILY_LIMITS:
+        return DAILY_LIMITS['guest']
+    limit = DAILY_LIMITS[user_tier]
+    return float('inf') if limit == -1 else limit
+
+def get_daily_used(user_id=None, session_id=None):
+    """Count companies processed today (status != pending, processed_at or created_at today UTC) for this user or guest session."""
+    from models import Company, Campaign
+    start_of_today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    q = Company.query.join(Campaign).filter(Company.status != 'pending')
+    if user_id is not None:
+        q = q.filter(Campaign.user_id == user_id)
+    else:
+        if not session_id:
+            return 0
+        q = q.filter(Campaign.session_id == session_id, Campaign.user_id.is_(None))
+    # Processed today: processed_at >= start_of_today, or no processed_at and created_at >= start_of_today
+    q = q.filter(
+        or_(
+            Company.processed_at >= start_of_today,
+            (Company.processed_at.is_(None)) & (Company.created_at >= start_of_today)
+        )
+    )
+    return q.count()
 
 @campaigns_api.before_request
 def handle_options():
@@ -107,6 +143,45 @@ def list_campaigns():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+@campaigns_api.route('/usage', methods=['GET'])
+@jwt_required(optional=True)
+def get_usage():
+    """Return daily usage for UI: daily_limit, daily_used, daily_remaining. Guest: pass session_id in query."""
+    try:
+        from models import User
+        current_user_id = get_jwt_identity()
+        session_id = request.args.get('session_id')
+        if current_user_id:
+            user = User.query.get(current_user_id)
+            tier = (user.subscription_tier or 'free') if user else 'guest'
+            daily_limit = get_daily_limit(tier)
+            daily_used = get_daily_used(user_id=current_user_id, session_id=None)
+        else:
+            if not session_id:
+                return jsonify({
+                    'success': True,
+                    'daily_limit': DAILY_LIMITS['guest'],
+                    'daily_used': 0,
+                    'daily_remaining': DAILY_LIMITS['guest'],
+                    'unlimited': False,
+                }), 200
+            daily_limit = get_daily_limit('guest')
+            daily_used = get_daily_used(user_id=None, session_id=session_id)
+        unlimited = daily_limit == float('inf')
+        daily_remaining = 0 if unlimited else max(0, int(daily_limit) - daily_used)
+        return jsonify({
+            'success': True,
+            'daily_limit': -1 if unlimited else int(daily_limit),
+            'daily_used': daily_used,
+            'daily_remaining': None if unlimited else daily_remaining,
+            'unlimited': unlimited,
+        }), 200
+    except Exception as e:
+        print(f"Error fetching usage: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @campaigns_api.route('/detect-companies', methods=['POST'])
 def detect_companies():
     """Auto-detect company names from URLs"""
@@ -181,6 +256,24 @@ def create_campaign():
         # For guests, session_id is required
         if not current_user_id and not session_id:
             return jsonify({'error': 'Session ID is required for guest users'}), 400
+
+        # Daily limit: enforce before creating
+        tier = 'guest'
+        if current_user_id:
+            from models import User
+            user = User.query.get(current_user_id)
+            if user:
+                tier = user.subscription_tier or 'free'
+        daily_limit = get_daily_limit(tier)
+        daily_used = get_daily_used(user_id=current_user_id, session_id=session_id if not current_user_id else None)
+        if daily_limit != float('inf') and daily_used + len(companies_data) > daily_limit:
+            return jsonify({
+                'error': 'Daily limit reached',
+                'message': f'You can process {int(daily_limit)} companies per day. You have used {daily_used} today. Resets at midnight UTC.',
+                'daily_used': daily_used,
+                'daily_limit': int(daily_limit),
+                'daily_remaining': max(0, int(daily_limit) - daily_used),
+            }), 403
         
         # Auto-detect missing company names if enabled
         if auto_detect_names:
@@ -599,6 +692,23 @@ def rapid_process_single(campaign_id, company_id):
         company = Company.query.filter_by(id=company_id, campaign_id=campaign_id).first()
         if not company:
             return jsonify({'error': 'Company not found'}), 404
+
+        # Daily limit check (single company)
+        from models import User
+        tier = 'guest'
+        if campaign.user_id:
+            user = User.query.get(campaign.user_id)
+            if user:
+                tier = user.subscription_tier or 'free'
+        daily_limit = get_daily_limit(tier)
+        daily_used = get_daily_used(user_id=campaign.user_id, session_id=campaign.session_id)
+        if daily_limit != float('inf') and daily_used >= daily_limit:
+            return jsonify({
+                'error': 'Daily limit reached',
+                'message': f'You can process {int(daily_limit)} companies per day. Resets at midnight UTC.',
+                'daily_used': daily_used,
+                'daily_limit': int(daily_limit),
+            }), 403
         
         # Mark as processing
         company.status = 'processing'
@@ -795,16 +905,42 @@ def rapid_process_batch(campaign_id):
     Trigger asynchronous sequential campaign processing
     """
     try:
-        from models import Campaign, Company
+        from models import Campaign, Company, User
         from database import db
         from campaign_sequential import process_campaign_sequential  # no Celery/Redis
         
         data = request.get_json() or {}
-        company_ids = data.get('company_ids') # Optional: if None, processes all pending
+        company_ids = data.get('company_ids')  # Optional: if None, processes all pending
         
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+
+        # How many we're about to process
+        if company_ids:
+            to_process = Company.query.filter_by(campaign_id=campaign_id).filter(Company.id.in_(company_ids), Company.status == 'pending').count()
+        else:
+            to_process = Company.query.filter_by(campaign_id=campaign_id, status='pending').count()
+        if to_process == 0:
+            return jsonify({'success': True, 'message': 'No pending companies to process', 'campaign_id': campaign_id}), 200
+
+        # Daily limit check
+        tier = 'guest'
+        if campaign.user_id:
+            user = User.query.get(campaign.user_id)
+            if user:
+                tier = user.subscription_tier or 'free'
+        daily_limit = get_daily_limit(tier)
+        daily_used = get_daily_used(user_id=campaign.user_id, session_id=campaign.session_id)
+        if daily_limit != float('inf') and daily_used + to_process > daily_limit:
+            remaining = max(0, int(daily_limit) - daily_used)
+            return jsonify({
+                'error': 'Daily limit reached',
+                'message': f'You can process {int(daily_limit)} companies per day. You have used {daily_used} today. Up to {remaining} remaining. Resets at midnight UTC.',
+                'daily_used': daily_used,
+                'daily_limit': int(daily_limit),
+                'daily_remaining': remaining,
+            }), 403
             
         # Trigger background processing via threading instead of Celery (Option 2)
         from flask import current_app
