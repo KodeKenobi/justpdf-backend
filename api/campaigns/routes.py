@@ -786,12 +786,12 @@ def rapid_process_single(campaign_id, company_id):
             # Update company based on result
             if result.get('success'):
                 method = result.get('method', '')
-                if method.startswith('email'):
+                if method == 'contact_info_found' or method.startswith('email'):
                     company.status = 'contact_info_found'
                     company.contact_method = method
                     company.error_message = None
                     if result.get('contact_info'):
-                        contact_info_json = json.dumps(result['contact_info'])
+                        contact_info_json = json.dumps(result['contact_info']) if not isinstance(result.get('contact_info'), str) else result['contact_info']
                         company.contact_info = contact_info_json
                 elif method.startswith('form_submitted'):
                     company.status = 'completed'

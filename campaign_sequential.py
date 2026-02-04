@@ -249,7 +249,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                     if result is not None:
                         if result.get('success'):
                             method = result.get('method', '')
-                            if method.startswith('email'):
+                            if method == 'contact_info_found' or method.startswith('email'):
                                 company.status = 'contact_info_found'
                             else:
                                 company.status = 'completed'

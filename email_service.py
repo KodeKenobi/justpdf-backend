@@ -379,7 +379,7 @@ def generate_invoice_pdf(tier: str, amount: float = 0.0, user_email: str = "", p
         traceback.print_exc()
         return None
 
-def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None, attachments: Optional[list] = None) -> bool:
+def send_email(to_email: str, subject: str, html_content: str, text_content: Optional[str] = None, attachments: Optional[list] = None, cc_email: Optional[str] = None) -> bool:
     """
     Send an email using Next.js API route (which uses Resend Node.js SDK)
     
@@ -388,6 +388,8 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         subject: Email subject
         html_content: HTML email body
         text_content: Plain text email body (optional)
+        attachments: Optional list of attachments
+        cc_email: Optional CC email address (receives a copy)
     
     Returns:
         True if email sent successfully, False otherwise
@@ -408,6 +410,10 @@ def send_email(to_email: str, subject: str, html_content: str, text_content: Opt
         # Add text content if provided
         if text_content:
             payload['text'] = text_content
+        
+        # Add CC if provided
+        if cc_email and cc_email.strip():
+            payload['cc'] = cc_email.strip()
         
         # Add attachments if provided
         # Format: [{ filename: "invoice.pdf", content: base64String, contentType: "application/pdf" }]

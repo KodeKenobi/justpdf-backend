@@ -297,6 +297,19 @@ class FastCampaignProcessor:
                             contact_info = self.extract_contact_info()
                             if contact_info and contact_info.get('emails'):
                                 self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
+                                email_found_when_no_form = self.sender_data.get('email_found_when_no_form', False)
+                                if not email_found_when_no_form:
+                                    self.log('info', 'Email option off', 'Skipping email send (user disabled "email found when no form")')
+                                    path, screenshot_bytes = self.take_screenshot('contact_info_found')
+                                    result.update({
+                                        'success': True,
+                                        'contact_info': contact_info,
+                                        'method': 'contact_info_found',
+                                        'screenshot_url': path,
+                                        'screenshot_bytes': screenshot_bytes,
+                                    })
+                                    self._record_brain_mandatory(self._contact_keyword_used, [], True, 'contact_info_found')
+                                    return result
                                 email_sent = self.send_email_to_contact(contact_info['emails'][0])
                                 if email_sent:
                                     path, screenshot_bytes = self.take_screenshot('email_sent')
@@ -369,18 +382,32 @@ class FastCampaignProcessor:
             contact_info = self.extract_contact_info()
             if contact_info and contact_info.get('emails'):
                 self.log('success', 'Email Found', f"Found {len(contact_info['emails'])} email(s)")
-                email_sent = self.send_email_to_contact(contact_info['emails'][0])
-                if email_sent:
-                    path, screenshot_bytes = self.take_screenshot('email_sent')
+                email_found_when_no_form = self.sender_data.get('email_found_when_no_form', False)
+                if not email_found_when_no_form:
+                    self.log('info', 'Email option off', 'Skipping email send (user disabled "email found when no form")')
+                    path, screenshot_bytes = self.take_screenshot('contact_info_found')
                     result.update({
                         'success': True,
-                        'method': 'email_sent',
                         'contact_info': contact_info,
+                        'method': 'contact_info_found',
                         'screenshot_url': path,
                         'screenshot_bytes': screenshot_bytes,
                     })
-                    self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], True, 'email_sent')
+                    self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], True, 'contact_info_found')
                     return result
+                else:
+                    email_sent = self.send_email_to_contact(contact_info['emails'][0])
+                    if email_sent:
+                        path, screenshot_bytes = self.take_screenshot('email_sent')
+                        result.update({
+                            'success': True,
+                            'method': 'email_sent',
+                            'contact_info': contact_info,
+                            'screenshot_url': path,
+                            'screenshot_bytes': screenshot_bytes,
+                        })
+                        self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], True, 'email_sent')
+                        return result
 
             # NO CONTACT FOUND
             self.log('error', 'No Contact Found', f'All strategies exhausted for {website_url}')
@@ -1525,12 +1552,17 @@ If you'd prefer not to receive these messages, please reply to let us know.
             
             self.log('info', 'Sending Email', f'Using existing email service to send to {email_address}')
             
+            cc_email = self.sender_data.get('cc_email') or None
+            if cc_email and str(cc_email).strip():
+                cc_email = str(cc_email).strip()
+            
             # Use your existing email service
             success = send_email(
                 to_email=email_address,
                 subject=subject,
                 html_content=html_content,
-                text_content=text_content
+                text_content=text_content,
+                cc_email=cc_email
             )
             
             if success:
