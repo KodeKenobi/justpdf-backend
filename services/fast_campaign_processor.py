@@ -735,6 +735,21 @@ class FastCampaignProcessor:
         except Exception:
             return False
 
+    def _is_contact_form_fill(self, filled_field_patterns: List[Dict]) -> bool:
+        """True if filled fields look like a real contact form (not newsletter-only). Reject email-only/newsletter as success."""
+        if not filled_field_patterns:
+            return False
+        roles = [p.get('role') for p in filled_field_patterns if p.get('role')]
+        contact_roles = {'message', 'first_name', 'last_name', 'full_name', 'company', 'phone', 'subject'}
+        if any(r in contact_roles for r in roles):
+            return True
+        # 3+ fields with at least one non-email (two emails = newsletter)
+        if len(filled_field_patterns) >= 3:
+            non_email = [r for r in roles if r != 'email']
+            if non_email:
+                return True
+        return False
+
     def _count_contact_like_fields(self, form) -> int:
         """Count inputs/selects that look like contact form fields (not hidden/submit/button). Used to skip newsletter/search forms."""
         try:
@@ -955,7 +970,8 @@ class FastCampaignProcessor:
                         }''') or '')
                     except Exception:
                         pass
-                    out.append({'tag': tag, 'type': itype, 'name': name, 'id': id_, 'placeholder': placeholder, 'label': label})
+                    required = el.evaluate('el => el.hasAttribute("required") || (el.getAttribute("aria-required") === "true")') or False
+                    out.append({'tag': tag, 'type': itype, 'name': name, 'id': id_, 'placeholder': placeholder, 'label': label, 'required': required})
                 except Exception:
                     continue
             selects = form.query_selector_all('select')
@@ -972,13 +988,14 @@ class FastCampaignProcessor:
                         }''') or '')
                     except Exception:
                         pass
+                    required = el.evaluate('el => el.hasAttribute("required") || (el.getAttribute("aria-required") === "true")') or False
                     options = []
                     for opt in (el.query_selector_all('option') or []):
                         try:
                             options.append({'value': opt.get_attribute('value'), 'text': (opt.inner_text() or '').strip()})
                         except Exception:
                             pass
-                    out.append({'tag': 'select', 'type': 'select', 'name': name, 'id': id_, 'label': label, 'options': options})
+                    out.append({'tag': 'select', 'type': 'select', 'name': name, 'id': id_, 'label': label, 'options': options, 'required': required})
                 except Exception:
                     continue
         except Exception:
@@ -1159,6 +1176,17 @@ class FastCampaignProcessor:
         except Exception:
             pass
 
+    def _click_field_safe(self, element, timeout=5000):
+        """Click form field; on overlay/interception retry with cookie dismiss + force click so we don't timeout."""
+        try:
+            element.click(timeout=timeout)
+        except Exception:
+            self.handle_cookie_modal()
+            try:
+                element.click(force=True, timeout=3000)
+            except Exception:
+                pass
+
     def _select_option_by_click(self, select_el, value=None, label=None, index=None):
         """Select an option by actually clicking the select then clicking the option (required for many sites; you cannot just set value)."""
         try:
@@ -1247,7 +1275,32 @@ class FastCampaignProcessor:
                 filled_count, filled_field_patterns = self._fill_using_field_list(form, extracted)
                 if self._is_timed_out():
                     return {'success': False, 'error': 'Processing timed out', 'method': 'timeout'}
-                if filled_count >= 2:
+                # Fill required selects we didn't map (e.g. "your-service", "inquiry type") so we don't submit with missing required
+                filled_names = {p.get('name') or '' for p in filled_field_patterns}
+                for field in extracted:
+                    if (field.get('tag') == 'select' and (field.get('required') or '*' in (field.get('label') or '')) and (field.get('name') or field.get('id') or '') not in filled_names:
+                        try:
+                            name_safe = (field.get('name') or '').replace('\\', '\\\\').replace('"', '\\"')
+                            id_safe = (field.get('id') or '').replace('\\', '\\\\').replace('"', '\\"')
+                            sel = f'select[name="{name_safe}"]' if field.get('name') else f'select[id="{id_safe}"]'
+                            el = form.locator(sel).first
+                            if el.count() and el.is_visible():
+                                opts = field.get('options') or []
+                                if len(opts) >= 1:
+                                    first_text = (opts[0].get('text') or '').strip().lower()
+                                    pick_idx = 1 if (any(p in first_text for p in ('select', 'choose', '--', 'please', 'pick')) and len(opts) > 1) else 0
+                                    ok = self._select_option_by_click(el, index=pick_idx)
+                                    if not ok:
+                                        el.select_option(index=pick_idx)
+                                        self._dispatch_select_events(el)
+                                    filled_count += 1
+                                    val = (opts[pick_idx].get('text') or opts[pick_idx].get('value') or '')[:100] if pick_idx < len(opts) else ''
+                                    filled_field_patterns.append({'role': 'subject', 'name': field.get('name') or '', 'label': field.get('label') or '', 'value': val})
+                                    filled_names.add(field.get('name') or field.get('id') or '')
+                                    self.log('info', 'Required Select', f'Filled required select: {field.get("name") or field.get("id")}')
+                        except Exception:
+                            pass
+                if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
                     if self.submit_form(form):
                         self.page.wait_for_timeout(1000)
                     path, screenshot_bytes = self.take_screenshot('form_filled')
@@ -1261,6 +1314,8 @@ class FastCampaignProcessor:
                         'filled_field_patterns': filled_field_patterns,
                         'form_fields_detected': extracted,
                     }
+                elif filled_count >= 2 and not self._is_contact_form_fill(filled_field_patterns):
+                    self.log('warning', 'Form Rejected', 'Newsletter/signup only (no message/name/phone); not counting as contact success')
                 elif filled_count == 1:
                     self.log('warning', 'Form Partial', 'Only one field filled from extract; falling back to discovery')
 
@@ -1320,7 +1375,7 @@ class FastCampaignProcessor:
                     # 1. Fill email field (Highest priority)
                     if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
                         email = self.sender_data.get('sender_email') or self.company.get('contact_email', 'contact@business.com')
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(email)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1333,7 +1388,7 @@ class FastCampaignProcessor:
                     # 2. Fill name fields (include "first name" from label text)
                     if any(kw in field_text for kw in ['first name', 'first-name', 'fname', 'firstname', 'given-name', 'givenname', 'first_name']):
                         fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(fname)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1347,7 +1402,7 @@ class FastCampaignProcessor:
                         if not lname:
                             name_parts = self.company.get('contact_person', 'Contact').split()
                             lname = name_parts[-1] if len(name_parts) > 1 else 'Contact'
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(lname)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1358,7 +1413,7 @@ class FastCampaignProcessor:
 
                     if any(kw in field_text for kw in ['full name', 'your name', 'name', 'full-name', 'fullname', 'your-name', 'full_name']) and 'company' not in field_text and 'first' not in field_text and 'last' not in field_text:
                         fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(fullname)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1370,7 +1425,7 @@ class FastCampaignProcessor:
                     # 3. Fill Company field
                     if any(kw in field_text for kw in ['company', 'organization', 'organisation', 'business-name', 'firm', 'business_name', 'org_name']) and 'email' not in field_text:
                         company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(company_val)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1383,7 +1438,7 @@ class FastCampaignProcessor:
                     if any(kw in field_text for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
                         phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
                         if phone:
-                            input_element.click()
+                            self._click_field_safe(input_element)
                             input_element.fill(phone)
                             input_element.dispatch_event('input')
                             input_element.dispatch_event('change')
@@ -1395,7 +1450,7 @@ class FastCampaignProcessor:
                     # Fill subject field
                     if any(kw in field_text for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
                         subject_val = self.subject
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(subject_val)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1407,7 +1462,7 @@ class FastCampaignProcessor:
                     # Fill country field (text input)
                     if any(kw in field_text for kw in ['country', 'nation', 'region', 'location', 'país', 'pays', 'land']):
                         country_val = self.sender_data.get('sender_country') or 'United Kingdom'
-                        input_element.click()
+                        self._click_field_safe(input_element)
                         input_element.fill(country_val)
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
@@ -1935,12 +1990,23 @@ class FastCampaignProcessor:
                 except Exception:
                     pass
             
-            # SUCCESS CRITERIA: Require at least 2 fields filled so we don't mark newsletter/search as contact success
-            if filled_count >= 2:
+            # SUCCESS CRITERIA: Require at least 2 fields filled AND contact-like content (not newsletter-only)
+            if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
                 self.log('success', 'Form Processed', f'Successfully filled {filled_count} fields and captured screenshot')
                 res = {
                     'success': True,
                     'method': 'form_filled',
+                    'fields_filled': filled_count,
+                    'screenshot_url': screenshot_url,
+                    'screenshot_bytes': screenshot_bytes,
+                    'filled_field_patterns': filled_field_patterns,
+                }
+                return res
+            elif filled_count >= 2 and not self._is_contact_form_fill(filled_field_patterns):
+                self.log('warning', 'Form Rejected', 'Newsletter/signup only (no message/name/phone); not counting as contact success')
+                res = {
+                    'success': False,
+                    'error': 'Newsletter/signup form only; not treated as contact success',
                     'fields_filled': filled_count,
                     'screenshot_url': screenshot_url,
                     'screenshot_bytes': screenshot_bytes,
@@ -2002,10 +2068,33 @@ class FastCampaignProcessor:
                         return True
                 except Exception:
                     continue
-            # Fallback: native form submit (may not trigger React/JS handlers)
-            form.evaluate('el => el.submit()')
-            self.log('info', 'Submitting', 'Form submitted via submit()')
-            return True
+            # Try button by text (many div-based forms have no type=submit)
+            for text in ['Send', 'Submit', 'Send Message', 'Submit Form', 'Send Enquiry', 'Send Inquiry']:
+                try:
+                    btn = form.locator(f'button:has-text("{text}"), input[type="submit"][value="{text}"], [role="button"]:has-text("{text}")').first
+                    if btn.count() and btn.is_visible():
+                        btn.click()
+                        self.log('info', 'Submitting', f'Clicked button by text: {text}')
+                        return True
+                except Exception:
+                    continue
+            # Fallback: native form submit (may not trigger React/JS handlers; can throw if form is null/stale)
+            try:
+                form.evaluate('el => el && el.submit ? el.submit() : null')
+                self.log('info', 'Submitting', 'Form submitted via submit()')
+                return True
+            except Exception:
+                pass
+            # Last resort: click first visible button in form
+            try:
+                btn = form.query_selector('button, input[type="submit"]')
+                if btn and btn.is_visible():
+                    btn.click()
+                    self.log('info', 'Submitting', 'Clicked first button')
+                    return True
+            except Exception:
+                pass
+            return False
         except Exception as e:
             self.log('warning', 'Submit Failed', str(e))
             return False

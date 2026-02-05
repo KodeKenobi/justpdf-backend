@@ -109,11 +109,11 @@ class LiveScraper:
         try:
             await self.send_log('info', 'Capturing', 'Taking screenshot of filled form...')
             
-            # Full page screenshot (entire scrollable page)
+            # Full viewport screenshot
             screenshot = await self.page.screenshot(
                 type='jpeg',
                 quality=85,
-                full_page=True
+                full_page=False
             )
             
             # Upload to Supabase Storage (REQUIRED)
@@ -1232,7 +1232,7 @@ class LiveScraper:
                     # Capture screenshot of filled form
                     print("📸 [RAPID SCRAPER] Taking screenshot of completed form...")
                     try:
-                        screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=True)
+                        screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
                         print("✅ [RAPID SCRAPER] Screenshot captured successfully")
                     except Exception as e:
                         print(f"⚠️ [RAPID SCRAPER] Screenshot failed: {str(e)}")
@@ -1850,7 +1850,7 @@ class LiveScraper:
                         # Take screenshot
                         screenshot_url = None
                         try:
-                            screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=True)
+                            screenshot = self.page.screenshot(type='jpeg', quality=85, full_page=False)
                             public_url = upload_screenshot(screenshot, campaign_id, company.id)
                             if public_url:
                                 screenshot_url = public_url
