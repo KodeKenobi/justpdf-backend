@@ -974,10 +974,21 @@ def rapid_process_batch(campaign_id):
             with flask_app.app_context():
                 try:
                     process_campaign_sequential(campaign_id_arg, company_ids_arg)
-                except Exception as e:
+                except BaseException as e:
                     print(f"Background thread error: {e}")
                     import traceback
                     traceback.print_exc()
+                finally:
+                    # Whatever happens (normal finish, exception, etc.), clear any company still "processing" so the run never leaves anyone stuck
+                    try:
+                        from models import Company
+                        from database import db
+                        n = Company.query.filter_by(campaign_id=campaign_id_arg, status='processing').update({'status': 'pending'})
+                        if n:
+                            db.session.commit()
+                            print(f"[Rapid Process] Thread exit: cleared {n} stuck 'processing' to 'pending' for campaign {campaign_id_arg}")
+                    except Exception as cleanup_err:
+                        print(f"[Rapid Process] Cleanup on thread exit failed: {cleanup_err}")
 
         thread = threading.Thread(
             target=run_in_background,
@@ -997,6 +1008,33 @@ def rapid_process_batch(campaign_id):
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+@campaigns_api.route('/<int:campaign_id>/reset-stuck', methods=['POST'])
+def reset_stuck_processing(campaign_id):
+    """
+    Reset any companies stuck in 'processing' to 'pending' so they can be retried.
+    Call this if processing stopped and some companies show "In progress..." indefinitely.
+    """
+    try:
+        from models import Campaign, Company
+        from database import db
+
+        campaign = Campaign.query.get(campaign_id)
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
+
+        n = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+        db.session.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Reset {n} stuck company/companies to pending',
+            'reset_count': n,
+            'campaign_id': campaign_id
+        }), 200
+    except Exception as e:
+        print(f"[Reset Stuck] Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @campaigns_api.route('/<int:campaign_id>/stop', methods=['POST'])
 def stop_campaign(campaign_id):

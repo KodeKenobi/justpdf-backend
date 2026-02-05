@@ -12,6 +12,8 @@ from models import Campaign, Company, db
 
 # Per-company timeout so one slow site doesn't hang the whole run (e.g. 5th company)
 PER_COMPANY_TIMEOUT_SEC = 90
+# Max time to wait for page.close() so one stuck close doesn't freeze the entire run
+PAGE_CLOSE_TIMEOUT_SEC = 8
 
 # Map technical log (action / message) to user-friendly English for the right-hand panel
 def _user_friendly_message(level, action, message):
@@ -127,6 +129,13 @@ def process_campaign_sequential(campaign_id, company_ids=None):
         if not campaign:
             return {'error': f'Campaign {campaign_id} not found'}
 
+        # Permanent fix: clear any stale "processing" from a previous crashed run so they can be retried
+        stuck = Company.query.filter_by(campaign_id=campaign_id, status='processing').count()
+        if stuck:
+            Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+            db.session.commit()
+            print(f"[Sequential] Reset {stuck} stuck 'processing' company/companies to 'pending' for campaign {campaign_id}")
+
         campaign.status = 'processing'
         campaign.started_at = datetime.utcnow()
         db.session.commit()
@@ -207,27 +216,36 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         page.set_default_timeout(25000)
                         page.set_default_navigation_timeout(30000)
                     except Exception as page_err:
-                        print(f"[Sequential] new_page() failed for company {company.id}: {page_err}")
-                        company.status = 'failed'
-                        company.error_message = _user_facing_error(str(page_err))
-                        company.processed_at = datetime.utcnow()
-                        db.session.commit()
-                        campaign.processed_count = Company.query.filter(
-                            Company.campaign_id == campaign.id,
-                            Company.status != 'pending',
-                            Company.status != 'processing'
-                        ).count()
-                        db.session.commit()
-                        ws_manager.broadcast_event(campaign_id, {
-                            'type': 'company_completed',
-                            'data': {
-                                'company_id': company.id,
-                                'status': company.status,
-                                'screenshot_url': None,
-                                'progress': int((idx + 1) / len(companies) * 100)
-                            }
-                        })
-                        continue
+                        # Context may be bad after timeouts; try fresh context once
+                        try:
+                            context.close()
+                            context = browser.new_context()
+                            page = context.new_page()
+                            page.set_default_timeout(25000)
+                            page.set_default_navigation_timeout(30000)
+                        except Exception as retry_err:
+                            print(f"[Sequential] new_page() failed for company {company.id}: {page_err}; retry: {retry_err}")
+                            company.status = 'failed'
+                            company.error_message = _user_facing_error(str(retry_err))
+                            company.processed_at = datetime.utcnow()
+                            db.session.commit()
+                            campaign.processed_count = Company.query.filter(
+                                Company.campaign_id == campaign.id,
+                                Company.status != 'pending',
+                                Company.status != 'processing'
+                            ).count()
+                            db.session.commit()
+                            ws_manager.broadcast_event(campaign_id, {
+                                'type': 'company_completed',
+                                'data': {
+                                    'company_id': company.id,
+                                    'status': company.status,
+                                    'screenshot_url': None,
+                                    'progress': int((idx + 1) / len(companies) * 100)
+                                }
+                            })
+                            continue
+                    # If retry succeeded, page is set and we proceed
 
                     # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
                     _company_id = company.id
@@ -380,12 +398,18 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             pass
                         db.session.commit()
                     finally:
-                        # Always close the page so we don't accumulate pages (causes next new_page() to fail and kill the loop)
-                        try:
-                            if page:
-                                page.close()
-                        except Exception as e:
-                            print(f"[WARN] Page close error (timed-out company): {e}")
+                        # Always close the page so we don't accumulate pages. Use a timeout so one stuck close never freezes the whole run.
+                        if page:
+                            def do_close():
+                                try:
+                                    page.close()
+                                except Exception:
+                                    pass
+                            closer = threading.Thread(target=do_close, daemon=True)
+                            closer.start()
+                            closer.join(timeout=PAGE_CLOSE_TIMEOUT_SEC)
+                            if closer.is_alive():
+                                print(f"[WARN] Page close did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s; continuing to next company")
                 except Exception as outer_err:
                     # ANY uncaught exception in this iteration: mark company failed, continue to next
                     print(f"[Sequential] Company {company.id} iteration failed (continuing): {outer_err}")
@@ -407,11 +431,17 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         })
                     except Exception as e2:
                         print(f"[Sequential] Failed to record iteration error: {e2}")
-                    try:
-                        if page:
-                            page.close()
-                    except Exception:
-                        pass
+                    if page:
+                        def do_close():
+                            try:
+                                page.close()
+                            except Exception:
+                                pass
+                        closer = threading.Thread(target=do_close, daemon=True)
+                        closer.start()
+                        closer.join(timeout=PAGE_CLOSE_TIMEOUT_SEC)
+                        if closer.is_alive():
+                            print(f"[WARN] Page close (after error) did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s")
 
             browser.close()
 
@@ -435,3 +465,13 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             campaign.status = 'failed'
             db.session.commit()
         return {'error': str(e)}
+    finally:
+        # Permanent fix: always clear any company still "processing" so they are never stuck (crash/exit/timeout)
+        try:
+            if campaign_id is not None:
+                n = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+                if n:
+                    db.session.commit()
+                    print(f"[Sequential] Cleared {n} company/companies from 'processing' to 'pending' (campaign {campaign_id})")
+        except Exception as cleanup_err:
+            print(f"[Sequential] Cleanup warning: {cleanup_err}")
