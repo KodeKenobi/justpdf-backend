@@ -124,10 +124,20 @@ class FastCampaignProcessor:
 
             # STRATEGY 0: Footer first — contact links are almost always in footer; go to contact page before trying homepage forms
             self.log('info', 'Strategy 0', 'Checking footer first for contact link…')
-            contact_keywords = _brain_get_keywords('contact_keyword', ['contact', 'get-in-touch', 'enquiry', 'support', 'about-us'])
+            contact_keywords = _brain_get_keywords('contact_keyword', [
+                'contact', 'contact us', 'get in touch', 'get-in-touch', 'enquiry', 'enquiries', 'support', 'about-us'
+            ])
             footer_candidates = []
             try:
-                footer_containers = self.page.query_selector_all('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer')
+                # Scroll to bottom so lazy-loaded footers appear, then find footer
+                try:
+                    self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    self.page.wait_for_timeout(400)
+                except Exception:
+                    pass
+                footer_containers = self.page.query_selector_all(
+                    'footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer, [class*="footer"], [class*="Footer"]'
+                )
                 for footer_el in (footer_containers or []):
                     try:
                         footer_links = footer_el.query_selector_all('a[href]')
@@ -340,7 +350,9 @@ class FastCampaignProcessor:
             try:
                 # Collect (href, text) from footer/selector while still on homepage so we don't hold stale handles after navigation
                 candidates = []
-                footer_containers = self.page.query_selector_all('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer')
+                footer_containers = self.page.query_selector_all(
+                    'footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer, [class*="footer"], [class*="Footer"]'
+                )
                 for footer_el in (footer_containers or []):
                     try:
                         footer_links = footer_el.query_selector_all('a[href]')
@@ -650,11 +662,11 @@ class FastCampaignProcessor:
         return result
 
     def _is_newsletter_or_signup_form(self, form) -> bool:
-        """Return True if form is clearly newsletter/signup or looks like name-only signup (no message field). Works for any site."""
+        """Return True if form is clearly newsletter/signup or lacks a real contact message field. Contact forms must have message/textarea."""
         try:
-            # Form inside footer is almost always newsletter/signup
+            # Form inside footer is almost always newsletter/signup — never treat as contact form
             in_footer = form.evaluate('''el => {
-                const footer = el.closest('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer');
+                const footer = el.closest('footer, [role="contentinfo"], .footer, #footer, .site-footer, .page-footer, [class*="footer"], [class*="Footer"]');
                 return !!footer;
             }''')
             if in_footer:
@@ -675,8 +687,7 @@ class FastCampaignProcessor:
             newsletter_keywords = ['newsletter', 'sign up', 'signup', 'stay in the loop', 'subscribe', 'subscribe to our', 'join our list', 'get the latest', 'email signup', 'mailing list']
             if any(kw in ctx for kw in newsletter_keywords):
                 return True
-            # Generic heuristic: contact forms have a message/enquiry field (textarea or input with message-like label/name).
-            # Forms with only name/email (no message field) and few fields are often newsletter or name-only signup.
+            # Contact forms must have a message/enquiry field (textarea or message-like input). No message field = newsletter/signup.
             has_message_field = form.evaluate('''el => {
                 const textareas = el.querySelectorAll('textarea');
                 if (textareas.length > 0) return true;
@@ -692,11 +703,8 @@ class FastCampaignProcessor:
                 }
                 return false;
             }''')
-            if has_message_field:
-                return False
-            fillable_count = self._count_contact_like_fields(form)
-            if fillable_count <= 4:
-                return True
+            if not has_message_field:
+                return True  # No message/textarea = newsletter or signup, not contact
             return False
         except Exception:
             return False
@@ -1095,8 +1103,10 @@ class FastCampaignProcessor:
                     for o in opts:
                         v = o.get('value') or o.get('text') or ''
                         if v and 'united' in v.lower():
-                            el.select_option(value=v) if o.get('value') else el.select_option(label=v)
-                            self._dispatch_select_events(el)
+                            ok = self._select_option_by_click(el, value=o.get('value'), label=o.get('text'))
+                            if not ok:
+                                el.select_option(value=v) if o.get('value') else el.select_option(label=v)
+                                self._dispatch_select_events(el)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
                             self.log('info', 'Field Filled (mapped)', f'Country select -> {name or id_}')
@@ -1113,6 +1123,68 @@ class FastCampaignProcessor:
             select_el.dispatch_event('input')
         except Exception:
             pass
+
+    def _select_option_by_click(self, select_el, value=None, label=None, index=None):
+        """Select an option by actually clicking the select then clicking the option (required for many sites; you cannot just set value)."""
+        try:
+            try:
+                select_el.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            self.page.wait_for_timeout(100)
+            select_el.click(timeout=2000)
+            self.page.wait_for_timeout(250)
+            # Support both ElementHandle (query_selector_all) and Locator (evaluate)
+            opts_info = []
+            if hasattr(select_el, 'query_selector_all') and callable(select_el.query_selector_all):
+                opts = select_el.query_selector_all('option')
+                if not opts:
+                    return False
+                for i, o in enumerate(opts):
+                    opts_info.append({
+                        'value': (o.get_attribute('value') or '').strip(),
+                        'text': (o.inner_text() or '').strip(),
+                        'index': i
+                    })
+            else:
+                opts_info = select_el.evaluate('''el => {
+                    const opts = el.options;
+                    return Array.from(opts).map((o, i) => ({ value: (o.value || '').trim(), text: (o.innerText || '').trim(), index: i }));
+                }''') or []
+            if not opts_info:
+                return False
+            target_idx = None
+            if index is not None and 0 <= index < len(opts_info):
+                target_idx = index
+            elif label:
+                label_lower = (label or '').strip().lower()
+                for o in opts_info:
+                    t = (o.get('text') or '').lower()
+                    v = (o.get('value') or '').lower()
+                    if label_lower in t or label_lower in v or t == label_lower:
+                        target_idx = o.get('index', 0)
+                        break
+            elif value:
+                val_str = (value or '').strip()
+                for o in opts_info:
+                    if (o.get('value') or '').strip() == val_str or (o.get('text') or '').strip() == val_str:
+                        target_idx = o.get('index', 0)
+                        break
+            if target_idx is None and len(opts_info) > 0:
+                target_idx = 1 if len(opts_info) > 1 else 0  # skip placeholder if possible
+            if target_idx is not None:
+                if hasattr(select_el, 'query_selector_all') and callable(select_el.query_selector_all):
+                    opts = select_el.query_selector_all('option')
+                    if target_idx < len(opts):
+                        opts[target_idx].click()
+                else:
+                    select_el.locator('option').nth(target_idx).click()
+                self.page.wait_for_timeout(100)
+                self._dispatch_select_events(select_el)
+                return True
+        except Exception:
+            pass
+        return False
 
     def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False, frame=None) -> Dict:
         """Fill and submit form with smart field detection. Uses pre-extracted field_mappings when present (intelligent fill)."""
@@ -1392,8 +1464,10 @@ class FastCampaignProcessor:
                             target_val = options[0].get_attribute('value') or (options[0].inner_text() or '').strip()
                         if target_val:
                             try:
-                                select.select_option(value=target_val)
-                                self._dispatch_select_events(select)
+                                ok = self._select_option_by_click(select, value=target_val, label=target_label)
+                                if not ok:
+                                    select.select_option(value=target_val)
+                                    self._dispatch_select_events(select)
                             except Exception:
                                 try:
                                     select.select_option(label=target_label or target_val)
@@ -1433,8 +1507,10 @@ class FastCampaignProcessor:
                             label = target_opt_val
                         if val is not None or label:
                             try:
-                                select.select_option(value=val or label)
-                                self._dispatch_select_events(select)
+                                ok = self._select_option_by_click(select, value=val, label=label, index=idx)
+                                if not ok:
+                                    select.select_option(value=val or label)
+                                    self._dispatch_select_events(select)
                             except Exception:
                                 try:
                                     select.select_option(label=label or val)
@@ -1447,8 +1523,10 @@ class FastCampaignProcessor:
                                         pass
                         else:
                             try:
-                                select.select_option(index=idx)
-                                self._dispatch_select_events(select)
+                                ok = self._select_option_by_click(select, index=idx)
+                                if not ok:
+                                    select.select_option(index=idx)
+                                    self._dispatch_select_events(select)
                             except Exception:
                                 pass
                         filled_count += 1
