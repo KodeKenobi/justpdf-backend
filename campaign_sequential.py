@@ -192,7 +192,20 @@ def process_campaign_sequential(campaign_id, company_ids=None):
 
             for idx, company in enumerate(companies):
                 page = None
+                # Re-fetch company by id so we always have a fresh session reference (avoids expired/detached after previous commit)
                 try:
+                    _cid = company.id if hasattr(company, 'id') else None
+                    if _cid is not None:
+                        company = Company.query.filter_by(id=_cid, campaign_id=campaign_id).first()
+                    if company is None:
+                        print(f"[Sequential] Skipping missing company at index {idx}")
+                        continue
+                except Exception as refetch_err:
+                    print(f"[Sequential] Refetch company at index {idx} failed: {refetch_err}; skipping")
+                    continue
+
+                try:
+                    db.session.rollback()
                     db.session.refresh(campaign)
                     if campaign.status in ['stopping', 'cancelled']:
                         # Reset any company still "processing" so UI doesn't show it stuck
@@ -207,6 +220,16 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             'data': {'message': 'Processing stopped by user'}
                         })
                         break
+
+                    # PERMANENT FIX: Only one company may be "processing" at a time. Clear any other stuck ones (e.g. from crashed iteration).
+                    other_stuck = Company.query.filter(
+                        Company.campaign_id == campaign_id,
+                        Company.status == 'processing',
+                        Company.id != company.id
+                    ).update({'status': 'pending'})
+                    if other_stuck:
+                        db.session.commit()
+                        print(f"[Sequential] Cleared {other_stuck} other company/companies from 'processing' before starting company {company.id}")
 
                     company.status = 'processing'
                     db.session.commit()
@@ -386,18 +409,67 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         })
                     except Exception as e:
                         live_logger('error', 'Execution Error', str(e))
-                        company.status = 'failed'
-                        company.error_message = _user_facing_error(str(e))
                         try:
-                            fb_bytes = page.screenshot()
-                            if fb_bytes:
-                                sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
-                                if sb_url:
-                                    company.screenshot_url = sb_url
-                        except Exception:
-                            pass
-                        db.session.commit()
+                            db.session.rollback()
+                            company.status = 'failed'
+                            company.error_message = _user_facing_error(str(e))
+                            company.processed_at = datetime.utcnow()
+                            try:
+                                fb_bytes = page.screenshot()
+                                if fb_bytes:
+                                    sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                    if sb_url:
+                                        company.screenshot_url = sb_url
+                            except Exception:
+                                pass
+                            db.session.commit()
+                            campaign.processed_count = Company.query.filter(
+                                Company.campaign_id == campaign.id,
+                                Company.status != 'pending',
+                                Company.status != 'processing'
+                            ).count()
+                            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                            db.session.commit()
+                            ws_manager.broadcast_event(campaign_id, {
+                                'type': 'company_completed',
+                                'data': {
+                                    'company_id': company.id,
+                                    'status': 'failed',
+                                    'screenshot_url': getattr(company, 'screenshot_url', None),
+                                    'progress': int((idx + 1) / len(companies) * 100)
+                                }
+                            })
+                        except Exception as e2:
+                            print(f"[Sequential] Failed to record execution error for company {company.id}: {e2}")
+                            try:
+                                db.session.rollback()
+                            except Exception:
+                                pass
                     finally:
+                        # PERMANENT FIX: If this company is still "processing" after we're done (crash/early exit), force to failed and notify so it never stays stuck.
+                        try:
+                            db.session.refresh(company)
+                            if company.status == 'processing':
+                                company.status = 'failed'
+                                company.error_message = 'Processing stopped unexpectedly. You can retry.'
+                                company.processed_at = datetime.utcnow()
+                                db.session.commit()
+                                ws_manager.broadcast_event(campaign_id, {
+                                    'type': 'company_completed',
+                                    'data': {
+                                        'company_id': company.id,
+                                        'status': 'failed',
+                                        'screenshot_url': getattr(company, 'screenshot_url', None),
+                                        'progress': int((idx + 1) / len(companies) * 100)
+                                    }
+                                })
+                                print(f"[Sequential] Safety: company {company.id} was still processing after iteration; set to failed")
+                        except Exception as safe_err:
+                            print(f"[Sequential] Safety net error (non-fatal): {safe_err}")
+                            try:
+                                db.session.rollback()
+                            except Exception:
+                                pass
                         # Always close the page so we don't accumulate pages. Use a timeout so one stuck close never freezes the whole run.
                         if page:
                             def do_close():
@@ -411,26 +483,42 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             if closer.is_alive():
                                 print(f"[WARN] Page close did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s; continuing to next company")
                 except Exception as outer_err:
-                    # ANY uncaught exception in this iteration: mark company failed, continue to next
-                    print(f"[Sequential] Company {company.id} iteration failed (continuing): {outer_err}")
+                    # ANY uncaught exception in this iteration: mark company failed, broadcast, then CONTINUE to next company (never re-raise)
+                    _company_id_safe = getattr(company, 'id', None)
+                    print(f"[Sequential] Company {_company_id_safe} iteration failed (continuing to next): {outer_err}")
                     import traceback
                     traceback.print_exc()
                     try:
-                        company.status = 'failed'
-                        company.error_message = _user_facing_error(str(outer_err))
-                        company.processed_at = datetime.utcnow()
-                        db.session.commit()
-                        ws_manager.broadcast_event(campaign_id, {
-                            'type': 'company_completed',
-                            'data': {
-                                'company_id': company.id,
-                                'status': 'failed',
-                                'screenshot_url': None,
-                                'progress': int((idx + 1) / len(companies) * 100)
-                            }
-                        })
+                        db.session.rollback()
+                        c = Company.query.get(_company_id_safe) if _company_id_safe else None
+                        if c is not None:
+                            c.status = 'failed'
+                            c.error_message = _user_facing_error(str(outer_err))
+                            c.processed_at = datetime.utcnow()
+                            db.session.commit()
+                            db.session.refresh(campaign)
+                            campaign.processed_count = Company.query.filter(
+                                Company.campaign_id == campaign.id,
+                                Company.status != 'pending',
+                                Company.status != 'processing'
+                            ).count()
+                            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                            db.session.commit()
+                            ws_manager.broadcast_event(campaign_id, {
+                                'type': 'company_completed',
+                                'data': {
+                                    'company_id': _company_id_safe,
+                                    'status': 'failed',
+                                    'screenshot_url': None,
+                                    'progress': int((idx + 1) / len(companies) * 100)
+                                }
+                            })
                     except Exception as e2:
-                        print(f"[Sequential] Failed to record iteration error: {e2}")
+                        print(f"[Sequential] Failed to record iteration error (continuing): {e2}")
+                        try:
+                            db.session.rollback()
+                        except Exception:
+                            pass
                     if page:
                         def do_close():
                             try:
@@ -443,7 +531,10 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         if closer.is_alive():
                             print(f"[WARN] Page close (after error) did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s")
 
-            browser.close()
+            try:
+                browser.close()
+            except Exception as close_err:
+                print(f"[Sequential] Browser close warning (non-fatal): {close_err}")
 
         # Only mark completed if we didn't break out due to stop/cancel
         if campaign.status not in ['stopping', 'cancelled']:
@@ -466,12 +557,20 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             db.session.commit()
         return {'error': str(e)}
     finally:
-        # Permanent fix: always clear any company still "processing" so they are never stuck (crash/exit/timeout)
-        try:
-            if campaign_id is not None:
+        # PERMANENT FIX: Always clear any company still "processing" so they are never stuck (crash/exit/timeout). Never skip.
+        if campaign_id is not None:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            try:
                 n = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
                 if n:
                     db.session.commit()
-                    print(f"[Sequential] Cleared {n} company/companies from 'processing' to 'pending' (campaign {campaign_id})")
-        except Exception as cleanup_err:
-            print(f"[Sequential] Cleanup warning: {cleanup_err}")
+                    print(f"[Sequential] Exit cleanup: cleared {n} company/companies from 'processing' to 'pending' (campaign {campaign_id})")
+            except Exception as cleanup_err:
+                print(f"[Sequential] Exit cleanup warning: {cleanup_err}")
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass

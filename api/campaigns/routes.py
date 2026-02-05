@@ -953,6 +953,19 @@ def rapid_process_batch(campaign_id):
                 'daily_limit': int(daily_limit),
                 'daily_remaining': remaining,
             }), 403
+
+        # PERMANENT FIX: Clear any company still "processing" before starting so we never inherit stuck state from a previous run
+        try:
+            n_stale = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+            if n_stale:
+                db.session.commit()
+                print(f"[Rapid Process] Pre-start: cleared {n_stale} stuck 'processing' to 'pending' for campaign {campaign_id}")
+        except Exception as pre_err:
+            print(f"[Rapid Process] Pre-start cleanup warning: {pre_err}")
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
             
         # Trigger background processing via threading instead of Celery (Option 2)
         # Thread must run with Flask app context so db.session works. Get app from the
@@ -981,16 +994,21 @@ def rapid_process_batch(campaign_id):
                     import traceback
                     traceback.print_exc()
                 finally:
-                    # Whatever happens (normal finish, exception, etc.), clear any company still "processing" so the run never leaves anyone stuck
+                    # PERMANENT FIX: Whatever happens (normal finish, exception, crash), clear any company still "processing" so the run never leaves anyone stuck
                     try:
                         from models import Company
                         from database import db
+                        db.session.rollback()
                         n = Company.query.filter_by(campaign_id=campaign_id_arg, status='processing').update({'status': 'pending'})
                         if n:
                             db.session.commit()
                             print(f"[Rapid Process] Thread exit: cleared {n} stuck 'processing' to 'pending' for campaign {campaign_id_arg}")
                     except Exception as cleanup_err:
                         print(f"[Rapid Process] Cleanup on thread exit failed: {cleanup_err}")
+                        try:
+                            db.session.rollback()
+                        except Exception:
+                            pass
 
         thread = threading.Thread(
             target=run_in_background,
