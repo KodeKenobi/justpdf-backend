@@ -86,6 +86,31 @@ class FastCampaignProcessor:
             return False
         return time.time() > self.deadline
 
+    def _url_looks_like_listing_or_category(self, url: str) -> bool:
+        """True if URL path suggests a category/listing/vacancies page (no contact form expected). Avoids long waits."""
+        if not url:
+            return False
+        path = (url.split('?')[0].split('#')[0].rstrip('/') or '').lower()
+        segments = [s for s in path.split('/') if s]
+        listing_indicators = ['category', 'categories', 'vacancies', 'jobs', 'product', 'products', 'shop', 'blog', 'news', 'listing', 'listings', 'offices']
+        return any(ind in segments for ind in listing_indicators) or any(ind in path for ind in ['/category/', '/vacancies/', '/product/', '/shop/', '/blog/'])
+
+    def _page_has_no_contact_form_quick(self) -> bool:
+        """True if main document has no form, no email input, no textarea (quick check)."""
+        try:
+            forms = self.page.query_selector_all('form')
+            if forms:
+                return False
+            email_input = self.page.query_selector('input[type="email"], input[id*="email" i], input[name*="email" i]')
+            if email_input:
+                return False
+            textarea = self.page.query_selector('textarea')
+            if textarea:
+                return False
+            return True
+        except Exception:
+            return True
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
@@ -128,9 +153,9 @@ class FastCampaignProcessor:
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
-                self.page.goto(website_url, wait_until='domcontentloaded', timeout=20000)
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=12000)
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(600)
+                self.page.wait_for_timeout(300)
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
@@ -147,7 +172,7 @@ class FastCampaignProcessor:
                 # Scroll to bottom so lazy-loaded footers appear, then find footer
                 try:
                     self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    self.page.wait_for_timeout(400)
+                    self.page.wait_for_timeout(200)
                 except Exception:
                     pass
                 footer_containers = self.page.query_selector_all(
@@ -196,19 +221,24 @@ class FastCampaignProcessor:
                     full_href = self.make_absolute_url(href)
                     if not (href or '').strip().startswith('#'):
                         try:
-                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=20000)
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=10000)
                             self.handle_cookie_modal()
                             self.page.wait_for_timeout(400)
-                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(400)
-                            self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(300)
-                            try:
-                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=6000)
-                                self.page.wait_for_timeout(500)
-                            except Exception:
-                                pass
-                            contact_page_forms = self.page.query_selector_all('form')
+                            # Fast bail: category/listing/vacancies URL with no form → skip and try homepage
+                            if self._url_looks_like_listing_or_category(self.page.url() or full_href) and self._page_has_no_contact_form_quick():
+                                self.log('info', 'Strategy 0', 'Contact link points to category/listing page with no form; falling back to homepage')
+                                contact_page_forms = []
+                            else:
+                                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                                self.page.wait_for_timeout(200)
+                                self.page.evaluate("window.scrollTo(0, 0)")
+                                self.page.wait_for_timeout(150)
+                                try:
+                                    self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=4000)
+                                    self.page.wait_for_timeout(200)
+                                except Exception:
+                                    pass
+                                contact_page_forms = self.page.query_selector_all('form')
                             if contact_page_forms:
                                 for form_idx in range(len(contact_page_forms)):
                                     if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
@@ -216,8 +246,8 @@ class FastCampaignProcessor:
                                     if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
                                         continue
                                     try:
-                                        self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
-                                        self.page.wait_for_timeout(300)
+                                        self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=1500)
+                                        self.page.wait_for_timeout(150)
                                     except Exception:
                                         pass
                                     forms_refresh = self.page.query_selector_all('form')
@@ -234,26 +264,26 @@ class FastCampaignProcessor:
                                 self.log('info', 'Strategy 0', 'Contact page form(s) did not succeed; falling back to homepage')
                             else:
                                 self.log('info', 'Strategy 0', 'No form on contact page; falling back to homepage')
-                            self.page.goto(website_url, wait_until='domcontentloaded', timeout=15000)
+                            self.page.goto(website_url, wait_until='domcontentloaded', timeout=10000)
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(400)
+                            self.page.wait_for_timeout(200)
                         except Exception as e:
                             self.log('warning', 'Strategy 0', f'Footer contact link failed: {e}; continuing to homepage forms')
                             try:
-                                self.page.goto(website_url, wait_until='domcontentloaded', timeout=15000)
+                                self.page.goto(website_url, wait_until='domcontentloaded', timeout=10000)
                                 self.handle_cookie_modal()
-                                self.page.wait_for_timeout(400)
+                                self.page.wait_for_timeout(200)
                             except Exception:
                                 pass
                     else:
                         # Same-page anchor: scroll to section
                         anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
                         try:
-                            self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=3000)
-                            self.page.wait_for_timeout(500)
+                            self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=2000)
+                            self.page.wait_for_timeout(250)
                         except Exception:
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(500)
+                            self.page.wait_for_timeout(250)
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             for form_idx in range(len(contact_page_forms)):
@@ -295,8 +325,8 @@ class FastCampaignProcessor:
                             continue
                         self.log('info', 'Strategy 1', f'Trying form {idx + 1}…')
                         try:
-                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=3000)
-                            self.page.wait_for_timeout(400)
+self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=2000)
+                                    self.page.wait_for_timeout(200)
                         except Exception:
                             pass
                         # Re-get form after scroll (handles may go stale)
@@ -318,9 +348,9 @@ class FastCampaignProcessor:
             # Quick scroll and retry Strategy 1 once (below-fold form)
             try:
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                self.page.wait_for_timeout(400)
+                self.page.wait_for_timeout(200)
                 self.page.evaluate("window.scrollTo(0, 0)")
-                self.page.wait_for_timeout(400)
+                self.page.wait_for_timeout(200)
             except Exception:
                 pass
             all_forms = self.page.query_selector_all('form')
@@ -423,6 +453,8 @@ class FastCampaignProcessor:
                 self.log('info', 'Discovery', f'Found {len(unique)} potential contact links (contact/enquiry first, support last)')
 
                 for i, (href, text) in enumerate(unique[:5]):
+                    if self._is_timed_out():
+                        break
                     if not href:
                         continue
                     matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in (text or '')), None)
@@ -435,27 +467,31 @@ class FastCampaignProcessor:
                             anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
                             self.log('info', 'Contact Page', 'Loading contact section…')
                             try:
-                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=3000)
-                                self.page.wait_for_timeout(500)
+                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=2000)
+                                self.page.wait_for_timeout(250)
                             except Exception:
                                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                                self.page.wait_for_timeout(500)
+                                self.page.wait_for_timeout(250)
                             self.handle_cookie_modal()
                         else:
-                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=20000)
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=10000)
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(400)
-                            self.log('info', 'Contact Page', 'Loading contact page…')
-                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                             self.page.wait_for_timeout(500)
+                            self.log('info', 'Contact Page', 'Loading contact page…')
+                            # Fast bail: if URL looks like category/listing/vacancies and page has no form, skip this link (e.g. 3lineelectrical offices/category/offices)
+                            if self._url_looks_like_listing_or_category(self.page.url() or full_href) and self._page_has_no_contact_form_quick():
+                                self.log('info', 'Contact Page', 'Page looks like category/listing; no form expected, skipping link')
+                                continue
+                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            self.page.wait_for_timeout(200)
                             self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(400)
+                            self.page.wait_for_timeout(150)
                             self.handle_cookie_modal()
                         try:
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=6000)
-                            self.page.wait_for_timeout(800)
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=4000)
+                            self.page.wait_for_timeout(250)
                         except Exception:
-                            self.log('info', 'Contact Page', 'No form elements/iframes appeared within 15s, checking immediately')
+                            self.log('info', 'Contact Page', 'No form elements/iframes within 4s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
@@ -481,7 +517,7 @@ class FastCampaignProcessor:
                                     self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
                             # No main-doc form succeeded — form may be in iframe (e.g. HubSpot on 2020innovation). Check iframes before trying next link.
                             self.log('info', 'Contact Page Discovery', 'No main-page form succeeded; checking iframes (e.g. HubSpot)...')
-                            self.page.wait_for_timeout(2000)
+                            self.page.wait_for_timeout(400)
                             for idx, frame in enumerate(self.page.frames):
                                 if frame == self.page.main_frame:
                                     continue
@@ -513,7 +549,7 @@ class FastCampaignProcessor:
                         else:
                             # No <form> in main document — form may be in iframe (e.g. HubSpot on 2020innovation). Check frames before email fallback.
                             self.log('info', 'Contact Page Discovery', 'No form in main page; checking iframes (e.g. HubSpot) before email fallback...')
-                            self.page.wait_for_timeout(2000)
+                            self.page.wait_for_timeout(400)
                             for idx, frame in enumerate(self.page.frames):
                                 if frame == self.page.main_frame:
                                     continue
@@ -580,7 +616,7 @@ class FastCampaignProcessor:
 
             # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
-            self.page.wait_for_timeout(500)
+            self.page.wait_for_timeout(250)
             
             for idx, frame in enumerate(self.page.frames):
                 if frame == self.page.main_frame: continue
@@ -907,7 +943,7 @@ class FastCampaignProcessor:
                 element = self.page.locator(selector).first
                 if element.is_visible(timeout=300):
                     element.click()
-                    self.page.wait_for_timeout(200)
+                    self.page.wait_for_timeout(100)
                     self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')
                     _brain_record_pattern('cookie_selector', selector[:200], success=True)
                     _brain_record_event('cookie_modal', 'dismissed', pattern_value=selector[:200])
@@ -1191,12 +1227,12 @@ class FastCampaignProcessor:
         """Select an option by actually clicking the select then clicking the option (required for many sites; you cannot just set value)."""
         try:
             try:
-                select_el.scroll_into_view_if_needed(timeout=3000)
+                select_el.scroll_into_view_if_needed(timeout=2000)
             except Exception:
                 pass
-            self.page.wait_for_timeout(100)
-            select_el.click(timeout=2000)
-            self.page.wait_for_timeout(250)
+            self.page.wait_for_timeout(50)
+            select_el.click(timeout=1500)
+            self.page.wait_for_timeout(150)
             # Support both ElementHandle (query_selector_all) and Locator (evaluate)
             opts_info = []
             if hasattr(select_el, 'query_selector_all') and callable(select_el.query_selector_all):
@@ -1242,7 +1278,7 @@ class FastCampaignProcessor:
                         opts[target_idx].click()
                 else:
                     select_el.locator('option').nth(target_idx).click()
-                self.page.wait_for_timeout(100)
+                self.page.wait_for_timeout(50)
                 self._dispatch_select_events(select_el)
                 return True
         except Exception:
@@ -1302,7 +1338,7 @@ class FastCampaignProcessor:
                             pass
                 if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
                     if self.submit_form(form):
-                        self.page.wait_for_timeout(1000)
+                        self.page.wait_for_timeout(400)
                     path, screenshot_bytes = self.take_screenshot('form_filled')
                     self.log('success', 'Form Processed', f'Filled {filled_count} fields (extract-then-fill) and submitted')
                     return {
@@ -1880,7 +1916,7 @@ class FastCampaignProcessor:
             # Submit the form after screenshot
             if filled_count > 0:
                 self.submit_form(form)
-                self.page.wait_for_timeout(1000)
+                self.page.wait_for_timeout(400)
                 # Detect validation failure: form still present and invalid inputs or visible error text
                 try:
                     invalid = form.query_selector_all('input:invalid, textarea:invalid, select:invalid')
@@ -1986,7 +2022,7 @@ class FastCampaignProcessor:
                             except Exception:
                                 pass
                         self.submit_form(form)
-                        self.page.wait_for_timeout(1000)
+                        self.page.wait_for_timeout(400)
                 except Exception:
                     pass
             
@@ -2271,7 +2307,7 @@ If you'd prefer not to receive these messages, please reply to let us know.
         """Take screenshot; return (path_or_url, bytes). Uses in-memory only so no filesystem on Railway."""
         try:
             self.handle_cookie_modal()
-            self.page.wait_for_timeout(300)
+            self.page.wait_for_timeout(150)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
             raw = self.page.screenshot(full_page=True)
             screenshot_bytes = raw if isinstance(raw, bytes) and len(raw) > 0 else None
