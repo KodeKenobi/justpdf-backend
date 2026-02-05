@@ -204,8 +204,9 @@ class FastCampaignProcessor:
                             self.page.evaluate("window.scrollTo(0, 0)")
                             self.page.wait_for_timeout(200)
                             try:
-                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=2000)
-                                self.page.wait_for_timeout(200)
+                                # Wait up to 30s for form/overlay to clear (sites like A2Z Creatorz have 5–30s loading overlay)
+                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=30000)
+                                self.page.wait_for_timeout(500)
                             except Exception:
                                 pass
                             contact_page_forms = self.page.query_selector_all('form')
@@ -452,10 +453,11 @@ class FastCampaignProcessor:
                             self.page.wait_for_timeout(200)
                             self.handle_cookie_modal()
                         try:
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=2000)
-                            self.page.wait_for_timeout(300)
+                            # Wait up to 30s for form/overlay (sites like A2Z Creatorz, 80scasualclassics contact page)
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=30000)
+                            self.page.wait_for_timeout(500)
                         except Exception:
-                            self.log('info', 'Contact Page', 'No form elements/iframes appeared within 2s, checking immediately')
+                            self.log('info', 'Contact Page', 'No form elements/iframes appeared within 30s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
@@ -1031,6 +1033,131 @@ class FastCampaignProcessor:
             label = (f.get('label') or '')[:80]
             self.log('info', '  Unfilled', f'name="{name}" id="{id_}" label="{label}"')
 
+    def _css_escape_attr(self, s: str) -> str:
+        """Escape string for use inside a CSS attribute selector [name=\"...\"]."""
+        if not s:
+            return s
+        return re.sub(r'([\\"\[\]])', r'\\\1', s)
+
+    def _fill_unsatisfied_safe(self, form, extracted: List[Dict], filled_field_patterns: List[Dict]) -> int:
+        """Try to fill remaining unsatisfied fields that are safe (required or message/name-like). Skips honeypots, hidden, recaptcha. Modifies filled_field_patterns in place. Returns count of newly filled fields."""
+        if not extracted:
+            return 0
+        filled_names = {(p.get('name') or '').strip() for p in filled_field_patterns}
+        unfilled = [f for f in extracted if (f.get('name') or f.get('id') or '').strip() not in filled_names]
+        if not unfilled:
+            return 0
+        message = self.replace_variables(self.message_body)
+        fname_val = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
+        lname_val = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len((self.company.get('contact_person') or 'Contact').split()) > 1 else 'Contact')
+        fullname_val = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
+        email_val = self.sender_data.get('sender_email') or self.company.get('contact_email', 'contact@business.com')
+        company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
+        phone_val = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number') or ''
+        subject_val = getattr(self, 'subject', None) or 'General enquiry'
+        added = 0
+        optional_checkbox_checked = False  # only check one optional checkbox unless form strictly asks for all
+        honeypot_hints = ('leave this field blank', 'if you are human', 'leave blank', 'do not fill', 'human')
+        for f in unfilled:
+            name = (f.get('name') or '').strip()
+            id_ = (f.get('id') or '').strip()
+            label_raw = (f.get('label') or '').strip()
+            label_lower = label_raw.lower()
+            typ = (f.get('type') or 'text').lower()
+            tag = (f.get('tag') or 'input').lower()
+            required = f.get('required') is True or ('*' in label_raw)
+            if typ in ('hidden', 'submit', 'button') or tag not in ('input', 'textarea', 'select'):
+                continue
+            if any(h in label_lower or h in (name or '').lower() or h in (id_ or '').lower() for h in honeypot_hints):
+                continue
+            if 'recaptcha' in (name or '').lower() or 'recaptcha' in (id_ or '').lower() or 'g-recaptcha' in (id_ or '').lower():
+                continue
+            if (name or id_ or label_lower) in ('website', 'url') and not required and typ == 'text':
+                continue
+            hint = f"{name} {id_} {label_lower}"
+            role, value = None, None
+            if any(k in hint for k in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'family-name', 'last *', 'last*', 'last\n']):
+                role, value = 'last_name', lname_val
+            elif any(k in hint for k in ['first name', 'first-name', 'fname', 'firstname', 'first *', 'first*', 'first\n']):
+                role, value = 'first_name', fname_val
+            elif any(k in hint for k in ['full name', 'fullname', 'your name', 'name *', 'name*', 'name\n']):
+                role, value = 'full_name', fullname_val
+            elif any(k in hint for k in ['email', 'e-mail']):
+                role, value = 'email', email_val
+            elif any(k in hint for k in ['phone', 'tel', 'telephone']):
+                role, value = 'phone', phone_val
+            elif any(k in hint for k in ['company', 'company name', 'organisation']):
+                role, value = 'company', company_val
+            elif any(k in hint for k in ['message', 'comment', 'comments', 'inquiry', 'enquiry', 'details', 'body', 'how can we help']):
+                role, value = 'message', (message or '')[:200]
+            elif required and tag == 'textarea':
+                role, value = 'message', (message or 'N/A')[:200]
+            # ALWAYS handle remaining: unmapped selects, textareas, required/optional text, required checkboxes
+            if not role or not value:
+                if tag == 'select':
+                    role, value = 'other', None  # value resolved when we read options
+                elif tag == 'textarea':
+                    role, value = 'message', (message or 'N/A')[:200]
+                elif typ == 'checkbox':
+                    # Required: check unless terms/conditions. Optional: check only one unless form strictly prompts to select all
+                    if any(k in hint for k in ['terms', 'conditions', 'terms and conditions']):
+                        continue
+                    prompt_all = any(k in hint for k in ['accept all', 'select all', 'check all', 'allow all', 'enable all', 'all that apply'])
+                    if not required and not prompt_all and optional_checkbox_checked:
+                        continue
+                    role, value = 'consent', 'checked'
+                elif tag == 'input' and typ in ('text', 'email', 'tel', 'number', ''):
+                    role = 'subject' if required else 'other'
+                    value = (subject_val or 'General enquiry')[:200] if required else 'N/A'
+                else:
+                    continue
+            el = None
+            try:
+                if name:
+                    esc_name = self._css_escape_attr(name)
+                    sel = f'input[name="{esc_name}"], textarea[name="{esc_name}"], select[name="{esc_name}"]'
+                    el = form.query_selector(sel)
+                if not el and id_:
+                    esc_id = self._css_escape_attr(id_)
+                    el = form.query_selector(f'input[id="{esc_id}"], textarea[id="{esc_id}"], select[id="{esc_id}"]')
+            except Exception:
+                pass
+            if not el:
+                continue
+            try:
+                if not el.is_visible():
+                    continue
+                if tag == 'select':
+                    opts = el.query_selector_all('option')
+                    if opts and len(opts) >= 1:
+                        first_t = (opts[0].inner_text() or '').strip().lower()
+                        is_ph = any(p in first_t for p in ('select', 'choose', '--', 'please select', 'choose one', 'pick one'))
+                        idx = 1 if (is_ph and len(opts) > 1) else 0
+                        el.select_option(index=idx)
+                        self._dispatch_select_events(el)
+                        value = (opts[idx].inner_text() or opts[idx].get_attribute('value') or '')[:100]
+                elif typ == 'checkbox':
+                    if value == 'checked':
+                        el.check()
+                        el.dispatch_event('change')
+                        if not required and not prompt_all:
+                            optional_checkbox_checked = True
+                else:
+                    if value is None:
+                        continue
+                    el.fill(str(value)[:500])
+                    el.dispatch_event('input')
+                    el.dispatch_event('change')
+                if tag == 'select' and value is None:
+                    continue
+                field_id = (name or id_ or '').strip()
+                filled_field_patterns.append({'role': role, 'name': field_id, 'label': label_raw[:80], 'value': str(value)[:100]})
+                added += 1
+                self.log('info', 'Unsatisfied Filled', f'{role}: name="{name or id_}" label="{label_raw[:40]}"')
+            except Exception:
+                pass
+        return added
+
     def _fill_using_field_list(self, form, field_list: List[Dict]) -> Tuple[int, List[Dict]]:
         """Fill form using extracted field list (extract on this website, then fill). Returns (filled_count, filled_field_patterns)."""
         filled_count = 0
@@ -1331,6 +1458,8 @@ class FastCampaignProcessor:
                                     self.log('info', 'Required Select', f'Filled required select: {field.get("name") or field.get("id")}')
                         except Exception:
                             pass
+                extra = self._fill_unsatisfied_safe(form, extracted, filled_field_patterns)
+                filled_count += extra
                 self._log_form_fields_report(extracted, filled_field_patterns, context=location)
                 if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
                     if self.submit_form(form):
@@ -1736,6 +1865,8 @@ class FastCampaignProcessor:
                             except Exception:
                                 pass
 
+            extra = self._fill_unsatisfied_safe(form, extracted_heuristic, filled_field_patterns)
+            filled_count += extra
             self._log_form_fields_report(extracted_heuristic, filled_field_patterns, context=f'{location}_heuristic')
 
             # Fill remaining required selects only (first real option). Include aria-required so "Branch" etc. are filled when only asterisk/aria marks them required.
