@@ -40,12 +40,14 @@ class FastCampaignProcessor:
     """Fast, optimized campaign processing with early exit strategy"""
 
     def __init__(self, page, company_data: Dict, message_template: str, 
-                 campaign_id: int = None, company_id: int = None, logger=None, subject: str = None, sender_data: Dict = None):
+                 campaign_id: int = None, company_id: int = None, logger=None, subject: str = None, sender_data: Dict = None,
+                 deadline_sec: float = None):
         self.page = page
         self.company = company_data
         self.campaign_id = campaign_id
         self.company_id = company_id
         self.logger = logger
+        self.deadline = (time.time() + deadline_sec) if deadline_sec else None
         self.found_form = False
         self.found_contact_page = False
         self.website_url = self.company.get('website_url', '')
@@ -78,6 +80,12 @@ class FastCampaignProcessor:
         else:
             print(f"[{level.upper()}] {action}: {message}")
 
+    def _is_timed_out(self) -> bool:
+        """True if per-company deadline exceeded (avoids one stuck site blocking the run)."""
+        if self.deadline is None:
+            return False
+        return time.time() > self.deadline
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
@@ -93,6 +101,11 @@ class FastCampaignProcessor:
         }
 
         try:
+            if self._is_timed_out():
+                result['success'] = False
+                result['error'] = 'Processing timed out'
+                result['method'] = 'timeout'
+                return result
             # Set a common user agent to avoid detection
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             try:
@@ -262,6 +275,11 @@ class FastCampaignProcessor:
             if not unique:
                 self.log('info', 'Strategy 0', 'No contact link in footer; will try homepage forms')
 
+            if self._is_timed_out():
+                result['success'] = False
+                result['error'] = 'Processing timed out'
+                result['method'] = 'timeout'
+                return result
             # STRATEGY 1: Check homepage forms (skip newsletter/signup — e.g. "Stay in the loop", "Newsletter Sign up")
             self.log('info', 'Strategy 1', 'Checking homepage for a contact form (skipping newsletter/signup)…')
             all_forms = self.page.query_selector_all('form')
@@ -847,6 +865,13 @@ class FastCampaignProcessor:
             '.accept-cookies',
             '[aria-label*="Accept"]',
             '[aria-label*="Agree"]',
+            # Termly and similar consent prompts (aria-label "Cookie Consent Prompt")
+            '[aria-label*="Cookie Consent"] button:has-text("Accept")',
+            '[aria-label*="Cookie Consent"] button:has-text("Accept All")',
+            'div[role="alertdialog"][aria-label*="Cookie"] button:has-text("Accept")',
+            'div[role="alertdialog"][aria-label*="Cookie"] button:has-text("Close")',
+            'div[role="alertdialog"] button:has-text("Accept")',
+            'div[role="alertdialog"] button:has-text("Close")',
             # Reject/Close buttons
             'button:has-text("Reject")',
             'button:has-text("Reject All")',
@@ -983,6 +1008,8 @@ class FastCampaignProcessor:
             return f"{name} {label} {placeholder}"
 
         for field in field_list:
+            if self._is_timed_out():
+                return filled_count, filled_field_patterns
             tag = (field.get('tag') or 'input').lower()
             ftype = (field.get('type') or 'text').lower()
             name = field.get('name')
@@ -1197,6 +1224,10 @@ class FastCampaignProcessor:
     def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False, frame=None) -> Dict:
         """Fill and submit form with smart field detection. Uses pre-extracted field_mappings when present (intelligent fill)."""
         try:
+            if self._is_timed_out():
+                return {'success': False, 'error': 'Processing timed out', 'method': 'timeout'}
+            # Dismiss cookie/overlay so it doesn't block field clicks (e.g. Termly on contact page)
+            self.handle_cookie_modal()
             context_name = "iframe" if is_iframe else ("heuristic" if is_heuristic else "standard")
             self.log('info', 'Form Filling', f'Starting {context_name} fill on {location}')
             
@@ -1214,6 +1245,8 @@ class FastCampaignProcessor:
             if extracted:
                 self.log('info', 'Form Filling', f'Extracted {len(extracted)} fields from this form; filling by mapping')
                 filled_count, filled_field_patterns = self._fill_using_field_list(form, extracted)
+                if self._is_timed_out():
+                    return {'success': False, 'error': 'Processing timed out', 'method': 'timeout'}
                 if filled_count >= 2:
                     if self.submit_form(form):
                         self.page.wait_for_timeout(1000)
@@ -1243,6 +1276,8 @@ class FastCampaignProcessor:
             message = self.replace_variables(self.message_body)
             
             for input_element in inputs:
+                if self._is_timed_out():
+                    break
                 input_id = (input_element.get_attribute('id') or '').lower()
                 name = (input_element.get_attribute('name') or '').lower()
                 placeholder = (input_element.get_attribute('placeholder') or '').lower()

@@ -301,12 +301,13 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             company_id=_company_id,
                             logger=live_logger,
                             subject=subject_str,
-                            sender_data=sender_data
+                            sender_data=sender_data,
+                            deadline_sec=PER_COMPANY_TIMEOUT_SEC
                         )
                         # Run on same thread as Playwright context; sync Playwright cannot switch greenlets across threads
                         result = processor.process_company()
-                        _m = (result or {}).get('method', '')
-                        _e = (result or {}).get('error', '')[:200]
+                        _m = (result or {}).get('method') or ''
+                        _e = ((result or {}).get('error') or '')[:200]
                         print(f"[Sequential] Company {_company_id} result: method={_m!r} error={_e!r}")
                     except Exception as e:
                         result = {'success': False, 'error': str(e), 'method': 'error'}
@@ -335,7 +336,10 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             else:
                                 error_msg = (result.get('error') or '').lower()
                                 method = result.get('method') or ''
-                                if 'captcha' in error_msg or method == 'form_with_captcha':
+                                if method == 'timeout':
+                                    company.status = 'failed'
+                                    company.error_message = _user_facing_error('Processing timed out (limit reached). You can retry this company.')
+                                elif 'captcha' in error_msg or method == 'form_with_captcha':
                                     company.status = 'captcha'
                                 elif method == 'no_contact_found':
                                     company.status = 'no_contact_found'
@@ -345,7 +349,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                     if method == 'error':
                                         print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
                                 company.contact_method = (result.get('method') or '')[:20]
-                                if company.status == 'failed':
+                                if company.status == 'failed' and method != 'timeout':
                                     company.error_message = _user_facing_error(result.get('error'))
                                 if result.get('form_fields_detected') is not None or result.get('filled_field_patterns'):
                                     company.form_structure = {
@@ -379,7 +383,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                     print(f"[WARN] Screenshot upload error: {e}")
                             if not company.screenshot_url and result.get('method') == 'error':
                                 try:
-                                    fb_bytes = page.screenshot()
+                                    fb_bytes = page.screenshot(full_page=True)
                                     if fb_bytes:
                                         sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
                                         if sb_url:
@@ -415,7 +419,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             company.error_message = _user_facing_error(str(e))
                             company.processed_at = datetime.utcnow()
                             try:
-                                fb_bytes = page.screenshot()
+                                fb_bytes = page.screenshot(full_page=True)
                                 if fb_bytes:
                                     sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
                                     if sb_url:
