@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 import os
 from sqlalchemy import desc, or_, func
 from datetime import datetime, timedelta
@@ -974,25 +974,11 @@ def rapid_process_batch(campaign_id):
                 pass
             
         # Trigger background processing via threading instead of Celery (Option 2)
-        # Thread must run with Flask app context so db.session works. Get app from the
-        # module where it is created (not current_app) so the background thread has a
-        # valid application context and avoids "Working outside of application context".
-        def run_in_background(campaign_id_arg, company_ids_arg):
-            # Use app from the module where it is created so the thread has a valid app context
-            # (current_app in the thread has no context and causes "Working outside of application context")
-            import sys
-            flask_app = None
-            if 'app' in sys.modules:
-                flask_app = getattr(sys.modules['app'], 'app', None)
-            if flask_app is None:
-                try:
-                    from app import app as flask_app
-                except ImportError:
-                    pass
-            if flask_app is None:
-                print("[Rapid Process] Cannot get Flask app for background thread; skipping.")
-                return
-            with flask_app.app_context():
+        # Thread must run with Flask app context so db.session works. Pass the app from
+        # the request context (current_app) so it works on any deployment (gunicorn, etc.).
+        flask_app = current_app._get_current_object()
+        def run_in_background(campaign_id_arg, company_ids_arg, app_obj):
+            with app_obj.app_context():
                 try:
                     process_campaign_sequential(campaign_id_arg, company_ids_arg)
                 except BaseException as e:
@@ -1018,7 +1004,7 @@ def rapid_process_batch(campaign_id):
 
         thread = threading.Thread(
             target=run_in_background,
-            args=(campaign_id, company_ids)
+            args=(campaign_id, company_ids, flask_app)
         )
         thread.daemon = True
         thread.start()

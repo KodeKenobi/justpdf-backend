@@ -120,7 +120,6 @@ def process_campaign_sequential(campaign_id, company_ids=None):
     Process a campaign sequentially (one-by-one)
     Ensures stability and real-time monitoring via WebSockets
     """
-    from services.fast_campaign_processor import FastCampaignProcessor
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
 
@@ -177,7 +176,7 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             }
         })
 
-        # Mark first company as processing immediately so UI shows "Processing" right after Start
+        # Mark first company as processing immediately so UI/API show "Processing" before we touch FastCampaignProcessor
         first = companies[0]
         first.status = 'processing'
         db.session.commit()
@@ -185,6 +184,18 @@ def process_campaign_sequential(campaign_id, company_ids=None):
             'type': 'company_processing',
             'data': {'company_id': first.id, 'company_name': getattr(first, 'company_name', '')}
         })
+
+        # Import after first commit so if FastCampaignProcessor import fails, API still shows 1 processing and we can see the error in logs
+        try:
+            from services.fast_campaign_processor import FastCampaignProcessor
+        except Exception as imp_err:
+            print(f"[Sequential] Failed to import FastCampaignProcessor: {imp_err}")
+            import traceback
+            traceback.print_exc()
+            first.status = 'failed'
+            first.error_message = 'Backend failed to load processor. Check server logs.'
+            db.session.commit()
+            return {'error': str(imp_err)}
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
