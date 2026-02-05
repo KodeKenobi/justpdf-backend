@@ -590,7 +590,7 @@ class FastCampaignProcessor:
         return result
 
     def _is_newsletter_or_signup_form(self, form) -> bool:
-        """Return True if form is clearly newsletter/signup (e.g. footer 'Stay in the loop', 'Newsletter Sign up') — do not fill or count as contact success."""
+        """Return True if form is clearly newsletter/signup or looks like name-only signup (no message field). Works for any site."""
         try:
             # Form inside footer is almost always newsletter/signup
             in_footer = form.evaluate('''el => {
@@ -614,6 +614,28 @@ class FastCampaignProcessor:
             }''') or ''
             newsletter_keywords = ['newsletter', 'sign up', 'signup', 'stay in the loop', 'subscribe', 'subscribe to our', 'join our list', 'get the latest', 'email signup', 'mailing list']
             if any(kw in ctx for kw in newsletter_keywords):
+                return True
+            # Generic heuristic: contact forms have a message/enquiry field (textarea or input with message-like label/name).
+            # Forms with only name/email (no message field) and few fields are often newsletter or name-only signup.
+            has_message_field = form.evaluate('''el => {
+                const textareas = el.querySelectorAll('textarea');
+                if (textareas.length > 0) return true;
+                const msgKeywords = ['message', 'enquiry', 'inquiry', 'comment', 'comments', 'details', 'your message', 'how can we help', 'describe', 'body'];
+                const inputs = el.querySelectorAll('input[type="text"], input:not([type])');
+                for (const i of inputs) {
+                    const name = (i.getAttribute('name') || '').toLowerCase();
+                    const id = (i.getAttribute('id') || '').toLowerCase();
+                    const placeholder = (i.getAttribute('placeholder') || '').toLowerCase();
+                    const aria = (i.getAttribute('aria-label') || '').toLowerCase();
+                    const combined = name + ' ' + id + ' ' + placeholder + ' ' + aria;
+                    if (msgKeywords.some(k => combined.includes(k))) return true;
+                }
+                return false;
+            }''')
+            if has_message_field:
+                return False
+            fillable_count = self._count_contact_like_fields(form)
+            if fillable_count <= 4:
                 return True
             return False
         except Exception:
@@ -1014,6 +1036,7 @@ class FastCampaignProcessor:
                         v = o.get('value') or o.get('text') or ''
                         if v and 'united' in v.lower():
                             el.select_option(value=v) if o.get('value') else el.select_option(label=v)
+                            self._dispatch_select_events(el)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
                             self.log('info', 'Field Filled (mapped)', f'Country select -> {name or id_}')
@@ -1022,6 +1045,14 @@ class FastCampaignProcessor:
                     pass
 
         return filled_count, filled_field_patterns
+
+    def _dispatch_select_events(self, select_el):
+        """Dispatch change/input on select so Wix and other custom dropdowns update their visible UI."""
+        try:
+            select_el.dispatch_event('change')
+            select_el.dispatch_event('input')
+        except Exception:
+            pass
 
     def fill_and_submit_form(self, form, location: str, is_iframe: bool = False, is_heuristic: bool = False, frame=None) -> Dict:
         """Fill and submit form with smart field detection. Uses pre-extracted field_mappings when present (intelligent fill)."""
@@ -1302,11 +1333,14 @@ class FastCampaignProcessor:
                         if target_val:
                             try:
                                 select.select_option(value=target_val)
+                                self._dispatch_select_events(select)
                             except Exception:
                                 try:
                                     select.select_option(label=target_label or target_val)
+                                    self._dispatch_select_events(select)
                                 except Exception:
                                     select.select_option(index=1 if len(options) > 1 else 0)
+                                    self._dispatch_select_events(select)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': select_label})
                             self.log('info', 'Field Filled', f'Country selected: {target_label or target_val}')
@@ -1340,17 +1374,21 @@ class FastCampaignProcessor:
                         if val is not None or label:
                             try:
                                 select.select_option(value=val or label)
+                                self._dispatch_select_events(select)
                             except Exception:
                                 try:
                                     select.select_option(label=label or val)
+                                    self._dispatch_select_events(select)
                                 except Exception:
                                     try:
                                         select.select_option(index=idx)
+                                        self._dispatch_select_events(select)
                                     except Exception:
                                         pass
                         else:
                             try:
                                 select.select_option(index=idx)
+                                self._dispatch_select_events(select)
                             except Exception:
                                 pass
                         filled_count += 1
@@ -1425,6 +1463,7 @@ class FastCampaignProcessor:
                         pick_idx = 1 if placeholder_ok else 0
                         try:
                             el.select_option(index=pick_idx)
+                            self._dispatch_select_events(el)
                             filled_count += 1
                             self.log('info', 'Required Field', f'Select required: chose option index {pick_idx}')
                         except Exception:
@@ -1537,6 +1576,7 @@ class FastCampaignProcessor:
                                     is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
                                     pick_idx = 1 if (is_ph and len(opts) > 1) else 0
                                     el.select_option(index=pick_idx)
+                                    self._dispatch_select_events(el)
                                     filled_count += 1
                                     self.log('info', 'Required Field', f'Pre-submit: filled required select (index {pick_idx})')
                             elif tag == 'textarea':
@@ -1636,6 +1676,7 @@ class FastCampaignProcessor:
                                         is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
                                         pick_idx = 1 if (is_ph and len(opts) > 1) else 0
                                         el.select_option(index=pick_idx)
+                                        self._dispatch_select_events(el)
                                         filled_count += 1
                                 elif tag == 'textarea':
                                     current = el.evaluate('el => el.value') or ''

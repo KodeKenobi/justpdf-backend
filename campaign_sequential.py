@@ -183,207 +183,235 @@ def process_campaign_sequential(campaign_id, company_ids=None):
 
             for idx, company in enumerate(companies):
                 page = None
-                db.session.refresh(campaign)
-                if campaign.status in ['stopping', 'cancelled']:
-                    # Reset any company still "processing" so UI doesn't show it stuck
-                    Company.query.filter_by(
-                        campaign_id=campaign_id,
-                        status='processing'
-                    ).update({'status': 'pending'})
-                    db.session.commit()
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'campaign_stopped',
-                        'data': {'message': 'Processing stopped by user'}
-                    })
-                    break
-
-                company.status = 'processing'
-                db.session.commit()
-
                 try:
-                    page = context.new_page()
-                    page.set_default_timeout(25000)
-                    page.set_default_navigation_timeout(30000)
-                except Exception as page_err:
-                    print(f"[Sequential] new_page() failed for company {company.id}: {page_err}")
-                    company.status = 'failed'
-                    company.error_message = _user_facing_error(str(page_err))
-                    company.processed_at = datetime.utcnow()
+                    db.session.refresh(campaign)
+                    if campaign.status in ['stopping', 'cancelled']:
+                        # Reset any company still "processing" so UI doesn't show it stuck
+                        Company.query.filter_by(
+                            campaign_id=campaign_id,
+                            status='processing'
+                        ).update({'status': 'pending'})
+                        campaign.status = 'cancelled'
+                        db.session.commit()
+                        ws_manager.broadcast_event(campaign_id, {
+                            'type': 'campaign_stopped',
+                            'data': {'message': 'Processing stopped by user'}
+                        })
+                        break
+
+                    company.status = 'processing'
                     db.session.commit()
-                    campaign.processed_count = Company.query.filter(
-                        Company.campaign_id == campaign.id,
-                        Company.status != 'pending',
-                        Company.status != 'processing'
-                    ).count()
-                    db.session.commit()
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'company_completed',
-                        'data': {
-                            'company_id': company.id,
-                            'status': company.status,
-                            'screenshot_url': None,
-                            'progress': int((idx + 1) / len(companies) * 100)
-                        }
-                    })
-                    continue
 
-                # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
-                _company_id = company.id
-                _company_name = getattr(company, 'company_name', '') or ''
-
-                def live_logger(level, action, message):
-                    print(f"[{level}] {action}: {message}")
-                    user_msg = _user_friendly_message(level, action, message)
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'activity',
-                        'data': {
-                            'company_id': _company_id,
-                            'company_name': _company_name,
-                            'level': level,
-                            'action': action,
-                            'message': message,
-                            'user_message': user_msg,
-                            'timestamp': datetime.utcnow().isoformat()
-                        }
-                    })
-
-                result = None
-                timed_out = False
-                try:
-                    company_data = company.to_dict()
-                    processor = FastCampaignProcessor(
-                        page=page,
-                        company_data=company_data,
-                        message_template=message_template_str,
-                        campaign_id=campaign_id,
-                        company_id=_company_id,
-                        logger=live_logger,
-                        subject=subject_str,
-                        sender_data=sender_data
-                    )
-                    result_holder = [None]
-                    def run_processor():
-                        try:
-                            result_holder[0] = processor.process_company()
-                        except Exception as e:
-                            result_holder[0] = {'success': False, 'error': str(e), 'method': 'error'}
-                    worker = threading.Thread(target=run_processor, daemon=True)
-                    worker.start()
-                    worker.join(timeout=PER_COMPANY_TIMEOUT_SEC)
-                    if worker.is_alive():
-                        timed_out = True
-                        result = {'success': False, 'error': f'Processing timed out ({PER_COMPANY_TIMEOUT_SEC}s)', 'method': 'timeout'}
-                        live_logger('error', 'Timeout', f'Company {_company_id} timed out after {PER_COMPANY_TIMEOUT_SEC}s')
-                    else:
-                        result = result_holder[0]
-                except Exception as e:
-                    result = {'success': False, 'error': str(e), 'method': 'error'}
-
-                try:
-                    if result is None:
+                    try:
+                        page = context.new_page()
+                        page.set_default_timeout(25000)
+                        page.set_default_navigation_timeout(30000)
+                    except Exception as page_err:
+                        print(f"[Sequential] new_page() failed for company {company.id}: {page_err}")
                         company.status = 'failed'
-                        company.contact_method = 'error'
-                        company.error_message = _user_facing_error('No result from worker')
-                    elif result is not None:
-                        if result.get('success'):
-                            method = result.get('method', '')
-                            if method == 'contact_info_found' or method.startswith('email'):
-                                company.status = 'contact_info_found'
-                            else:
-                                company.status = 'completed'
-                            company.contact_method = (method or '')[:20]
-                            company.fields_filled = result.get('fields_filled', 0)
-                            company.error_message = None
+                        company.error_message = _user_facing_error(str(page_err))
+                        company.processed_at = datetime.utcnow()
+                        db.session.commit()
+                        campaign.processed_count = Company.query.filter(
+                            Company.campaign_id == campaign.id,
+                            Company.status != 'pending',
+                            Company.status != 'processing'
+                        ).count()
+                        db.session.commit()
+                        ws_manager.broadcast_event(campaign_id, {
+                            'type': 'company_completed',
+                            'data': {
+                                'company_id': company.id,
+                                'status': company.status,
+                                'screenshot_url': None,
+                                'progress': int((idx + 1) / len(companies) * 100)
+                            }
+                        })
+                        continue
+
+                    # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
+                    _company_id = company.id
+                    _company_name = getattr(company, 'company_name', '') or ''
+
+                    def live_logger(level, action, message):
+                        print(f"[{level}] {action}: {message}")
+                        user_msg = _user_friendly_message(level, action, message)
+                        ws_manager.broadcast_event(campaign_id, {
+                            'type': 'activity',
+                            'data': {
+                                'company_id': _company_id,
+                                'company_name': _company_name,
+                                'level': level,
+                                'action': action,
+                                'message': message,
+                                'user_message': user_msg,
+                                'timestamp': datetime.utcnow().isoformat()
+                            }
+                        })
+
+                    result = None
+                    timed_out = False
+                    try:
+                        company_data = company.to_dict()
+                        processor = FastCampaignProcessor(
+                            page=page,
+                            company_data=company_data,
+                            message_template=message_template_str,
+                            campaign_id=campaign_id,
+                            company_id=_company_id,
+                            logger=live_logger,
+                            subject=subject_str,
+                            sender_data=sender_data
+                        )
+                        result_holder = [None]
+                        def run_processor():
+                            try:
+                                result_holder[0] = processor.process_company()
+                            except Exception as e:
+                                result_holder[0] = {'success': False, 'error': str(e), 'method': 'error'}
+                        worker = threading.Thread(target=run_processor, daemon=True)
+                        worker.start()
+                        worker.join(timeout=PER_COMPANY_TIMEOUT_SEC)
+                        if worker.is_alive():
+                            timed_out = True
+                            result = {'success': False, 'error': f'Processing timed out ({PER_COMPANY_TIMEOUT_SEC}s)', 'method': 'timeout'}
+                            live_logger('error', 'Timeout', f'Company {_company_id} timed out after {PER_COMPANY_TIMEOUT_SEC}s')
                         else:
-                            error_msg = (result.get('error') or '').lower()
-                            method = result.get('method') or ''
-                            if 'captcha' in error_msg or method == 'form_with_captcha':
-                                company.status = 'captcha'
-                            elif method == 'no_contact_found':
-                                company.status = 'no_contact_found'
-                                company.error_message = 'No contact form found on this site.'
+                            result = result_holder[0]
+                    except Exception as e:
+                        result = {'success': False, 'error': str(e), 'method': 'error'}
+
+                    try:
+                        if result is None:
+                            company.status = 'failed'
+                            company.contact_method = 'error'
+                            company.error_message = _user_facing_error('No result from worker')
+                        elif result is not None:
+                            if result.get('success'):
+                                method = result.get('method', '')
+                                if method == 'contact_info_found' or method.startswith('email'):
+                                    company.status = 'contact_info_found'
+                                else:
+                                    company.status = 'completed'
+                                company.contact_method = (method or '')[:20]
+                                company.fields_filled = result.get('fields_filled', 0)
+                                company.error_message = None
                             else:
-                                company.status = 'failed'
-                                if method == 'error':
-                                    print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
-                            company.contact_method = (result.get('method') or '')[:20]
-                            if company.status == 'failed':
-                                company.error_message = _user_facing_error(result.get('error'))
-                        screenshot_bytes = result.get('screenshot_bytes')
-                        if not screenshot_bytes and result.get('screenshot_url'):
-                            local_path = result.get('screenshot_url')
-                            try:
-                                path_part = local_path.lstrip('/').replace('/', os.sep)
-                                roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
-                                for root in roots:
-                                    candidate = os.path.join(root, path_part)
-                                    if os.path.exists(candidate):
-                                        with open(candidate, 'rb') as f:
-                                            screenshot_bytes = f.read()
-                                        try:
-                                            os.remove(candidate)
-                                        except OSError:
-                                            pass
-                                        break
-                            except Exception as e:
-                                print(f"[WARN] Screenshot file read error: {e}")
-                        if screenshot_bytes:
-                            try:
-                                sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                if sb_url:
-                                    company.screenshot_url = sb_url
-                            except Exception as e:
-                                print(f"[WARN] Screenshot upload error: {e}")
-                        if not company.screenshot_url and result.get('method') == 'error':
-                            try:
-                                fb_bytes = page.screenshot()
-                                if fb_bytes:
-                                    sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                error_msg = (result.get('error') or '').lower()
+                                method = result.get('method') or ''
+                                if 'captcha' in error_msg or method == 'form_with_captcha':
+                                    company.status = 'captcha'
+                                elif method == 'no_contact_found':
+                                    company.status = 'no_contact_found'
+                                    company.error_message = 'No contact form found on this site.'
+                                else:
+                                    company.status = 'failed'
+                                    if method == 'error':
+                                        print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
+                                company.contact_method = (result.get('method') or '')[:20]
+                                if company.status == 'failed':
+                                    company.error_message = _user_facing_error(result.get('error'))
+                            screenshot_bytes = result.get('screenshot_bytes')
+                            if not screenshot_bytes and result.get('screenshot_url'):
+                                local_path = result.get('screenshot_url')
+                                try:
+                                    path_part = local_path.lstrip('/').replace('/', os.sep)
+                                    roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
+                                    for root in roots:
+                                        candidate = os.path.join(root, path_part)
+                                        if os.path.exists(candidate):
+                                            with open(candidate, 'rb') as f:
+                                                screenshot_bytes = f.read()
+                                            try:
+                                                os.remove(candidate)
+                                            except OSError:
+                                                pass
+                                            break
+                                except Exception as e:
+                                    print(f"[WARN] Screenshot file read error: {e}")
+                            if screenshot_bytes:
+                                try:
+                                    sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
                                     if sb_url:
                                         company.screenshot_url = sb_url
-                            except Exception as e:
-                                print(f"[WARN] Fallback screenshot error: {e}")
-                    company.processed_at = datetime.utcnow()
-                    db.session.commit()
-                    # Processed = finished only (exclude "processing" so counts add up)
-                    campaign.processed_count = Company.query.filter(
-                        Company.campaign_id == campaign.id,
-                        Company.status != 'pending',
-                        Company.status != 'processing'
-                    ).count()
-                    campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
-                        Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
-                    campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-                    db.session.commit()
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'company_completed',
-                        'data': {
-                            'company_id': company.id,
-                            'status': company.status,
-                            'screenshot_url': getattr(company, 'screenshot_url', None),
-                            'progress': int((idx + 1) / len(companies) * 100)
-                        }
-                    })
-                except Exception as e:
-                    live_logger('error', 'Execution Error', str(e))
-                    company.status = 'failed'
-                    company.error_message = _user_facing_error(str(e))
+                                except Exception as e:
+                                    print(f"[WARN] Screenshot upload error: {e}")
+                            if not company.screenshot_url and result.get('method') == 'error':
+                                try:
+                                    fb_bytes = page.screenshot()
+                                    if fb_bytes:
+                                        sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                        if sb_url:
+                                            company.screenshot_url = sb_url
+                                except Exception as e:
+                                    print(f"[WARN] Fallback screenshot error: {e}")
+                        company.processed_at = datetime.utcnow()
+                        db.session.commit()
+                        # Processed = finished only (exclude "processing" so counts add up)
+                        campaign.processed_count = Company.query.filter(
+                            Company.campaign_id == campaign.id,
+                            Company.status != 'pending',
+                            Company.status != 'processing'
+                        ).count()
+                        campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
+                            Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
+                        campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                        db.session.commit()
+                        ws_manager.broadcast_event(campaign_id, {
+                            'type': 'company_completed',
+                            'data': {
+                                'company_id': company.id,
+                                'status': company.status,
+                                'screenshot_url': getattr(company, 'screenshot_url', None),
+                                'progress': int((idx + 1) / len(companies) * 100)
+                            }
+                        })
+                    except Exception as e:
+                        live_logger('error', 'Execution Error', str(e))
+                        company.status = 'failed'
+                        company.error_message = _user_facing_error(str(e))
+                        try:
+                            fb_bytes = page.screenshot()
+                            if fb_bytes:
+                                sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
+                                if sb_url:
+                                    company.screenshot_url = sb_url
+                        except Exception:
+                            pass
+                        db.session.commit()
+                    finally:
+                        # Always close the page so we don't accumulate pages (causes next new_page() to fail and kill the loop)
+                        try:
+                            if page:
+                                page.close()
+                        except Exception as e:
+                            print(f"[WARN] Page close error (timed-out company): {e}")
+                except Exception as outer_err:
+                    # ANY uncaught exception in this iteration: mark company failed, continue to next
+                    print(f"[Sequential] Company {company.id} iteration failed (continuing): {outer_err}")
+                    import traceback
+                    traceback.print_exc()
                     try:
-                        fb_bytes = page.screenshot()
-                        if fb_bytes:
-                            sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
-                            if sb_url:
-                                company.screenshot_url = sb_url
-                    except Exception:
-                        pass
-                    db.session.commit()
-                finally:
-                    # Always close the page so we don't accumulate pages (causes next new_page() to fail and kill the loop)
+                        company.status = 'failed'
+                        company.error_message = _user_facing_error(str(outer_err))
+                        company.processed_at = datetime.utcnow()
+                        db.session.commit()
+                        ws_manager.broadcast_event(campaign_id, {
+                            'type': 'company_completed',
+                            'data': {
+                                'company_id': company.id,
+                                'status': 'failed',
+                                'screenshot_url': None,
+                                'progress': int((idx + 1) / len(companies) * 100)
+                            }
+                        })
+                    except Exception as e2:
+                        print(f"[Sequential] Failed to record iteration error: {e2}")
                     try:
                         if page:
                             page.close()
-                    except Exception as e:
-                        print(f"[WARN] Page close error (timed-out company): {e}")
+                    except Exception:
+                        pass
 
             browser.close()
 
