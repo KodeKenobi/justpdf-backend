@@ -153,9 +153,9 @@ class FastCampaignProcessor:
             # Initial navigation
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
-                self.page.goto(website_url, wait_until='domcontentloaded', timeout=12000)
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=8000)
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(300)
+                self.page.wait_for_timeout(250)
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
@@ -228,14 +228,17 @@ class FastCampaignProcessor:
                             if self._url_looks_like_listing_or_category(self.page.url() or full_href) and self._page_has_no_contact_form_quick():
                                 self.log('info', 'Strategy 0', 'Contact link points to category/listing page with no form; falling back to homepage')
                                 contact_page_forms = []
+                            elif self._page_has_no_contact_form_quick():
+                                self.log('info', 'Strategy 0', 'No form visible after load; skipping form wait')
+                                contact_page_forms = []
                             else:
                                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                                self.page.wait_for_timeout(200)
-                                self.page.evaluate("window.scrollTo(0, 0)")
                                 self.page.wait_for_timeout(150)
+                                self.page.evaluate("window.scrollTo(0, 0)")
+                                self.page.wait_for_timeout(100)
                                 try:
-                                    self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=4000)
-                                    self.page.wait_for_timeout(200)
+                                    self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=3000)
+                                    self.page.wait_for_timeout(100)
                                 except Exception:
                                     pass
                                 contact_page_forms = self.page.query_selector_all('form')
@@ -476,22 +479,27 @@ self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=2000)
                         else:
                             self.page.goto(full_href, wait_until='domcontentloaded', timeout=10000)
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(500)
+                            self.page.wait_for_timeout(400)
                             self.log('info', 'Contact Page', 'Loading contact page…')
                             # Fast bail: if URL looks like category/listing/vacancies and page has no form, skip this link (e.g. 3lineelectrical offices/category/offices)
                             if self._url_looks_like_listing_or_category(self.page.url() or full_href) and self._page_has_no_contact_form_quick():
                                 self.log('info', 'Contact Page', 'Page looks like category/listing; no form expected, skipping link')
                                 continue
-                            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(200)
-                            self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(150)
-                            self.handle_cookie_modal()
+                            # If page clearly has no form after short settle, skip long wait (human would see in seconds)
+                            if self._page_has_no_contact_form_quick():
+                                self.log('info', 'Contact Page', 'No form visible after load; skipping form wait')
+                            else:
+                                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                                self.page.wait_for_timeout(150)
+                                self.page.evaluate("window.scrollTo(0, 0)")
+                                self.page.wait_for_timeout(100)
+                                self.handle_cookie_modal()
                         try:
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=4000)
-                            self.page.wait_for_timeout(250)
+                            if not self._page_has_no_contact_form_quick():
+                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=3000)
+                            self.page.wait_for_timeout(150)
                         except Exception:
-                            self.log('info', 'Contact Page', 'No form elements/iframes within 4s, checking immediately')
+                            self.log('info', 'Contact Page', 'No form within 3s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             self.log('success', 'Form Detection', f'Found {len(contact_page_forms)} form(s) on contact page')
