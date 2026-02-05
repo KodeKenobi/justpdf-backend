@@ -411,9 +411,9 @@ def update_campaign(campaign_id):
 
 @campaigns_api.route('/<int:campaign_id>', methods=['DELETE'])
 def delete_campaign(campaign_id):
-    """Delete a campaign"""
+    """Delete a campaign and all related data (scraping_sessions first, then companies via cascade)."""
     try:
-        from models import Campaign
+        from models import Campaign, ScrapingSession
         from database import db
         
         campaign = Campaign.query.get(campaign_id)
@@ -421,6 +421,8 @@ def delete_campaign(campaign_id):
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
         
+        # Remove scraping sessions that reference this campaign (no cascade on Campaign -> scraping_sessions)
+        ScrapingSession.query.filter_by(campaign_id=campaign_id).delete()
         db.session.delete(campaign)
         db.session.commit()
         
