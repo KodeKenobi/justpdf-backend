@@ -124,6 +124,8 @@ class FastCampaignProcessor:
 
             # STRATEGY 0: Footer first — contact links are almost always in footer; go to contact page before trying homepage forms
             self.log('info', 'Strategy 0', 'Checking footer first for contact link…')
+            seen = set()
+            unique = []
             contact_keywords = _brain_get_keywords('contact_keyword', [
                 'contact', 'contact us', 'get in touch', 'get-in-touch', 'enquiry', 'enquiries', 'support', 'about-us'
             ])
@@ -654,11 +656,17 @@ class FastCampaignProcessor:
         except Exception as e:
             self.log('error', 'Processing Error', str(e))
             result['error'] = str(e)
-            _path, _bytes = self.take_screenshot('error_processing')
-            result['screenshot_url'] = _path
-            result['screenshot_bytes'] = _bytes
-            self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], False, 'error_processing')
-        
+            result['method'] = 'error'  # so we report failed, not no_contact_found
+            try:
+                _path, _bytes = self.take_screenshot('error_processing')
+                result['screenshot_url'] = _path
+                result['screenshot_bytes'] = _bytes
+            except Exception:
+                pass
+            try:
+                self._record_brain_mandatory(getattr(self, '_contact_keyword_used', None), [], False, 'error_processing')
+            except Exception:
+                pass
         return result
 
     def _is_newsletter_or_signup_form(self, form) -> bool:
@@ -1004,7 +1012,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'email', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'email', 'name': name or '', 'label': field.get('label') or '', 'value': email_val})
                     self.log('info', 'Field Filled (mapped)', f'Email -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1015,7 +1023,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'first_name', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'first_name', 'name': name or '', 'label': field.get('label') or '', 'value': fname_val})
                     self.log('info', 'Field Filled (mapped)', f'First name -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1026,7 +1034,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'last_name', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'last_name', 'name': name or '', 'label': field.get('label') or '', 'value': lname_val})
                     self.log('info', 'Field Filled (mapped)', f'Last name -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1037,7 +1045,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'full_name', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'full_name', 'name': name or '', 'label': field.get('label') or '', 'value': fullname_val})
                     self.log('info', 'Field Filled (mapped)', f'Full name -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1048,7 +1056,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'company', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'company', 'name': name or '', 'label': field.get('label') or '', 'value': company_val})
                     self.log('info', 'Field Filled (mapped)', f'Company -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1059,7 +1067,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'phone', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'phone', 'name': name or '', 'label': field.get('label') or '', 'value': phone_val or ''})
                     self.log('info', 'Field Filled (mapped)', f'Phone -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1070,7 +1078,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'subject', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'subject', 'name': name or '', 'label': field.get('label') or '', 'value': subject_val})
                     self.log('info', 'Field Filled (mapped)', f'Subject -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1081,7 +1089,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or '', 'value': country_val})
                     self.log('info', 'Field Filled (mapped)', f'Country -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1092,7 +1100,7 @@ class FastCampaignProcessor:
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'message', 'name': name or '', 'label': field.get('label') or ''})
+                    filled_field_patterns.append({'role': 'message', 'name': name or '', 'label': field.get('label') or '', 'value': (message or '')[:200]})
                     self.log('info', 'Field Filled (mapped)', f'Message -> {name or id_}')
                     filled_this = True
                 except Exception:
@@ -1108,7 +1116,7 @@ class FastCampaignProcessor:
                                 el.select_option(value=v) if o.get('value') else el.select_option(label=v)
                                 self._dispatch_select_events(el)
                             filled_count += 1
-                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or ''})
+                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': field.get('label') or '', 'value': v or ''})
                             self.log('info', 'Field Filled (mapped)', f'Country select -> {name or id_}')
                             break
                 except Exception:
@@ -1218,6 +1226,7 @@ class FastCampaignProcessor:
                         'screenshot_url': path,
                         'screenshot_bytes': screenshot_bytes,
                         'filled_field_patterns': filled_field_patterns,
+                        'form_fields_detected': extracted,
                     }
                 elif filled_count == 1:
                     self.log('warning', 'Form Partial', 'Only one field filled from extract; falling back to discovery')
@@ -1282,7 +1291,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('change')
                         email_filled = True
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'email', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'email', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': email})
                         self.log('info', 'Field Filled', f'Email field filled: {email}')
                         continue
 
@@ -1294,7 +1303,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'first_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'first_name', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': fname})
                         self.log('info', 'Field Filled', f'First Name field filled: {fname}')
                         continue
 
@@ -1308,7 +1317,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'last_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'last_name', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': lname})
                         self.log('info', 'Field Filled', f'Last Name field filled: {lname}')
                         continue
 
@@ -1319,7 +1328,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'full_name', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'full_name', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': fullname})
                         self.log('info', 'Field Filled', f'Name field filled: {fullname}')
                         continue
                     
@@ -1331,7 +1340,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'company', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'company', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': company_val})
                         self.log('info', 'Field Filled', f'Company field filled: {company_val}')
                         continue
 
@@ -1344,7 +1353,7 @@ class FastCampaignProcessor:
                             input_element.dispatch_event('input')
                             input_element.dispatch_event('change')
                             filled_count += 1
-                            filled_field_patterns.append({'role': 'phone', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                            filled_field_patterns.append({'role': 'phone', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': phone})
                             self.log('info', 'Field Filled', f'Phone field filled: {phone}')
                         continue
                     
@@ -1356,7 +1365,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'subject', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'subject', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': subject_val})
                         self.log('info', 'Field Filled', f'Subject field: {subject_val}')
                         continue
 
@@ -1368,7 +1377,7 @@ class FastCampaignProcessor:
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'country', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                        filled_field_patterns.append({'role': 'country', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': country_val})
                         self.log('info', 'Field Filled', f'Country field filled: {country_val}')
                         continue
                     
@@ -1381,7 +1390,7 @@ class FastCampaignProcessor:
                             input_element.dispatch_event('change')
                             message_filled = True
                             filled_count += 1
-                            filled_field_patterns.append({'role': 'message', 'name': input_element.get_attribute('name') or '', 'label': label_text})
+                            filled_field_patterns.append({'role': 'message', 'name': input_element.get_attribute('name') or '', 'label': label_text, 'value': (message or '')[:200]})
                             self.log('info', 'Field Filled', f'Message field filled')
                             continue
                             
@@ -1476,7 +1485,7 @@ class FastCampaignProcessor:
                                     select.select_option(index=1 if len(options) > 1 else 0)
                                     self._dispatch_select_events(select)
                             filled_count += 1
-                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': select_label})
+                            filled_field_patterns.append({'role': 'country', 'name': name or '', 'label': select_label, 'value': target_label or target_val or ''})
                             self.log('info', 'Field Filled', f'Country selected: {target_label or target_val}')
                             handled = True
                     # Generic select (branch, department, enquiry type, etc.): skip placeholder option, pick first real one; match sender_branch if present
@@ -1530,7 +1539,7 @@ class FastCampaignProcessor:
                             except Exception:
                                 pass
                         filled_count += 1
-                        filled_field_patterns.append({'role': 'branch', 'name': name or '', 'label': select_label})
+                        filled_field_patterns.append({'role': 'branch', 'name': name or '', 'label': select_label, 'value': label or val or str(idx)})
                         self.log('info', 'Field Filled', f'Select "{name or select_id}" -> {label or val or idx}')
                 except Exception:
                     continue

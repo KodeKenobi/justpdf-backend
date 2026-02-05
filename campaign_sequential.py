@@ -291,7 +291,6 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                         })
 
                     result = None
-                    timed_out = False
                     try:
                         company_data = company.to_dict()
                         processor = FastCampaignProcessor(
@@ -304,23 +303,14 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             subject=subject_str,
                             sender_data=sender_data
                         )
-                        result_holder = [None]
-                        def run_processor():
-                            try:
-                                result_holder[0] = processor.process_company()
-                            except Exception as e:
-                                result_holder[0] = {'success': False, 'error': str(e), 'method': 'error'}
-                        worker = threading.Thread(target=run_processor, daemon=True)
-                        worker.start()
-                        worker.join(timeout=PER_COMPANY_TIMEOUT_SEC)
-                        if worker.is_alive():
-                            timed_out = True
-                            result = {'success': False, 'error': f'Processing timed out ({PER_COMPANY_TIMEOUT_SEC}s)', 'method': 'timeout'}
-                            live_logger('error', 'Timeout', f'Company {_company_id} timed out after {PER_COMPANY_TIMEOUT_SEC}s')
-                        else:
-                            result = result_holder[0]
+                        # Run on same thread as Playwright context; sync Playwright cannot switch greenlets across threads
+                        result = processor.process_company()
+                        _m = (result or {}).get('method', '')
+                        _e = (result or {}).get('error', '')[:200]
+                        print(f"[Sequential] Company {_company_id} result: method={_m!r} error={_e!r}")
                     except Exception as e:
                         result = {'success': False, 'error': str(e), 'method': 'error'}
+                        print(f"[Sequential] Company {_company_id} failed with exception: {e}")
 
                     try:
                         if result is None:
@@ -337,6 +327,11 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 company.contact_method = (method or '')[:20]
                                 company.fields_filled = result.get('fields_filled', 0)
                                 company.error_message = None
+                                if result.get('form_fields_detected') is not None or result.get('filled_field_patterns'):
+                                    company.form_structure = {
+                                        'fields_detected': result.get('form_fields_detected') or [],
+                                        'fields_filled': result.get('filled_field_patterns') or [],
+                                    }
                             else:
                                 error_msg = (result.get('error') or '').lower()
                                 method = result.get('method') or ''
@@ -352,6 +347,11 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                                 company.contact_method = (result.get('method') or '')[:20]
                                 if company.status == 'failed':
                                     company.error_message = _user_facing_error(result.get('error'))
+                                if result.get('form_fields_detected') is not None or result.get('filled_field_patterns'):
+                                    company.form_structure = {
+                                        'fields_detected': result.get('form_fields_detected') or [],
+                                        'fields_filled': result.get('filled_field_patterns') or [],
+                                    }
                             screenshot_bytes = result.get('screenshot_bytes')
                             if not screenshot_bytes and result.get('screenshot_url'):
                                 local_path = result.get('screenshot_url')
@@ -482,8 +482,8 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             closer.join(timeout=PAGE_CLOSE_TIMEOUT_SEC)
                             if closer.is_alive():
                                 print(f"[WARN] Page close did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s; continuing to next company")
-                except Exception as outer_err:
-                    # ANY uncaught exception in this iteration: mark company failed, broadcast, then CONTINUE to next company (never re-raise)
+                except BaseException as outer_err:
+                    # ANY uncaught exception in this iteration: mark company failed, broadcast, then CONTINUE to next company (never re-raise so remaining companies still process)
                     _company_id_safe = getattr(company, 'id', None)
                     print(f"[Sequential] Company {_company_id_safe} iteration failed (continuing to next): {outer_err}")
                     import traceback

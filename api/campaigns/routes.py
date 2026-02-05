@@ -45,8 +45,10 @@ def get_campaign_limit(user_tier=None):
     return float('inf') if limit == -1 else limit
 
 def get_daily_limit(user_tier=None):
-    """Get daily processed-company limit for a given user tier"""
+    """Get daily processed-company limit for a given user tier. Enterprise and client = unlimited."""
     key = _normalize_tier(user_tier)
+    if key in ('enterprise', 'client'):
+        return float('inf')
     if not key or key not in DAILY_LIMITS:
         return DAILY_LIMITS['guest']
     limit = DAILY_LIMITS[key]
@@ -159,9 +161,10 @@ def get_usage():
         session_id = request.args.get('session_id')
         if current_user_id:
             user = User.query.get(current_user_id)
-            tier = (user.subscription_tier or 'free') if user else 'guest'
+            tier = ((user.subscription_tier or 'free').strip().lower()) if user else 'guest'
             daily_limit = get_daily_limit(tier)
             daily_used = get_daily_used(user_id=current_user_id, session_id=None)
+            print(f"[Usage] user_id={current_user_id} tier={tier!r} daily_limit={int(daily_limit) if daily_limit != float('inf') else -1} daily_used={daily_used} unlimited={daily_limit == float('inf')}")
         else:
             if not session_id:
                 return jsonify({
@@ -263,16 +266,17 @@ def create_campaign():
         if not current_user_id and not session_id:
             return jsonify({'error': 'Session ID is required for guest users'}), 400
 
-        # Daily limit: enforce before creating
+        # Daily limit: enforce before creating (enterprise/client = unlimited)
         tier = 'guest'
         if current_user_id:
             from models import User
             user = User.query.get(current_user_id)
             if user:
-                tier = user.subscription_tier or 'free'
+                tier = (user.subscription_tier or 'free').strip().lower()
         daily_limit = get_daily_limit(tier)
         daily_used = get_daily_used(user_id=current_user_id, session_id=session_id if not current_user_id else None)
         if daily_limit != float('inf') and daily_used + len(companies_data) > daily_limit:
+            print(f"[Create Campaign] Daily limit reached: user_id={current_user_id} tier={tier!r} daily_limit={int(daily_limit)} daily_used={daily_used} companies={len(companies_data)}")
             return jsonify({
                 'error': 'Daily limit reached',
                 'message': f'You can process {int(daily_limit)} companies per day. You have used {daily_used} today. Resets at midnight UTC.',
@@ -705,16 +709,17 @@ def rapid_process_single(campaign_id, company_id):
         if not company:
             return jsonify({'error': 'Company not found'}), 404
 
-        # Daily limit check (single company)
+        # Daily limit check (single company; enterprise/client = unlimited)
         from models import User
         tier = 'guest'
         if campaign.user_id:
             user = User.query.get(campaign.user_id)
             if user:
-                tier = user.subscription_tier or 'free'
+                tier = (user.subscription_tier or 'free').strip().lower()
         daily_limit = get_daily_limit(tier)
         daily_used = get_daily_used(user_id=campaign.user_id, session_id=campaign.session_id)
         if daily_limit != float('inf') and daily_used >= daily_limit:
+            print(f"[Rapid Process Single] Daily limit reached: campaign_id={campaign_id} user_id={campaign.user_id} tier={tier!r} daily_limit={int(daily_limit)} daily_used={daily_used}")
             return jsonify({
                 'error': 'Daily limit reached',
                 'message': f'You can process {int(daily_limit)} companies per day. Resets at midnight UTC.',
@@ -936,16 +941,17 @@ def rapid_process_batch(campaign_id):
         if to_process == 0:
             return jsonify({'success': True, 'message': 'No pending companies to process', 'campaign_id': campaign_id}), 200
 
-        # Daily limit check
+        # Daily limit check (enterprise/client = unlimited)
         tier = 'guest'
         if campaign.user_id:
             user = User.query.get(campaign.user_id)
             if user:
-                tier = user.subscription_tier or 'free'
+                tier = (user.subscription_tier or 'free').strip().lower()
         daily_limit = get_daily_limit(tier)
         daily_used = get_daily_used(user_id=campaign.user_id, session_id=campaign.session_id)
         if daily_limit != float('inf') and daily_used + to_process > daily_limit:
             remaining = max(0, int(daily_limit) - daily_used)
+            print(f"[Rapid Process] Daily limit reached: campaign_id={campaign_id} user_id={campaign.user_id} tier={tier!r} daily_limit={int(daily_limit)} daily_used={daily_used} to_process={to_process}")
             return jsonify({
                 'error': 'Daily limit reached',
                 'message': f'You can process {int(daily_limit)} companies per day. You have used {daily_used} today. Up to {remaining} remaining. Resets at midnight UTC.',
