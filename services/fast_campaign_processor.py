@@ -2029,13 +2029,6 @@ class FastCampaignProcessor:
             margin: 0 auto;
             padding: 20px;
         }}
-        .header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            border-radius: 10px 10px 0 0;
-            text-align: center;
-        }}
         .content {{
             background: #f9f9f9;
             padding: 30px;
@@ -2046,7 +2039,6 @@ class FastCampaignProcessor:
             padding: 20px;
             border-radius: 8px;
             margin: 20px 0;
-            border-left: 4px solid #667eea;
         }}
         .footer {{
             text-align: center;
@@ -2059,9 +2051,6 @@ class FastCampaignProcessor:
     </style>
 </head>
 <body>
-    <div class="header">
-        <h2 style="margin: 0;">Partnership Inquiry</h2>
-    </div>
     <div class="content">
         <p>Hello,</p>
         
@@ -2073,7 +2062,7 @@ class FastCampaignProcessor:
         <strong>Campaign Team</strong></p>
         
         <div class="footer">
-            <p>This is an automated campaign message from Trevnoctilla.<br>
+            <p>This is an automated campaign message.<br>
             If you'd prefer not to receive these messages, please reply to let us know.</p>
         </div>
     </div>
