@@ -447,8 +447,68 @@ class FastCampaignProcessor:
                                         self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page'))
                                         return result
                                     self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
+                            # No main-doc form succeeded — form may be in iframe (e.g. HubSpot on 2020innovation). Check iframes before trying next link.
+                            self.log('info', 'Contact Page Discovery', 'No main-page form succeeded; checking iframes (e.g. HubSpot)...')
+                            self.page.wait_for_timeout(2000)
+                            for idx, frame in enumerate(self.page.frames):
+                                if frame == self.page.main_frame:
+                                    continue
+                                try:
+                                    frame_forms = frame.query_selector_all('form')
+                                    if frame_forms:
+                                        self.log('success', 'Form in iframe', f'Found form in frame {idx} on contact page')
+                                        form_result = self.fill_and_submit_form(frame_forms[0], f'contact_page_frame_{idx}', is_iframe=True, frame=frame)
+                                        if form_result['success']:
+                                            result.update(form_result)
+                                            result['method'] = 'form_submitted_contact_page_iframe'
+                                            self.found_form = True
+                                            self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page_iframe'))
+                                            return result
+                                    else:
+                                        frame_inputs = frame.query_selector_all('input[type="email"], textarea')
+                                        if frame_inputs:
+                                            form_result = self.fill_and_submit_form(frame, f'contact_page_frame_{idx}_heuristic', is_iframe=True, is_heuristic=True, frame=frame)
+                                            if form_result['success']:
+                                                result.update(form_result)
+                                                result['method'] = 'form_submitted_contact_page_iframe_heuristic'
+                                                self.found_form = True
+                                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page_iframe_heuristic'))
+                                                return result
+                                except Exception as e:
+                                    self.log('warning', 'Contact page frame', f'Frame {idx} check failed: {e}')
+                                    continue
                             continue  # No form succeeded on this link, try next
                         else:
+                            # No <form> in main document — form may be in iframe (e.g. HubSpot on 2020innovation). Check frames before email fallback.
+                            self.log('info', 'Contact Page Discovery', 'No form in main page; checking iframes (e.g. HubSpot) before email fallback...')
+                            self.page.wait_for_timeout(2000)
+                            for idx, frame in enumerate(self.page.frames):
+                                if frame == self.page.main_frame:
+                                    continue
+                                try:
+                                    frame_forms = frame.query_selector_all('form')
+                                    if frame_forms:
+                                        self.log('success', 'Form in iframe', f'Found form in frame {idx} on contact page')
+                                        form_result = self.fill_and_submit_form(frame_forms[0], f'contact_page_frame_{idx}', is_iframe=True, frame=frame)
+                                        if form_result['success']:
+                                            result.update(form_result)
+                                            result['method'] = 'form_submitted_contact_page_iframe'
+                                            self.found_form = True
+                                            self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page_iframe'))
+                                            return result
+                                    else:
+                                        frame_inputs = frame.query_selector_all('input[type="email"], textarea')
+                                        if frame_inputs:
+                                            form_result = self.fill_and_submit_form(frame, f'contact_page_frame_{idx}_heuristic', is_iframe=True, is_heuristic=True, frame=frame)
+                                            if form_result['success']:
+                                                result.update(form_result)
+                                                result['method'] = 'form_submitted_contact_page_iframe_heuristic'
+                                                self.found_form = True
+                                                self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), True, result.get('method', 'form_submitted_contact_page_iframe_heuristic'))
+                                                return result
+                                except Exception as e:
+                                    self.log('warning', 'Contact page frame', f'Frame {idx} check failed: {e}')
+                                    continue
                             self.log('info', 'Contact Page Discovery', 'No direct form found, trying fallback extraction...')
                             contact_info = self.extract_contact_info()
                             if contact_info and contact_info.get('emails'):
