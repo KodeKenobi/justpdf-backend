@@ -761,8 +761,9 @@ def rapid_process_single(campaign_id, company_id):
                     browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
                     page = browser.new_page()
                     
-                    # Setup processor
+                    # Setup processor (per-company timeout so one stuck site doesn't hang)
                     company_data = company.to_dict()
+                    from campaign_sequential import PER_COMPANY_TIMEOUT_SEC
                     processor = FastCampaignProcessor(
                         page=page,
                         company_data=company_data,
@@ -770,7 +771,8 @@ def rapid_process_single(campaign_id, company_id):
                         campaign_id=campaign_id,
                         company_id=company_id,
                         subject=subject_str,
-                        sender_data=sender_data
+                        sender_data=sender_data,
+                        deadline_sec=PER_COMPANY_TIMEOUT_SEC
                     )
                     
                     # Execute

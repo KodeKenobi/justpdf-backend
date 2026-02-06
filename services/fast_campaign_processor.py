@@ -453,6 +453,8 @@ class FastCampaignProcessor:
                 self.log('info', 'Discovery', f'Found {len(unique)} potential contact links (contact/enquiry first, support last)')
 
                 for i, (href, text) in enumerate(unique[:5]):
+                    if self._is_timed_out():
+                        break
                     if not href:
                         continue
                     matched_kw = next((kw for kw in contact_keywords if kw in (href or '').lower() or kw in (text or '')), None)
@@ -482,9 +484,9 @@ class FastCampaignProcessor:
                             self.page.wait_for_timeout(200)
                             self.handle_cookie_modal()
                         try:
-                            # Wait up to 30s for form/overlay (sites like A2Z Creatorz, 80scasualclassics contact page)
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=30000)
-                            self.page.wait_for_timeout(500)
+                            # Wait for form/overlay (capped by per-company deadline so one slow site doesn't hang the run)
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=self._remaining_ms(30000))
+                            self.page.wait_for_timeout(min(500, max(0, self._remaining_ms(1000))))
                         except Exception:
                             self.log('info', 'Contact Page', 'No form elements/iframes appeared within 30s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
@@ -606,14 +608,26 @@ class FastCampaignProcessor:
                         self.log('warn', 'Link Failed', f'Could not open {full_href}: {str(e)}')
                         self._record_brain_mandatory(self._contact_keyword_used, [], False, 'link_failed')
                         continue
+                if self._is_timed_out():
+                    result['success'] = False
+                    result['error'] = 'Processing timed out'
+                    result['method'] = 'timeout'
+                    return result
             except Exception as e:
                 self.log('error', 'Strategy 2 Error', str(e))
 
             # STRATEGY 3: Check ALL frames (HubSpot/Typeform)
+            if self._is_timed_out():
+                result['success'] = False
+                result['error'] = 'Processing timed out'
+                result['method'] = 'timeout'
+                return result
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
-            self.page.wait_for_timeout(300)
+            self.page.wait_for_timeout(min(300, max(0, self._remaining_ms(500))))
             
             for idx, frame in enumerate(self.page.frames):
+                if self._is_timed_out():
+                    break
                 if frame == self.page.main_frame: continue
                 try:
                     # Wait slightly for each frame to be ready
@@ -645,6 +659,11 @@ class FastCampaignProcessor:
                     self.log('warning', 'Frame Check Failed', f'Error checking frame {idx}: {str(e)}')
                     continue
 
+            if self._is_timed_out():
+                result['success'] = False
+                result['error'] = 'Processing timed out'
+                result['method'] = 'timeout'
+                return result
             # STRATEGY 4: Heuristic Field Search (No <form> tag)
             self.log('info', 'Strategy 4', 'Searching for inputs by label heuristics...')
             heuristics_result = self.search_by_heuristics()
