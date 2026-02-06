@@ -86,6 +86,15 @@ class FastCampaignProcessor:
             return False
         return time.time() > self.deadline
 
+    def _remaining_ms(self, max_ms: int = 30000) -> int:
+        """Return remaining time until deadline in ms, capped by max_ms. Use to cap Playwright timeouts so we never exceed deadline."""
+        if self.deadline is None:
+            return max_ms
+        remaining_sec = self.deadline - time.time()
+        if remaining_sec <= 0:
+            return 1000
+        return min(max_ms, int(remaining_sec * 1000))
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
@@ -125,12 +134,17 @@ class FastCampaignProcessor:
             # Track contact keyword when we follow a link (for mandatory brain recording)
             self._contact_keyword_used = None
             
-            # Initial navigation (short timeouts so no-form bails fast)
+            # Initial navigation (short timeouts so no-form bails fast; cap to deadline)
             self.log('info', 'Navigation', f'Opening {website_url}...')
             try:
-                self.page.goto(website_url, wait_until='domcontentloaded', timeout=10000)
+                self.page.goto(website_url, wait_until='domcontentloaded', timeout=self._remaining_ms(10000))
+                if self._is_timed_out():
+                    result['success'] = False
+                    result['error'] = 'Processing timed out'
+                    result['method'] = 'timeout'
+                    return result
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(300)
+                self.page.wait_for_timeout(min(300, self._remaining_ms(500)))
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
@@ -196,17 +210,32 @@ class FastCampaignProcessor:
                     full_href = self.make_absolute_url(href)
                     if not (href or '').strip().startswith('#'):
                         try:
-                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=8000)
+                            if self._is_timed_out():
+                                result['success'] = False
+                                result['error'] = 'Processing timed out'
+                                result['method'] = 'timeout'
+                                return result
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=self._remaining_ms(8000))
+                            if self._is_timed_out():
+                                result['success'] = False
+                                result['error'] = 'Processing timed out'
+                                result['method'] = 'timeout'
+                                return result
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(200)
+                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(200)
+                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
                             self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(200)
+                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
                             try:
-                                # Wait up to 30s for form/overlay to clear (sites like A2Z Creatorz have 5–30s loading overlay)
-                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=30000)
-                                self.page.wait_for_timeout(500)
+                                # Wait for form/overlay (capped to remaining deadline so we never hang)
+                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=self._remaining_ms(30000))
+                                if self._is_timed_out():
+                                    result['success'] = False
+                                    result['error'] = 'Processing timed out'
+                                    result['method'] = 'timeout'
+                                    return result
+                                self.page.wait_for_timeout(min(500, self._remaining_ms(1000)))
                             except Exception:
                                 pass
                             contact_page_forms = self.page.query_selector_all('form')
