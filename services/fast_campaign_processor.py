@@ -1068,6 +1068,18 @@ class FastCampaignProcessor:
             return s
         return re.sub(r'([\\"\[\]])', r'\\\1', s)
 
+    def _strip_country_code_from_phone(self, phone: str, country_code: str) -> str:
+        """Return national number only so we don't double-prefix when the form adds country code from a separate select (e.g. phone_ext). E.g. '+263 630291420' with code '263' -> '630291420'."""
+        if not phone or not country_code:
+            return (phone or '').strip()
+        code_digits = re.sub(r'\D', '', str(country_code))
+        raw = str(phone).strip().lstrip('+')
+        if not code_digits:
+            return raw
+        if raw.startswith(code_digits):
+            return raw[len(code_digits):].lstrip()
+        return raw
+
     def _fill_unsatisfied_safe(self, form, extracted: List[Dict], filled_field_patterns: List[Dict]) -> int:
         """Try to fill remaining unsatisfied fields that are safe (required or message/name-like). Skips honeypots, hidden, recaptcha. Modifies filled_field_patterns in place. Returns count of newly filled fields."""
         if not extracted:
@@ -1084,6 +1096,7 @@ class FastCampaignProcessor:
         company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
         phone_val = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number') or ''
         subject_val = getattr(self, 'subject', None) or 'General enquiry'
+        country_val = self.sender_data.get('sender_country') or 'United Kingdom'
         added = 0
         optional_checkbox_checked = False  # only check one optional checkbox unless form strictly asks for all
         honeypot_hints = ('leave this field blank', 'if you are human', 'leave blank', 'do not fill', 'human')
@@ -1117,7 +1130,8 @@ class FastCampaignProcessor:
                 role, value = 'phone', phone_val
             elif any(k in hint for k in ['company', 'company name', 'organisation']):
                 role, value = 'company', company_val
-            elif any(k in hint for k in ['message', 'comment', 'comments', 'inquiry', 'enquiry', 'details', 'body', 'how can we help']):
+            elif any(k in hint for k in ['message', 'comment', 'comments', 'inquiry', 'enquiry', 'details', 'body', 'how can we help']) and typ != 'checkbox':
+                # Never assign text to a checkbox: checkboxes are checked/unchecked, not filled with message text
                 role, value = 'message', (message or '')[:200]
             elif required and tag == 'textarea':
                 role, value = 'message', (message or 'N/A')[:200]
@@ -1128,13 +1142,13 @@ class FastCampaignProcessor:
                 elif tag == 'textarea':
                     role, value = 'message', (message or 'N/A')[:200]
                 elif typ == 'checkbox':
-                    # Required: check unless terms/conditions. Optional: check only one unless form strictly prompts to select all
+                    # Checkboxes are always checked (click), never filled with text. Enquiry-type / reason / "how did you hear" = check one option.
                     if any(k in hint for k in ['terms', 'conditions', 'terms and conditions']):
                         continue
                     prompt_all = any(k in hint for k in ['accept all', 'select all', 'check all', 'allow all', 'enable all', 'all that apply'])
                     if not required and not prompt_all and optional_checkbox_checked:
                         continue
-                    role, value = 'consent', 'checked'
+                    role, value = 'checkbox_option', 'checked'
                 elif tag == 'input' and typ in ('text', 'email', 'tel', 'number', ''):
                     role = 'subject' if required else 'other'
                     value = (subject_val or 'General enquiry')[:200] if required else 'N/A'
@@ -1159,18 +1173,35 @@ class FastCampaignProcessor:
                 if tag == 'select':
                     opts = el.query_selector_all('option')
                     if opts and len(opts) >= 1:
-                        first_t = (opts[0].inner_text() or '').strip().lower()
-                        is_ph = any(p in first_t for p in ('select', 'choose', '--', 'please select', 'choose one', 'pick one'))
-                        idx = 1 if (is_ph and len(opts) > 1) else 0
+                        opt_texts = [(o.inner_text() or o.get_attribute('value') or '').strip().lower() for o in opts]
+                        has_country = any(c in t for t in opt_texts for c in ['united kingdom', 'uk', 'south africa', 'country', 'nation', 'region', 'africa', 'europe'])
+                        idx = 0
+                        if has_country:
+                            for i, o in enumerate(opts):
+                                vt = (o.inner_text() or o.get_attribute('value') or '').lower()
+                                if country_val and country_val.lower() in vt:
+                                    idx = i
+                                    break
+                                if 'united kingdom' in vt or vt.strip() == 'uk':
+                                    idx = i
+                                    break
+                        else:
+                            first_t = opt_texts[0] if opt_texts else ''
+                            is_ph = any(p in first_t for p in ('select', 'choose', '--', 'please select', 'choose one', 'pick one'))
+                            idx = 1 if (is_ph and len(opts) > 1) else 0
                         el.select_option(index=idx)
                         self._dispatch_select_events(el)
                         value = (opts[idx].inner_text() or opts[idx].get_attribute('value') or '')[:100]
                 elif typ == 'checkbox':
-                    if value == 'checked':
-                        el.check()
-                        el.dispatch_event('change')
-                        if not required and not prompt_all:
-                            optional_checkbox_checked = True
+                    # Checkboxes are checked/unchecked only; never use .fill() with text
+                    if value == 'checked' or value is None:
+                        try:
+                            el.check()
+                            el.dispatch_event('change')
+                            if not required and not prompt_all:
+                                optional_checkbox_checked = True
+                        except Exception:
+                            pass
                 else:
                     if value is None:
                         continue
@@ -1209,6 +1240,68 @@ class FastCampaignProcessor:
             placeholder = (f.get('placeholder') or '').lower()
             return f"{name} {label} {placeholder}"
 
+        # First pass: fill phone country-code selects (e.g. phone_ext) so the form adds +263 etc. to the phone field. We then fill the phone input with national number only to avoid +263 +263 ...
+        phone_country_code_selected = None
+        filled_in_first_pass = set()
+        for field in field_list:
+            if self._is_timed_out():
+                break
+            tag = (field.get('tag') or 'input').lower()
+            if tag != 'select':
+                continue
+            name, id_ = field.get('name'), field.get('id')
+            id_lower = (id_ or '').lower()
+            name_lower = (name or '').lower()
+            if not any(x in id_lower or x in name_lower for x in ['phone_ext', 'dial_code', 'country_code', 'dial', 'ext']):
+                continue
+            opts = field.get('options') or []
+            if not opts:
+                continue
+            try:
+                name_safe = (name or '').replace('\\', '\\\\').replace('"', '\\"')
+                id_safe = (id_ or '').replace('\\', '\\\\').replace('"', '\\"')
+                sel = f'select[name="{name_safe}"]' if name else f'select[id="{id_safe}"]'
+                el = form.locator(sel).first
+                if not el.count() or not el.is_visible():
+                    continue
+                chosen = None
+                for o in opts:
+                    vt = (o.get('text') or o.get('value') or '').strip()
+                    vtl = vt.lower()
+                    if country_val and country_val.lower() in vtl:
+                        chosen = o
+                        break
+                    if 'united kingdom' in vtl or vtl == 'uk':
+                        chosen = o
+                        break
+                    if 'zimbabwe' in vtl or 'south africa' in vtl:
+                        chosen = o
+                        break
+                if not chosen and len(opts) > 1:
+                    first_t = (opts[0].get('text') or opts[0].get('value') or '').lower()
+                    if 'select' in first_t or 'choose' in first_t or '--' in first_t:
+                        chosen = opts[1]
+                    else:
+                        chosen = opts[0]
+                elif not chosen:
+                    chosen = opts[0]
+                if chosen:
+                    v = chosen.get('value') or chosen.get('text') or ''
+                    ok = self._select_option_by_click(el, value=chosen.get('value'), label=chosen.get('text'))
+                    if not ok:
+                        el.select_option(value=v) if chosen.get('value') else el.select_option(label=v)
+                        self._dispatch_select_events(el)
+                    filled_count += 1
+                    filled_field_patterns.append({'role': 'phone_country_code', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Phone country code select (sender country) -> {name or id_} = {v}')
+                    filled_in_first_pass.add((name or id_ or '').strip())
+                    code_digits = re.sub(r'\D', '', str(v))
+                    if code_digits:
+                        phone_country_code_selected = code_digits
+            except Exception:
+                pass
+
+        checkbox_names_checked = set()  # for same-name groups (e.g. enquiry_type), check at least one
         for field in field_list:
             if self._is_timed_out():
                 return filled_count, filled_field_patterns
@@ -1217,6 +1310,8 @@ class FastCampaignProcessor:
             name = field.get('name')
             id_ = field.get('id')
             if not name and not id_:
+                continue
+            if (name or id_ or '').strip() in filled_in_first_pass:
                 continue
             hint = field_hint(field)
             try:
@@ -1292,12 +1387,14 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and (ftype == 'tel' or 'phone' in hint or 'tel' in hint) and phone_val:
                 try:
-                    el.fill(phone_val)
+                    # If form has a phone country-code select (e.g. phone_ext), we already selected sender's country; form will add +263 etc. So fill this input with national number only to avoid +263 +263 630291420
+                    phone_to_fill = self._strip_country_code_from_phone(phone_val, phone_country_code_selected) if phone_country_code_selected else phone_val
+                    el.fill(phone_to_fill)
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
-                    filled_field_patterns.append({'role': 'phone', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': phone_val or ''})
-                    self.log('info', 'Field Filled (mapped)', f'Phone -> {name or id_}')
+                    filled_field_patterns.append({'role': 'phone', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': phone_to_fill or ''})
+                    self.log('info', 'Field Filled (mapped)', f'Phone -> {name or id_} (national only: {bool(phone_country_code_selected)})')
                     filled_this = True
                 except Exception:
                     pass
@@ -1323,7 +1420,23 @@ class FastCampaignProcessor:
                     filled_this = True
                 except Exception:
                     pass
-            if not filled_this and (tag == 'textarea' or any(k in hint for k in ['message', 'comment', 'inquiry', 'details', 'body'])):
+            if not filled_this and ftype == 'checkbox':
+                try:
+                    # Checkboxes are checked, not filled with text. For same-name groups (e.g. enquiry_type) check one so form validation passes
+                    name_key = (name or id_ or '').strip()
+                    if name_key and name_key in checkbox_names_checked:
+                        continue
+                    el.check()
+                    el.dispatch_event('change')
+                    filled_count += 1
+                    if name_key:
+                        checkbox_names_checked.add(name_key)
+                    filled_field_patterns.append({'role': 'checkbox_option', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': 'checked'})
+                    self.log('info', 'Field Filled (mapped)', f'Checkbox checked -> {name or id_} ({field.get("label") or ""})')
+                    filled_this = True
+                except Exception:
+                    pass
+            if not filled_this and (tag == 'textarea' or (ftype != 'checkbox' and any(k in hint for k in ['message', 'comment', 'inquiry', 'details', 'body']))):
                 try:
                     el.fill(message)
                     el.dispatch_event('input')
@@ -1348,6 +1461,43 @@ class FastCampaignProcessor:
                             filled_field_patterns.append({'role': 'country', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
                             self.log('info', 'Field Filled (mapped)', f'Country select -> {name or id_}')
                             break
+                except Exception:
+                    pass
+            if not filled_this and tag == 'select':
+                # Country/region select often has no label or id like "phone_ext" — detect by option text
+                try:
+                    opts = field.get('options') or []
+                    has_country_like = any(
+                        c in ((o.get('text') or o.get('value') or '').lower())
+                        for o in opts for c in ['united kingdom', 'uk', 'south africa', 'country', 'nation', 'region', 'africa', 'europe', 'america', 'asia']
+                    )
+                    if has_country_like and opts:
+                        chosen = None
+                        for o in opts:
+                            vt = (o.get('text') or o.get('value') or '').lower()
+                            if country_val and country_val.lower() in vt:
+                                chosen = o
+                                break
+                            if 'united kingdom' in vt or vt.strip() == 'uk':
+                                chosen = o
+                                break
+                        if not chosen and len(opts) > 1:
+                            first_t = (opts[0].get('text') or opts[0].get('value') or '').lower()
+                            if 'select' in first_t or 'choose' in first_t or '--' in first_t:
+                                chosen = opts[1]
+                            else:
+                                chosen = opts[0]
+                        elif not chosen:
+                            chosen = opts[0]
+                        if chosen:
+                            v = chosen.get('value') or chosen.get('text') or ''
+                            ok = self._select_option_by_click(el, value=chosen.get('value'), label=chosen.get('text'))
+                            if not ok:
+                                el.select_option(value=v) if chosen.get('value') else el.select_option(label=v)
+                                self._dispatch_select_events(el)
+                            filled_count += 1
+                            filled_field_patterns.append({'role': 'country', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
+                            self.log('info', 'Field Filled (mapped)', f'Country select (by options) -> {name or id_}')
                 except Exception:
                     pass
 

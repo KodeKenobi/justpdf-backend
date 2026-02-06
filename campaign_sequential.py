@@ -112,6 +112,8 @@ def _user_facing_error(err: str) -> str:
         return "Page did not load in time."
     if 'form' in lower and 'error' in lower:
         return "Form error. Try again or skip."
+    if 'invalid switch' in lower or 'event.wait' in lower:
+        return "Processing error (browser context). You can retry this company."
     return s
 
 
@@ -315,30 +317,9 @@ def process_campaign_sequential(campaign_id, company_ids=None):
                             sender_data=sender_data,
                             deadline_sec=PER_COMPANY_TIMEOUT_SEC
                         )
-                        # Run process_company in a thread with hard timeout so one stuck site cannot hang the whole run
-                        worker_result = [None]
-                        def run_processor():
-                            try:
-                                worker_result[0] = processor.process_company()
-                            except Exception as e:
-                                worker_result[0] = {'success': False, 'error': str(e), 'method': 'error'}
-                        t = threading.Thread(target=run_processor, daemon=True)
-                        t.start()
-                        t.join(timeout=PER_COMPANY_TIMEOUT_SEC + 15)
-                        if t.is_alive():
-                            try:
-                                page.close(timeout=PAGE_CLOSE_TIMEOUT_SEC)
-                            except Exception:
-                                pass
-                            t.join(timeout=5)
-                            if worker_result[0] is None:
-                                worker_result[0] = {
-                                    'success': False,
-                                    'method': 'timeout',
-                                    'error': 'Per-company time limit reached (worker stopped).'
-                                }
-                                print(f"[Sequential] Company {_company_id} hard timeout; marked as failed.")
-                        result = worker_result[0]
+                        # Run on main thread only: Playwright sync API is not thread-safe; same page/context must not be used from another thread (causes "Invalid switch into Event.wait()" and stops the run).
+                        # Per-company timeout is enforced inside the processor via deadline_sec, _remaining_ms(), and _is_timed_out() so we do not hang indefinitely.
+                        result = processor.process_company()
                         _m = (result or {}).get('method') or ''
                         _e = ((result or {}).get('error') or '')[:200]
                         print(f"[Sequential] Company {_company_id} result: method={_m!r} error={_e!r}")
