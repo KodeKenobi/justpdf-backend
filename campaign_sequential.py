@@ -14,6 +14,8 @@ from models import Campaign, Company, db
 PER_COMPANY_TIMEOUT_SEC = 90
 # Max time to wait for page.close() so one stuck close doesn't freeze the entire run
 PAGE_CLOSE_TIMEOUT_SEC = 8
+# Recreate browser context every N companies to avoid Chromium memory bloat and "context gone bad" on long runs (2000+)
+CONTEXT_REFRESH_INTERVAL = 50
 
 # Map technical log (action / message) to user-friendly English for the right-hand panel
 def _user_friendly_message(level, action, message):
@@ -117,10 +119,11 @@ def _user_facing_error(err: str) -> str:
     return s
 
 
-def process_campaign_sequential(campaign_id, company_ids=None):
+def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=None):
     """
-    Process a campaign sequentially (one-by-one)
-    Ensures stability and real-time monitoring via WebSockets
+    Process a campaign sequentially (one-by-one). Runs until all requested companies are done.
+    - company_ids: optional list of ids to process; if None, processes all pending.
+    - processing_limit: optional max number to process (e.g. 2000); when None, no cap.
     """
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
@@ -141,16 +144,19 @@ def process_campaign_sequential(campaign_id, company_ids=None):
         campaign.started_at = datetime.utcnow()
         db.session.commit()
 
+        limit = int(processing_limit) if processing_limit is not None else None
         if company_ids:
-            companies = Company.query.filter(
+            q = Company.query.filter(
                 Company.id.in_(company_ids),
                 Company.campaign_id == campaign_id
-            ).order_by(Company.id).all()
+            ).order_by(Company.id)
+            companies = q.limit(limit).all() if limit else q.all()
         else:
-            companies = Company.query.filter_by(
+            q = Company.query.filter_by(
                 campaign_id=campaign_id,
                 status='pending'
-            ).order_by(Company.id).all()
+            ).order_by(Company.id)
+            companies = q.limit(limit).all() if limit else q.all()
 
         if not companies:
             campaign.status = 'completed'
@@ -205,6 +211,17 @@ def process_campaign_sequential(campaign_id, company_ids=None):
 
             for idx, company in enumerate(companies):
                 page = None
+                # Periodic context refresh: avoid Chromium memory bloat and "context gone bad" on long runs (2000+ companies)
+                if idx > 0 and idx % CONTEXT_REFRESH_INTERVAL == 0:
+                    try:
+                        context.close()
+                    except Exception as ctx_err:
+                        print(f"[Sequential] Context close warning: {ctx_err}")
+                    try:
+                        context = browser.new_context()
+                        print(f"[Sequential] Refreshed browser context after {idx} companies (continuing to next)")
+                    except Exception as ctx_err:
+                        print(f"[Sequential] New context failed: {ctx_err}; continuing with existing context")
                 # Re-fetch company by id so we always have a fresh session reference (avoids expired/detached after previous commit)
                 try:
                     _cid = company.id if hasattr(company, 'id') else None

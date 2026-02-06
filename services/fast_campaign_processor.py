@@ -95,6 +95,16 @@ class FastCampaignProcessor:
             return 1000
         return min(max_ms, int(remaining_sec * 1000))
 
+    def _action_timeout_ms(self) -> int:
+        """Timeout for a single fill/click/scroll so one slow action cannot blow past the per-company deadline. Max 5s per action."""
+        return min(5000, max(500, self._remaining_ms(8000)))
+
+    def _wait_ms(self, desired_ms: int) -> None:
+        """Sleep at most desired_ms, never past deadline."""
+        ms = min(desired_ms, max(0, self._remaining_ms(desired_ms + 1000)))
+        if ms > 0:
+            self.page.wait_for_timeout(ms)
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
@@ -144,7 +154,7 @@ class FastCampaignProcessor:
                     result['method'] = 'timeout'
                     return result
                 self.handle_cookie_modal()
-                self.page.wait_for_timeout(min(300, self._remaining_ms(500)))
+                self._wait_ms(300)
             except Exception as e:
                 self.log('warning', 'Initial Navigation', f'Failed or timed out: {e}')
                 # Continue anyway, Strategy 2 might still work if we have a partial load
@@ -161,7 +171,7 @@ class FastCampaignProcessor:
                 # Scroll to bottom so lazy-loaded footers appear, then find footer
                 try:
                     self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    self.page.wait_for_timeout(400)
+                    self._wait_ms(400)
                 except Exception:
                     pass
                 footer_containers = self.page.query_selector_all(
@@ -222,11 +232,11 @@ class FastCampaignProcessor:
                                 result['method'] = 'timeout'
                                 return result
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
+                            self._wait_ms(200)
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
+                            self._wait_ms(200)
                             self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(min(200, self._remaining_ms(500)))
+                            self._wait_ms(200)
                             try:
                                 # Wait for form/overlay (capped to remaining deadline so we never hang)
                                 self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=self._remaining_ms(30000))
@@ -235,19 +245,21 @@ class FastCampaignProcessor:
                                     result['error'] = 'Processing timed out'
                                     result['method'] = 'timeout'
                                     return result
-                                self.page.wait_for_timeout(min(500, self._remaining_ms(1000)))
+                                self._wait_ms(500)
                             except Exception:
                                 pass
                             contact_page_forms = self.page.query_selector_all('form')
                             if contact_page_forms:
                                 for form_idx in range(len(contact_page_forms)):
+                                    if self._is_timed_out():
+                                        break
                                     if self._count_contact_like_fields(contact_page_forms[form_idx]) < 2:
                                         continue
                                     if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
                                         continue
                                     try:
-                                        self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
-                                        self.page.wait_for_timeout(300)
+                                        self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                                        self._wait_ms(300)
                                     except Exception:
                                         pass
                                     forms_refresh = self.page.query_selector_all('form')
@@ -264,26 +276,26 @@ class FastCampaignProcessor:
                                 self.log('info', 'Strategy 0', 'Contact page form(s) did not succeed; falling back to homepage')
                             else:
                                 self.log('info', 'Strategy 0', 'No form on contact page; falling back to homepage')
-                            self.page.goto(website_url, wait_until='domcontentloaded', timeout=8000)
+                            self.page.goto(website_url, wait_until='domcontentloaded', timeout=self._remaining_ms(8000))
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(200)
+                            self._wait_ms(200)
                         except Exception as e:
                             self.log('warning', 'Strategy 0', f'Footer contact link failed: {e}; continuing to homepage forms')
                             try:
-                                self.page.goto(website_url, wait_until='domcontentloaded', timeout=8000)
+                                self.page.goto(website_url, wait_until='domcontentloaded', timeout=self._remaining_ms(8000))
                                 self.handle_cookie_modal()
-                                self.page.wait_for_timeout(200)
+                                self._wait_ms(200)
                             except Exception:
                                 pass
                     else:
                         # Same-page anchor: scroll to section
                         anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
                         try:
-                            self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=2000)
-                            self.page.wait_for_timeout(300)
+                            self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                            self._wait_ms(300)
                         except Exception:
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(300)
+                            self._wait_ms(300)
                         contact_page_forms = self.page.query_selector_all('form')
                         if contact_page_forms:
                             for form_idx in range(len(contact_page_forms)):
@@ -325,8 +337,8 @@ class FastCampaignProcessor:
                             continue
                         self.log('info', 'Strategy 1', f'Trying form {idx + 1}…')
                         try:
-                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=3000)
-                            self.page.wait_for_timeout(400)
+                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                            self._wait_ms(400)
                         except Exception:
                             pass
                         # Re-get form after scroll (handles may go stale)
@@ -348,9 +360,9 @@ class FastCampaignProcessor:
             # Quick scroll and retry Strategy 1 once (below-fold form)
             try:
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                self.page.wait_for_timeout(400)
+                self._wait_ms(400)
                 self.page.evaluate("window.scrollTo(0, 0)")
-                self.page.wait_for_timeout(400)
+                self._wait_ms(400)
             except Exception:
                 pass
             all_forms = self.page.query_selector_all('form')
@@ -363,8 +375,8 @@ class FastCampaignProcessor:
                         if self._count_contact_like_fields(form_el) < 2:
                             continue
                         try:
-                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=3000)
-                            self.page.wait_for_timeout(300)
+                            self.page.locator('form').nth(idx).scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                            self._wait_ms(300)
                         except Exception:
                             pass
                         forms_after = self.page.query_selector_all('form')
@@ -467,26 +479,26 @@ class FastCampaignProcessor:
                             anchor_id = (href or '').strip().lstrip('#').split()[0] or 'contact'
                             self.log('info', 'Contact Page', 'Loading contact section…')
                             try:
-                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=2000)
-                                self.page.wait_for_timeout(300)
+                                self.page.locator(f'#{anchor_id}, [id="{anchor_id}"]').first.scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                                self._wait_ms(300)
                             except Exception:
                                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                                self.page.wait_for_timeout(300)
+                                self._wait_ms(300)
                             self.handle_cookie_modal()
                         else:
-                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=8000)
+                            self.page.goto(full_href, wait_until='domcontentloaded', timeout=self._remaining_ms(8000))
                             self.handle_cookie_modal()
-                            self.page.wait_for_timeout(200)
+                            self._wait_ms(200)
                             self.log('info', 'Contact Page', 'Loading contact page…')
                             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                            self.page.wait_for_timeout(300)
+                            self._wait_ms(300)
                             self.page.evaluate("window.scrollTo(0, 0)")
-                            self.page.wait_for_timeout(200)
+                            self._wait_ms(200)
                             self.handle_cookie_modal()
                         try:
                             # Wait for form/overlay (capped by per-company deadline so one slow site doesn't hang the run)
                             self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=self._remaining_ms(30000))
-                            self.page.wait_for_timeout(min(500, max(0, self._remaining_ms(1000))))
+                            self._wait_ms(500)
                         except Exception:
                             self.log('info', 'Contact Page', 'No form elements/iframes appeared within 30s, checking immediately')
                         contact_page_forms = self.page.query_selector_all('form')
@@ -498,8 +510,8 @@ class FastCampaignProcessor:
                                 if self._is_newsletter_or_signup_form(contact_page_forms[form_idx]):
                                     continue
                                 try:
-                                    self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=2000)
-                                    self.page.wait_for_timeout(300)
+                                    self.page.locator('form').nth(form_idx).scroll_into_view_if_needed(timeout=self._action_timeout_ms())
+                                    self._wait_ms(300)
                                 except Exception:
                                     pass
                                 forms_refresh = self.page.query_selector_all('form')
@@ -514,8 +526,10 @@ class FastCampaignProcessor:
                                     self._record_brain_mandatory(self._contact_keyword_used, form_result.get('filled_field_patterns', []), False, form_result.get('method', 'form_fill_failed'))
                             # No main-doc form succeeded — form may be in iframe (e.g. HubSpot on 2020innovation). Check iframes before trying next link.
                             self.log('info', 'Contact Page Discovery', 'No main-page form succeeded; checking iframes (e.g. HubSpot)...')
-                            self.page.wait_for_timeout(400)
+                            self._wait_ms(400)
                             for idx, frame in enumerate(self.page.frames):
+                                if self._is_timed_out():
+                                    break
                                 if frame == self.page.main_frame:
                                     continue
                                 try:
@@ -546,8 +560,10 @@ class FastCampaignProcessor:
                         else:
                             # No <form> in main document — form may be in iframe (e.g. HubSpot on 2020innovation). Check frames before email fallback.
                             self.log('info', 'Contact Page Discovery', 'No form in main page; checking iframes (e.g. HubSpot) before email fallback...')
-                            self.page.wait_for_timeout(400)
+                            self._wait_ms(400)
                             for idx, frame in enumerate(self.page.frames):
+                                if self._is_timed_out():
+                                    break
                                 if frame == self.page.main_frame:
                                     continue
                                 try:
@@ -623,7 +639,7 @@ class FastCampaignProcessor:
                 result['method'] = 'timeout'
                 return result
             self.log('info', 'Strategy 3', 'Checking all frames for embedded forms...')
-            self.page.wait_for_timeout(min(300, max(0, self._remaining_ms(500))))
+            self._wait_ms(300)
             
             for idx, frame in enumerate(self.page.frames):
                 if self._is_timed_out():
@@ -956,8 +972,8 @@ class FastCampaignProcessor:
             try:
                 element = self.page.locator(selector).first
                 if element.is_visible(timeout=300):
-                    element.click()
-                    self.page.wait_for_timeout(200)
+                    element.click(timeout=self._action_timeout_ms())
+                    self._wait_ms(200)
                     self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')
                     _brain_record_pattern('cookie_selector', selector[:200], success=True)
                     _brain_record_event('cookie_modal', 'dismissed', pattern_value=selector[:200])
@@ -1208,14 +1224,14 @@ class FastCampaignProcessor:
                             first_t = opt_texts[0] if opt_texts else ''
                             is_ph = any(p in first_t for p in ('select', 'choose', '--', 'please select', 'choose one', 'pick one'))
                             idx = 1 if (is_ph and len(opts) > 1) else 0
-                        el.select_option(index=idx)
+                        el.select_option(index=idx, timeout=self._action_timeout_ms())
                         self._dispatch_select_events(el)
                         value = (opts[idx].inner_text() or opts[idx].get_attribute('value') or '')[:100]
                 elif typ == 'checkbox':
                     # Checkboxes are checked/unchecked only; never use .fill() with text
                     if value == 'checked' or value is None:
                         try:
-                            el.check()
+                            el.check(timeout=self._action_timeout_ms())
                             el.dispatch_event('change')
                             if not required and not prompt_all:
                                 optional_checkbox_checked = True
@@ -1224,7 +1240,7 @@ class FastCampaignProcessor:
                 else:
                     if value is None:
                         continue
-                    el.fill(str(value)[:500])
+                    el.fill(str(value)[:500], timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                 if tag == 'select' and value is None:
@@ -1308,7 +1324,7 @@ class FastCampaignProcessor:
                     v = chosen.get('value') or chosen.get('text') or ''
                     ok = self._select_option_by_click(el, value=chosen.get('value'), label=chosen.get('text'))
                     if not ok:
-                        el.select_option(value=v) if chosen.get('value') else el.select_option(label=v)
+                        (el.select_option(value=v, timeout=self._action_timeout_ms()) if chosen.get('value') else el.select_option(label=v, timeout=self._action_timeout_ms()))
                         self._dispatch_select_events(el)
                     filled_count += 1
                     filled_field_patterns.append({'role': 'phone_country_code', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
@@ -1351,7 +1367,7 @@ class FastCampaignProcessor:
             filled_this = False
             if ftype == 'email' or 'email' in hint or 'e-mail' in hint:
                 try:
-                    el.fill(email_val)
+                    el.fill(email_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1362,7 +1378,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
                 try:
-                    el.fill(fname_val)
+                    el.fill(fname_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1373,7 +1389,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['last name', 'last-name', 'lname', 'lastname', 'last_name']):
                 try:
-                    el.fill(lname_val)
+                    el.fill(lname_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1384,7 +1400,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['full name', 'your name', 'name']) and 'company' not in hint and 'first' not in hint and 'last' not in hint:
                 try:
-                    el.fill(fullname_val)
+                    el.fill(fullname_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1395,7 +1411,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['company', 'organization', 'business']) and 'email' not in hint:
                 try:
-                    el.fill(company_val)
+                    el.fill(company_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1408,7 +1424,7 @@ class FastCampaignProcessor:
                 try:
                     # If form has a phone country-code select (e.g. phone_ext), we already selected sender's country; form will add +263 etc. So fill this input with national number only to avoid +263 +263 630291420
                     phone_to_fill = self._strip_country_code_from_phone(phone_val, phone_country_code_selected) if phone_country_code_selected else phone_val
-                    el.fill(phone_to_fill)
+                    el.fill(phone_to_fill, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1419,7 +1435,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['subject', 'topic', 'reason']):
                 try:
-                    el.fill(subject_val)
+                    el.fill(subject_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1430,7 +1446,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and any(k in hint for k in ['country', 'nation', 'region']) and tag != 'select':
                 try:
-                    el.fill(country_val)
+                    el.fill(country_val, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1445,7 +1461,7 @@ class FastCampaignProcessor:
                     name_key = (name or id_ or '').strip()
                     if name_key and name_key in checkbox_names_checked:
                         continue
-                    el.check()
+                    el.check(timeout=self._action_timeout_ms())
                     el.dispatch_event('change')
                     filled_count += 1
                     if name_key:
@@ -1457,7 +1473,7 @@ class FastCampaignProcessor:
                     pass
             if not filled_this and (tag == 'textarea' or (ftype != 'checkbox' and any(k in hint for k in ['message', 'comment', 'inquiry', 'details', 'body']))):
                 try:
-                    el.fill(message)
+                    el.fill(message, timeout=self._action_timeout_ms())
                     el.dispatch_event('input')
                     el.dispatch_event('change')
                     filled_count += 1
@@ -1474,7 +1490,7 @@ class FastCampaignProcessor:
                         if v and 'united' in v.lower():
                             ok = self._select_option_by_click(el, value=o.get('value'), label=o.get('text'))
                             if not ok:
-                                el.select_option(value=v) if o.get('value') else el.select_option(label=v)
+                                (el.select_option(value=v, timeout=self._action_timeout_ms()) if o.get('value') else el.select_option(label=v, timeout=self._action_timeout_ms()))
                                 self._dispatch_select_events(el)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
@@ -1512,7 +1528,7 @@ class FastCampaignProcessor:
                             v = chosen.get('value') or chosen.get('text') or ''
                             ok = self._select_option_by_click(el, value=chosen.get('value'), label=chosen.get('text'))
                             if not ok:
-                                el.select_option(value=v) if chosen.get('value') else el.select_option(label=v)
+                                (el.select_option(value=v, timeout=self._action_timeout_ms()) if chosen.get('value') else el.select_option(label=v, timeout=self._action_timeout_ms()))
                                 self._dispatch_select_events(el)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': (name or id_ or '').strip(), 'label': field.get('label') or '', 'value': v or ''})
@@ -1530,27 +1546,30 @@ class FastCampaignProcessor:
         except Exception:
             pass
 
-    def _click_field_safe(self, element, timeout=5000):
-        """Click form field; on overlay/interception retry with cookie dismiss + force click so we don't timeout."""
+    def _click_field_safe(self, element, timeout=None):
+        """Click form field; on overlay/interception retry with cookie dismiss + force click. Timeout is capped by per-company deadline."""
+        t = timeout if timeout is not None else self._action_timeout_ms()
         try:
-            element.click(timeout=timeout)
+            element.click(timeout=t)
         except Exception:
             self.handle_cookie_modal()
             try:
-                element.click(force=True, timeout=3000)
+                element.click(force=True, timeout=min(3000, self._action_timeout_ms()))
             except Exception:
                 pass
 
     def _select_option_by_click(self, select_el, value=None, label=None, index=None):
         """Select an option by actually clicking the select then clicking the option (required for many sites; you cannot just set value)."""
+        if self._is_timed_out():
+            return False
         try:
             try:
-                select_el.scroll_into_view_if_needed(timeout=3000)
+                select_el.scroll_into_view_if_needed(timeout=self._action_timeout_ms())
             except Exception:
                 pass
-            self.page.wait_for_timeout(100)
-            select_el.click(timeout=2000)
-            self.page.wait_for_timeout(250)
+            self._wait_ms(100)
+            select_el.click(timeout=self._action_timeout_ms())
+            self._wait_ms(250)
             # Support both ElementHandle (query_selector_all) and Locator (evaluate)
             opts_info = []
             if hasattr(select_el, 'query_selector_all') and callable(select_el.query_selector_all):
@@ -1593,10 +1612,10 @@ class FastCampaignProcessor:
                 if hasattr(select_el, 'query_selector_all') and callable(select_el.query_selector_all):
                     opts = select_el.query_selector_all('option')
                     if target_idx < len(opts):
-                        opts[target_idx].click()
+                        opts[target_idx].click(timeout=self._action_timeout_ms())
                 else:
-                    select_el.locator('option').nth(target_idx).click()
-                self.page.wait_for_timeout(100)
+                    select_el.locator('option').nth(target_idx).click(timeout=self._action_timeout_ms())
+                self._wait_ms(100)
                 self._dispatch_select_events(select_el)
                 return True
         except Exception:
@@ -1647,7 +1666,7 @@ class FastCampaignProcessor:
                                     pick_idx = 1 if (any(p in first_text for p in ('select', 'choose', '--', 'please', 'pick')) and len(opts) > 1) else 0
                                     ok = self._select_option_by_click(el, index=pick_idx)
                                     if not ok:
-                                        el.select_option(index=pick_idx)
+                                        el.select_option(index=pick_idx, timeout=self._action_timeout_ms())
                                         self._dispatch_select_events(el)
                                     filled_count += 1
                                     val = (opts[pick_idx].get('text') or opts[pick_idx].get('value') or '')[:100] if pick_idx < len(opts) else ''
@@ -1661,7 +1680,7 @@ class FastCampaignProcessor:
                 self._log_form_fields_report(extracted, filled_field_patterns, context=location)
                 if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
                     if self.submit_form(form):
-                        self.page.wait_for_timeout(1000)
+                        self._wait_ms(1000)
                     path, screenshot_bytes = self.take_screenshot('form_filled')
                     self.log('success', 'Form Processed', f'Filled {filled_count} fields (extract-then-fill) and submitted')
                     return {
@@ -1745,7 +1764,7 @@ class FastCampaignProcessor:
                     if not email_filled and (input_type == 'email' or any(kw in field_text for kw in ['email', 'e-mail'])):
                         email = self.sender_data.get('sender_email') or self.company.get('contact_email', 'contact@business.com')
                         self._click_field_safe(input_element)
-                        input_element.fill(email)
+                        input_element.fill(email, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         email_filled = True
@@ -1758,7 +1777,7 @@ class FastCampaignProcessor:
                     if any(kw in field_text for kw in ['first name', 'first-name', 'fname', 'firstname', 'given-name', 'givenname', 'first_name']):
                         fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
                         self._click_field_safe(input_element)
-                        input_element.fill(fname)
+                        input_element.fill(fname, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1772,7 +1791,7 @@ class FastCampaignProcessor:
                             name_parts = self.company.get('contact_person', 'Contact').split()
                             lname = name_parts[-1] if len(name_parts) > 1 else 'Contact'
                         self._click_field_safe(input_element)
-                        input_element.fill(lname)
+                        input_element.fill(lname, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1783,7 +1802,7 @@ class FastCampaignProcessor:
                     if any(kw in field_text for kw in ['full name', 'your name', 'name', 'full-name', 'fullname', 'your-name', 'full_name']) and 'company' not in field_text and 'first' not in field_text and 'last' not in field_text:
                         fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
                         self._click_field_safe(input_element)
-                        input_element.fill(fullname)
+                        input_element.fill(fullname, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1795,7 +1814,7 @@ class FastCampaignProcessor:
                     if any(kw in field_text for kw in ['company', 'organization', 'organisation', 'business-name', 'firm', 'business_name', 'org_name']) and 'email' not in field_text:
                         company_val = self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company')
                         self._click_field_safe(input_element)
-                        input_element.fill(company_val)
+                        input_element.fill(company_val, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1808,7 +1827,7 @@ class FastCampaignProcessor:
                         phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
                         if phone:
                             self._click_field_safe(input_element)
-                            input_element.fill(phone)
+                            input_element.fill(phone, timeout=self._action_timeout_ms())
                             input_element.dispatch_event('input')
                             input_element.dispatch_event('change')
                             filled_count += 1
@@ -1820,7 +1839,7 @@ class FastCampaignProcessor:
                     if any(kw in field_text for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
                         subject_val = self.subject
                         self._click_field_safe(input_element)
-                        input_element.fill(subject_val)
+                        input_element.fill(subject_val, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1836,7 +1855,7 @@ class FastCampaignProcessor:
                             continue
                         country_val = self.sender_data.get('sender_country') or 'United Kingdom'
                         self._click_field_safe(input_element)
-                        input_element.fill(country_val)
+                        input_element.fill(country_val, timeout=self._action_timeout_ms())
                         input_element.dispatch_event('input')
                         input_element.dispatch_event('change')
                         filled_count += 1
@@ -1848,7 +1867,7 @@ class FastCampaignProcessor:
                     tag_name = input_element.evaluate('el => el.tagName.toLowerCase()')
                     if tag_name == 'textarea':
                         if not message_filled and any(kw in field_text for kw in ['message', 'comment', 'inquiry', 'details', 'body']):
-                            input_element.fill(message)
+                            input_element.fill(message, timeout=self._action_timeout_ms())
                             input_element.dispatch_event('input')
                             input_element.dispatch_event('change')
                             message_filled = True
@@ -1940,14 +1959,14 @@ class FastCampaignProcessor:
                             try:
                                 ok = self._select_option_by_click(select, value=target_val, label=target_label)
                                 if not ok:
-                                    select.select_option(value=target_val)
+                                    select.select_option(value=target_val, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                             except Exception:
                                 try:
-                                    select.select_option(label=target_label or target_val)
+                                    select.select_option(label=target_label or target_val, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                                 except Exception:
-                                    select.select_option(index=1 if len(options) > 1 else 0)
+                                    select.select_option(index=1 if len(options) > 1 else 0, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                             filled_count += 1
                             filled_field_patterns.append({'role': 'country', 'name': field_id, 'label': select_label, 'value': target_label or target_val or ''})
@@ -1983,15 +2002,15 @@ class FastCampaignProcessor:
                             try:
                                 ok = self._select_option_by_click(select, value=val, label=label, index=idx)
                                 if not ok:
-                                    select.select_option(value=val or label)
+                                    select.select_option(value=val or label, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                             except Exception:
                                 try:
-                                    select.select_option(label=label or val)
+                                    select.select_option(label=label or val, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                                 except Exception:
                                     try:
-                                        select.select_option(index=idx)
+                                        select.select_option(index=idx, timeout=self._action_timeout_ms())
                                         self._dispatch_select_events(select)
                                     except Exception:
                                         pass
@@ -1999,7 +2018,7 @@ class FastCampaignProcessor:
                             try:
                                 ok = self._select_option_by_click(select, index=idx)
                                 if not ok:
-                                    select.select_option(index=idx)
+                                    select.select_option(index=idx, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(select)
                             except Exception:
                                 pass
@@ -2039,7 +2058,7 @@ class FastCampaignProcessor:
                     if chosen is None:
                         chosen = group[0]
                     if chosen and not chosen.evaluate('el => el.checked'):
-                        chosen.click()
+                        chosen.click(timeout=self._action_timeout_ms())
                         filled_count += 1
                         self.log('info', 'Field Filled', f'Radio "{name}" selected')
                 except Exception:
@@ -2057,7 +2076,7 @@ class FastCampaignProcessor:
                     if any(kw in f"{name} {parent_text} {aria_label}" for kw in ['enquiry', 'sales', 'support', 'agree', 'consent', 'optin', 'marketing', 'newsletter']):
                         if not any(kw in f"{name} {parent_text} {aria_label}" for kw in ['terms', 'conditions', 'terms and conditions']):
                             try:
-                                cb.check()
+                                cb.check(timeout=self._action_timeout_ms())
                                 filled_count += 1
                                 self.log('info', 'Checkbox Checked', f'Checkbox filled ({name})')
                             except Exception:
@@ -2078,7 +2097,7 @@ class FastCampaignProcessor:
                         # If first option is placeholder, pick index 1; else if first is real, pick 0
                         pick_idx = 1 if placeholder_ok else 0
                         try:
-                            el.select_option(index=pick_idx)
+                            el.select_option(index=pick_idx, timeout=self._action_timeout_ms())
                             self._dispatch_select_events(el)
                             filled_count += 1
                             self.log('info', 'Required Field', f'Select required: chose option index {pick_idx}')
@@ -2093,7 +2112,7 @@ class FastCampaignProcessor:
                             continue
                         name = (el.get_attribute('name') or el.get_attribute('id') or '').lower()
                         if any(kw in name for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
-                            el.fill(message)
+                            el.fill(message, timeout=self._action_timeout_ms())
                             el.dispatch_event('input')
                             el.dispatch_event('change')
                             filled_count += 1
@@ -2127,7 +2146,7 @@ class FastCampaignProcessor:
                                 break
                         # Only select when we matched a preferred option; do not guess "first"
                         if chosen:
-                            chosen.click()
+                            chosen.click(timeout=self._action_timeout_ms())
                             filled_count += 1
                             self.log('info', 'Required Field', f'Pre-submit: selected radio "{name}"')
                     except Exception:
@@ -2142,7 +2161,7 @@ class FastCampaignProcessor:
                         parent_text = (el.evaluate("el => el.parentElement?.innerText || ''") or '').lower()
                         hint = f"{name} {aria} {parent_text}"
                         if any(kw in hint for kw in ['agree', 'consent', 'optin', 'marketing', 'newsletter']) and not any(kw in hint for kw in ['terms', 'conditions', 'terms and conditions']):
-                            el.check()
+                            el.check(timeout=self._action_timeout_ms())
                             filled_count += 1
                             self.log('info', 'Required Field', 'Pre-submit: checked required opt-in checkbox')
                     except Exception:
@@ -2191,19 +2210,19 @@ class FastCampaignProcessor:
                                     first_opt_text = (opts[0].inner_text() or '').strip().lower()
                                     is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
                                     pick_idx = 1 if (is_ph and len(opts) > 1) else 0
-                                    el.select_option(index=pick_idx)
+                                    el.select_option(index=pick_idx, timeout=self._action_timeout_ms())
                                     self._dispatch_select_events(el)
                                     filled_count += 1
                                     self.log('info', 'Required Field', f'Pre-submit: filled required select (index {pick_idx})')
                             elif tag == 'textarea':
                                 if any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
-                                    el.fill(message)
+                                    el.fill(message, timeout=self._action_timeout_ms())
                                     el.dispatch_event('input')
                                     el.dispatch_event('change')
                                     filled_count += 1
                                     self.log('info', 'Required Field', 'Pre-submit: filled required message textarea')
                                 else:
-                                    el.fill('N/A')
+                                    el.fill('N/A', timeout=self._action_timeout_ms())
                                     el.dispatch_event('input')
                                     el.dispatch_event('change')
                                     filled_count += 1
@@ -2212,36 +2231,36 @@ class FastCampaignProcessor:
                                 input_type = (el.get_attribute('type') or 'text').lower()
                                 filled_this = False
                                 if input_type == 'email' or 'email' in field_hint:
-                                    el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
+                                    el.fill(self.sender_data.get('sender_email') or 'contact@example.com', timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
-                                    el.fill(self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0])
+                                    el.fill(self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0], timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'last_name']):
                                     lname = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len(self.company.get('contact_person', 'Contact').split()) > 1 else 'Contact')
-                                    el.fill(lname)
+                                    el.fill(lname, timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['full name', 'your name', 'name', 'full-name', 'fullname']) and 'company' not in field_hint and 'first' not in field_hint and 'last' not in field_hint:
-                                    el.fill(self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact'))
+                                    el.fill(self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact'), timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['company', 'organization', 'organisation', 'business-name', 'firm']) and 'email' not in field_hint:
-                                    el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'))
+                                    el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'), timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or input_type == 'tel':
                                     phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
                                     if phone:
-                                        el.fill(phone)
+                                        el.fill(phone, timeout=self._action_timeout_ms())
                                         filled_this = True
                                 elif any(kw in field_hint for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
-                                    el.fill(self.subject)
+                                    el.fill(self.subject, timeout=self._action_timeout_ms())
                                     filled_this = True
                                 elif any(kw in field_hint for kw in ['country', 'nation', 'region', 'location']):
-                                    el.fill(self.sender_data.get('sender_country') or 'United Kingdom')
+                                    el.fill(self.sender_data.get('sender_country') or 'United Kingdom', timeout=self._action_timeout_ms())
                                     filled_this = True
                                 else:
                                     # Unknown required text/textarea: use N/A so validation can pass
                                     if input_type != 'email':
-                                        el.fill('N/A')
+                                        el.fill('N/A', timeout=self._action_timeout_ms())
                                         filled_this = True
                                 if filled_this:
                                     el.dispatch_event('input')
@@ -2259,7 +2278,7 @@ class FastCampaignProcessor:
             # Submit the form after screenshot
             if filled_count > 0:
                 self.submit_form(form)
-                self.page.wait_for_timeout(1000)
+                self._wait_ms(1000)
                 # Detect validation failure: form still present and invalid inputs or visible error text
                 try:
                     invalid = form.query_selector_all('input:invalid, textarea:invalid, select:invalid')
@@ -2291,16 +2310,16 @@ class FastCampaignProcessor:
                                         first_opt_text = (opts[0].inner_text() or '').strip().lower()
                                         is_ph = any(p in first_opt_text for p in ('select', 'choose', '--', 'please select', 'choose a branch', 'choose branch', 'select one', 'pick one'))
                                         pick_idx = 1 if (is_ph and len(opts) > 1) else 0
-                                        el.select_option(index=pick_idx)
+                                        el.select_option(index=pick_idx, timeout=self._action_timeout_ms())
                                         self._dispatch_select_events(el)
                                         filled_count += 1
                                 elif tag == 'textarea':
                                     current = el.evaluate('el => el.value') or ''
                                     if not (current and str(current).strip()):
                                         if any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'body', 'details']):
-                                            el.fill(message)
+                                            el.fill(message, timeout=self._action_timeout_ms())
                                         else:
-                                            el.fill('N/A')
+                                            el.fill('N/A', timeout=self._action_timeout_ms())
                                         el.dispatch_event('input')
                                         el.dispatch_event('change')
                                         filled_count += 1
@@ -2308,64 +2327,64 @@ class FastCampaignProcessor:
                                     current = el.evaluate('el => el.value') or ''
                                     if not (current and str(current).strip()):
                                         if 'email' in field_hint or el.get_attribute('type') == 'email':
-                                            el.fill(self.sender_data.get('sender_email') or 'contact@example.com')
+                                            el.fill(self.sender_data.get('sender_email') or 'contact@example.com', timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['first name', 'first-name', 'fname', 'firstname', 'first_name']):
                                             fname = self.sender_data.get('sender_first_name') or self.company.get('contact_person', 'Business').split()[0]
-                                            el.fill(fname)
+                                            el.fill(fname, timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['last name', 'last-name', 'lname', 'lastname', 'surname', 'last_name']):
                                             lname = self.sender_data.get('sender_last_name') or (self.company.get('contact_person', 'Contact').split()[-1] if len(self.company.get('contact_person', 'Contact').split()) > 1 else 'Contact')
-                                            el.fill(lname)
+                                            el.fill(lname, timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['name', 'full name', 'your name']) and 'company' not in field_hint and 'first' not in field_hint and 'last' not in field_hint:
                                             fullname = self.sender_data.get('sender_name') or self.company.get('contact_person', 'Business Contact')
-                                            el.fill(fullname)
+                                            el.fill(fullname, timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['company', 'organization', 'organisation', 'business-name', 'firm']) and 'email' not in field_hint:
-                                            el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'))
+                                            el.fill(self.sender_data.get('sender_company') or self.company.get('company_name', 'Your Company'), timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['phone', 'tel', 'mobile', 'cell', 'telephone']) or el.get_attribute('type') == 'tel':
                                             phone = self.sender_data.get('sender_phone') or self.company.get('phone') or self.company.get('phone_number')
                                             if phone:
-                                                el.fill(phone)
+                                                el.fill(phone, timeout=self._action_timeout_ms())
                                                 el.dispatch_event('input')
                                                 el.dispatch_event('change')
                                                 filled_count += 1
                                         elif any(kw in field_hint for kw in ['subject', 'topic', 'reason', 'inquiry_type']):
-                                            el.fill(self.subject)
+                                            el.fill(self.subject, timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['country', 'nation', 'region', 'location']):
-                                            el.fill(self.sender_data.get('sender_country') or 'United Kingdom')
+                                            el.fill(self.sender_data.get('sender_country') or 'United Kingdom', timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif any(kw in field_hint for kw in ['message', 'comment', 'inquiry', 'enquiry', 'details', 'body']):
-                                            el.fill(message)
+                                            el.fill(message, timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                                         elif el.get_attribute('type') != 'email':
-                                            el.fill('N/A')
+                                            el.fill('N/A', timeout=self._action_timeout_ms())
                                             el.dispatch_event('input')
                                             el.dispatch_event('change')
                                             filled_count += 1
                             except Exception:
                                 pass
                         self.submit_form(form)
-                        self.page.wait_for_timeout(1000)
+                        self._wait_ms(1000)
                 except Exception:
                     pass
             
@@ -2429,6 +2448,8 @@ class FastCampaignProcessor:
     def submit_form(self, form) -> bool:
         """Submit the form by clicking submit button or calling form.submit(). Returns True if submit was attempted."""
         try:
+            if self._is_timed_out():
+                return False
             # Prefer clicking submit button so JS submit handlers run
             submit_selectors = [
                 'input[type="submit"]',
@@ -2439,20 +2460,24 @@ class FastCampaignProcessor:
                 'input[type="image"]',
             ]
             for sel in submit_selectors:
+                if self._is_timed_out():
+                    return False
                 try:
                     btn = form.query_selector(sel)
                     if btn and btn.is_visible():
                         self.log('info', 'Submitting', 'Clicking submit button')
-                        btn.click()
+                        btn.click(timeout=self._action_timeout_ms())
                         return True
                 except Exception:
                     continue
             # Try button by text (many div-based forms have no type=submit)
             for text in ['Send', 'Submit', 'Send Message', 'Submit Form', 'Send Enquiry', 'Send Inquiry']:
+                if self._is_timed_out():
+                    return False
                 try:
                     btn = form.locator(f'button:has-text("{text}"), input[type="submit"][value="{text}"], [role="button"]:has-text("{text}")').first
                     if btn.count() and btn.is_visible():
-                        btn.click()
+                        btn.click(timeout=self._action_timeout_ms())
                         self.log('info', 'Submitting', f'Clicked button by text: {text}')
                         return True
                 except Exception:
@@ -2468,7 +2493,7 @@ class FastCampaignProcessor:
             try:
                 btn = form.query_selector('button, input[type="submit"]')
                 if btn and btn.is_visible():
-                    btn.click()
+                    btn.click(timeout=self._action_timeout_ms())
                     self.log('info', 'Submitting', 'Clicked first button')
                     return True
             except Exception:
@@ -2650,7 +2675,7 @@ If you'd prefer not to receive these messages, please reply to let us know.
         """Take screenshot; return (path_or_url, bytes). Uses in-memory only so no filesystem on Railway."""
         try:
             self.handle_cookie_modal()
-            self.page.wait_for_timeout(300)
+            self._wait_ms(300)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
             raw = self.page.screenshot(full_page=True)
             screenshot_bytes = raw if isinstance(raw, bytes) and len(raw) > 0 else None
