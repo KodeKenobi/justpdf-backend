@@ -931,7 +931,10 @@ def rapid_process_batch(campaign_id):
         data = request.get_json() or {}
         company_ids = data.get('company_ids')  # Optional: if None, processes all pending up to processing_limit
         processing_limit = data.get('processing_limit')  # Optional: max companies to process (e.g. 2000); when None, no cap
-        
+        # Test-only: skip form submit and email send when X-Test-Run-Secret header matches env TEST_RUN_SECRET
+        test_secret = request.headers.get('X-Test-Run-Secret') or ''
+        skip_submit = bool(data.get('skip_submit') and test_secret and test_secret == os.environ.get('TEST_RUN_SECRET'))
+
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
@@ -984,10 +987,10 @@ def rapid_process_batch(campaign_id):
         # Thread must run with Flask app context so db.session works. Pass the app from
         # the request context (current_app) so it works on any deployment (gunicorn, etc.).
         flask_app = current_app._get_current_object()
-        def run_in_background(campaign_id_arg, company_ids_arg, processing_limit_arg, app_obj):
+        def run_in_background(campaign_id_arg, company_ids_arg, processing_limit_arg, skip_submit_arg, app_obj):
             with app_obj.app_context():
                 try:
-                    process_campaign_sequential(campaign_id_arg, company_ids_arg, processing_limit_arg)
+                    process_campaign_sequential(campaign_id_arg, company_ids_arg, processing_limit_arg, skip_submit_arg)
                 except BaseException as e:
                     print(f"Background thread error: {e}")
                     import traceback
@@ -1011,7 +1014,7 @@ def rapid_process_batch(campaign_id):
 
         thread = threading.Thread(
             target=run_in_background,
-            args=(campaign_id, company_ids, processing_limit, flask_app)
+            args=(campaign_id, company_ids, processing_limit, skip_submit, flask_app)
         )
         thread.daemon = True
         thread.start()

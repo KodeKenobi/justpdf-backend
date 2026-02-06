@@ -119,7 +119,7 @@ def _user_facing_error(err: str) -> str:
     return s
 
 
-def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=None):
+def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=None, skip_submit=False):
     """
     Process a campaign sequentially (one-by-one). Runs until all requested companies are done.
     - company_ids: optional list of ids to process; if None, processes all pending.
@@ -332,7 +332,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             logger=live_logger,
                             subject=subject_str,
                             sender_data=sender_data,
-                            deadline_sec=PER_COMPANY_TIMEOUT_SEC
+                            deadline_sec=PER_COMPANY_TIMEOUT_SEC,
+                            skip_submit=skip_submit
                         )
                         # Run on main thread only: Playwright sync API is not thread-safe; same page/context must not be used from another thread (causes "Invalid switch into Event.wait()" and stops the run).
                         # Per-company timeout is enforced inside the processor via deadline_sec, _remaining_ms(), and _is_timed_out() so we do not hang indefinitely.
@@ -446,6 +447,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
                             Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
                         campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                        campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
                         db.session.commit()
                         ws_manager.broadcast_event(campaign_id, {
                             'type': 'company_completed',
@@ -478,6 +480,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                 Company.status != 'processing'
                             ).count()
                             campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
                             db.session.commit()
                             ws_manager.broadcast_event(campaign_id, {
                                 'type': 'company_completed',
@@ -552,6 +555,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                 Company.status != 'processing'
                             ).count()
                             campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
                             db.session.commit()
                             ws_manager.broadcast_event(campaign_id, {
                                 'type': 'company_completed',

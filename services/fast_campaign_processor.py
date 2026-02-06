@@ -39,15 +39,16 @@ def _brain_get_keywords(pattern_type: str, default: List[str]) -> List[str]:
 class FastCampaignProcessor:
     """Fast, optimized campaign processing with early exit strategy"""
 
-    def __init__(self, page, company_data: Dict, message_template: str, 
+    def __init__(self, page, company_data: Dict, message_template: str,
                  campaign_id: int = None, company_id: int = None, logger=None, subject: str = None, sender_data: Dict = None,
-                 deadline_sec: float = None):
+                 deadline_sec: float = None, skip_submit: bool = False):
         self.page = page
         self.company = company_data
         self.campaign_id = campaign_id
         self.company_id = company_id
         self.logger = logger
         self.deadline = (time.time() + deadline_sec) if deadline_sec else None
+        self.skip_submit = bool(skip_submit)
         self.found_form = False
         self.found_contact_page = False
         self.website_url = self.company.get('website_url', '')
@@ -816,6 +817,22 @@ class FastCampaignProcessor:
                 return True
         return False
 
+    def _all_required_fulfilled(self, extracted: List[Dict], filled_field_patterns: List[Dict]) -> Tuple[bool, List[Dict]]:
+        """True if every required field (by extracted) is in filled_field_patterns. Returns (ok, list of missing required fields with name/label)."""
+        if not extracted:
+            return True, []
+        filled_ids = {(p.get('name') or '').strip() for p in (filled_field_patterns or []) if (p.get('name') or '').strip()}
+        missing = []
+        for f in extracted:
+            if f.get('required') is not True and '*' not in (f.get('label') or ''):
+                continue
+            name_or_id = (f.get('name') or f.get('id') or '').strip()
+            if not name_or_id:
+                continue
+            if name_or_id not in filled_ids:
+                missing.append({'name': f.get('name'), 'id': f.get('id'), 'label': f.get('label'), 'tag': f.get('tag')})
+        return (len(missing) == 0, missing)
+
     def _count_contact_like_fields(self, form) -> int:
         """Count inputs/selects that look like contact form fields (not hidden/submit/button). Used to skip newsletter/search forms."""
         try:
@@ -965,9 +982,26 @@ class FastCampaignProcessor:
             # Generic close buttons on modals
             '[class*="cookie"] button[class*="close"]',
             '[class*="consent"] button[class*="close"]',
-            '[id*="cookie"] button[class*="close"]'
+            '[id*="cookie"] button[class*="close"]',
+            # More variants so no screenshot shows a cookie modal
+            'button:has-text("Allow all")',
+            'button:has-text("Allow All")',
+            'button:has-text("Accept all cookies")',
+            'button:has-text("Allow all cookies")',
+            'button:has-text("OK")',
+            'button:has-text("I agree")',
+            'button:has-text("I Agree")',
+            'button:has-text("Consent")',
+            'button:has-text("Allow")',
+            'a:has-text("Accept all")',
+            'a:has-text("Accept All")',
+            'a:has-text("Reject all")',
+            '[data-testid*="accept"]',
+            '[class*="cookie"] button',
+            '[id*="cookie"] button',
+            '[class*="consent"] button',
         ]
-        
+
         for selector in selectors:
             try:
                 element = self.page.locator(selector).first
@@ -1679,9 +1713,23 @@ class FastCampaignProcessor:
                 filled_count += extra
                 self._log_form_fields_report(extracted, filled_field_patterns, context=location)
                 if filled_count >= 2 and self._is_contact_form_fill(filled_field_patterns):
+                    all_required_ok, missing_required = self._all_required_fulfilled(extracted, filled_field_patterns)
+                    path, screenshot_bytes = self.take_screenshot('form_filled')
+                    if not all_required_ok:
+                        self.log('warning', 'Form Incomplete', f'Required fields not all fulfilled; missing: {[m.get("name") or m.get("label") for m in missing_required]}')
+                        return {
+                            'success': False,
+                            'method': 'form_incomplete',
+                            'error': 'Required fields not all filled',
+                            'fields_filled': filled_count,
+                            'screenshot_url': path,
+                            'screenshot_bytes': screenshot_bytes,
+                            'filled_field_patterns': filled_field_patterns,
+                            'form_fields_detected': extracted,
+                            'required_not_filled': missing_required,
+                        }
                     if self.submit_form(form):
                         self._wait_ms(1000)
-                    path, screenshot_bytes = self.take_screenshot('form_filled')
                     self.log('success', 'Form Processed', f'Filled {filled_count} fields (extract-then-fill) and submitted')
                     return {
                         'success': True,
@@ -2275,6 +2323,23 @@ class FastCampaignProcessor:
             # Take screenshot of the filled form (before submit)
             screenshot_url, screenshot_bytes = self.take_screenshot(f'filled_{location}')
 
+            # Submit only when all required fields are fulfilled (check :invalid before submit)
+            try:
+                invalid = form.query_selector_all('input:invalid, textarea:invalid, select:invalid')
+                if invalid and len(invalid) > 0:
+                    self.log('warning', 'Form Incomplete', 'Required fields still empty; not submitting')
+                    return {
+                        'success': False,
+                        'method': 'form_incomplete',
+                        'error': 'Required fields not all filled',
+                        'fields_filled': filled_count,
+                        'screenshot_url': screenshot_url,
+                        'screenshot_bytes': screenshot_bytes,
+                        'filled_field_patterns': filled_field_patterns,
+                    }
+            except Exception:
+                pass
+
             # Submit the form after screenshot
             if filled_count > 0:
                 self.submit_form(form)
@@ -2450,6 +2515,9 @@ class FastCampaignProcessor:
         try:
             if self._is_timed_out():
                 return False
+            if self.skip_submit:
+                self.log('info', 'Test Run', 'Skipping form submit (test mode)')
+                return True
             # Prefer clicking submit button so JS submit handlers run
             submit_selectors = [
                 'input[type="submit"]',
@@ -2542,6 +2610,9 @@ class FastCampaignProcessor:
         Send email directly to found contact email using existing email service
         Uses your existing Resend email service (no additional configuration needed!)
         """
+        if self.skip_submit:
+            self.log('info', 'Test Run', 'Skipping email send (test mode)')
+            return True
         try:
             # Import your existing email service
             from email_service import send_email
@@ -2671,10 +2742,27 @@ If you'd prefer not to receive these messages, please reply to let us know.
         
         return message
 
-    def take_screenshot(self, prefix: str):
-        """Take screenshot; return (path_or_url, bytes). Uses in-memory only so no filesystem on Railway."""
+    def _dismiss_cookie_for_screenshot(self):
+        """Run cookie/consent dismissal multiple times so no screenshot ever shows a cookie modal."""
+        for _ in range(3):
+            if not self.handle_cookie_modal():
+                break
+            self._wait_ms(400)
+        self._wait_ms(400)
         try:
-            self.handle_cookie_modal()
+            self.page.evaluate("""() => {
+                document.querySelectorAll('[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i], [class*="gdpr" i]').forEach(el => {
+                    if (el && el.parentNode && (el.tagName === 'DIV' || el.tagName === 'ASIDE' || el.tagName === 'SECTION')) el.remove();
+                });
+            }""")
+            self._wait_ms(200)
+        except Exception:
+            pass
+
+    def take_screenshot(self, prefix: str):
+        """Take screenshot; return (path_or_url, bytes). No screenshot shall contain a cookie modal."""
+        try:
+            self._dismiss_cookie_for_screenshot()
             self._wait_ms(300)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
             raw = self.page.screenshot(full_page=True)
