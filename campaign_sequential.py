@@ -290,25 +290,25 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             try:
                                 line_str = line.decode('utf-8', errors='ignore').strip()
                                 if line_str:
-                                # Parse [LEVEL] ACTION: MESSAGE
-                                match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
-                                if match:
-                                    level, action, message = match.groups()
-                                    user_msg = _user_friendly_message(level, action, message)
-                                    ws_manager.broadcast_event(campaign_id, {
-                                        'type': 'activity',
-                                        'data': {
-                                            'company_id': cid,
-                                            'company_name': cname,
-                                            'level': level,
-                                            'action': action,
-                                            'message': message,
-                                            'user_message': user_msg,
-                                            'timestamp': datetime.utcnow().isoformat()
-                                        }
-                                    })
-                                else:
-                                    print(f"[Worker Output] {line_str}")
+                                    # Parse [LEVEL] ACTION: MESSAGE
+                                    match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
+                                    if match:
+                                        level, action, message = match.groups()
+                                        user_msg = _user_friendly_message(level, action, message)
+                                        ws_manager.broadcast_event(campaign_id, {
+                                            'type': 'activity',
+                                            'data': {
+                                                'company_id': cid,
+                                                'company_name': cname,
+                                                'level': level,
+                                                'action': action,
+                                                'message': message,
+                                                'user_message': user_msg,
+                                                'timestamp': datetime.utcnow().isoformat()
+                                            }
+                                        })
+                                    else:
+                                        print(f"[Worker Output] {line_str}")
                             except Exception as e:
                                 print(f"[Sequential] Error decoding worker log: {e}")
 
