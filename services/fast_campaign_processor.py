@@ -113,6 +113,57 @@ class FastCampaignProcessor:
         if ms > 0:
             self.page.wait_for_timeout(ms)
 
+    def _dispatch_select_events(self, select):
+        """Dispatch change/input events after programmatically selecting an option."""
+        try:
+            select.evaluate("""
+                el => {
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    el.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+            """)
+        except Exception:
+            pass
+
+    def _select_option_by_click(self, select, value=None, label=None, index=None):
+        """
+        Select an option by clicking (works for custom dropdowns like Wix).
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # First, try clicking the select to open dropdown
+            select.click(timeout=self._action_timeout_ms())
+            self._wait_ms(300)  # Wait for dropdown to open
+            
+            # Find and click the option
+            if value is not None:
+                option = select.query_selector(f'option[value="{value}"]')
+                if option:
+                    option.click(timeout=self._action_timeout_ms())
+                    self._dispatch_select_events(select)
+                    return True
+            
+            if label:
+                # Try to find option by text content
+                options = select.query_selector_all('option')
+                for opt in options:
+                    if (opt.inner_text() or '').strip() == label:
+                        opt.click(timeout=self._action_timeout_ms())
+                        self._dispatch_select_events(select)
+                        return True
+            
+            if index is not None:
+                options = select.query_selector_all('option')
+                if 0 <= index < len(options):
+                    options[index].click(timeout=self._action_timeout_ms())
+                    self._dispatch_select_events(select)
+                    return True
+            
+            return False
+        except Exception:
+            return False
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
