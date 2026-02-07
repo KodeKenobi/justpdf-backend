@@ -12,7 +12,7 @@ from playwright.sync_api import sync_playwright
 from models import Campaign, Company, db
 
 # Per-company timeout so one slow site doesn't hang the whole run (e.g. 5th company)
-PER_COMPANY_TIMEOUT_SEC = 90
+PER_COMPANY_TIMEOUT_SEC = 60
 # Max time to wait for page.close() so one stuck close doesn't freeze the entire run
 PAGE_CLOSE_TIMEOUT_SEC = 8
 # Recreate browser context every N companies to avoid Chromium memory bloat and "context gone bad" on long runs (2000+)
@@ -336,14 +336,34 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             deadline_sec=PER_COMPANY_TIMEOUT_SEC,
                             skip_submit=skip_submit
                         )
-                        # Direct call - Playwright's global timeout (5s) ensures no operation hangs forever.
-                        # The processor's internal deadline checks (_is_timed_out) handle early exit.
+                        # PERMANENT FIX: Hard timeout enforcement - if processor doesn't respect deadline, force-kill after timeout
                         _start_time = time.time()
-                        result = processor.process_company()
+                        _result_container = [None]
+                        _exception_container = [None]
+                        
+                        def _run_processor():
+                            try:
+                                _result_container[0] = processor.process_company()
+                            except Exception as e:
+                                _exception_container[0] = e
+                        
+                        processor_thread = threading.Thread(target=_run_processor, daemon=True)
+                        processor_thread.start()
+                        processor_thread.join(timeout=PER_COMPANY_TIMEOUT_SEC + 5)  # Allow 5s grace period
+                        
                         elapsed = time.time() - _start_time
-                        _m = (result or {}).get('method') or ''
-                        _e = ((result or {}).get('error') or '')[:200]
-                        print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
+                        
+                        if processor_thread.is_alive():
+                            # Thread is still running - processor is stuck
+                            print(f"[Sequential] Company {_company_id} STUCK after {elapsed:.1f}s - forcing timeout")
+                            result = {'success': False, 'error': 'Processing timed out (stuck)', 'method': 'timeout'}
+                        elif _exception_container[0]:
+                            raise _exception_container[0]
+                        else:
+                            result = _result_container[0]
+                            _m = (result or {}).get('method') or ''
+                            _e = ((result or {}).get('error') or '')[:200]
+                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
                     except Exception as e:
                         result = {'success': False, 'error': str(e), 'method': 'error'}
                         print(f"[Sequential] Company {_company_id} failed with exception: {e}")
