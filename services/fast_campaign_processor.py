@@ -871,10 +871,18 @@ class FastCampaignProcessor:
     def search_by_heuristics(self) -> Dict:
         """Fallback: look for inputs directly on page when no <form> tag exists"""
         try:
+            # HARD LIMIT: Skip heuristics entirely if less than 30s remaining — they're slow and rarely succeed
+            if self._remaining_ms(30000) < 25000:
+                self.log('info', 'Heuristics', 'Skipping heuristics — less than 30s remaining')
+                return {'success': False, 'error': 'Skipped due to time limit'}
             # Check for common form fields manually
             inputs = self.page.query_selector_all('input, textarea')
             if not inputs: return {'success': False}
-
+            # HARD LIMIT: Cap at 20 inputs to avoid processing 50+ fields that slow everything down
+            MAX_FIELDS = 20
+            if len(inputs) > MAX_FIELDS:
+                self.log('info', 'Heuristics', f'Capping {len(inputs)} inputs to {MAX_FIELDS} to stay within time budget')
+                inputs = inputs[:MAX_FIELDS]
             self.log('info', 'Heuristics', f'Analyzing {len(inputs)} orphan inputs...')
             # Treat all visible inputs as a virtual form
             return self.fill_and_submit_form(self.page, 'page_heuristics', is_heuristic=True)
@@ -1749,6 +1757,12 @@ class FastCampaignProcessor:
             filled_count = 0
             inputs = form.query_selector_all('input, textarea')
             selects = form.query_selector_all('select')
+            # HARD LIMIT: Cap fields to prevent processing 50+ inputs that cause timeouts
+            MAX_FALLBACK_FIELDS = 20
+            if len(inputs) > MAX_FALLBACK_FIELDS:
+                inputs = inputs[:MAX_FALLBACK_FIELDS]
+            if len(selects) > 10:
+                selects = selects[:10]
             email_filled = False
             message_filled = False
             filled_field_patterns = []  # For mandatory brain recording: role, name, label per filled field
