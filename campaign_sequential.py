@@ -122,6 +122,27 @@ def _user_facing_error(err: str) -> str:
     return s
 
 
+def _kill_process_tree(proc):
+    """Forcefully kill a process and all its children (important for Chrome/Playwright on Windows)."""
+    if not proc:
+        return
+    pid = proc.pid
+    print(f"[Sequential] Force-killing process tree for PID {pid}...")
+    try:
+        if sys.platform == 'win32':
+            # /F = forceful, /T = tree (all children)
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True, timeout=5)
+        else:
+            # On Linux, kill the process group if we had set pgroup, but for now just kill() 
+            # Subprocess.kill() is usually enough on Linux/Railway
+            proc.kill()
+    except Exception as e:
+        print(f"[Sequential] Error killing process {pid}: {e}")
+    finally:
+        try: proc.wait(timeout=2)
+        except: pass
+
+
 def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=None, skip_submit=False):
     """
     Process a campaign sequentially (one-by-one). Runs until all requested companies are done.
@@ -247,16 +268,16 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         cwd=os.path.dirname(__file__),
-                        text=True,
-                        bufsize=1 # Line buffered
+                        bufsize=0 # Unbuffered binary
                     )
 
                     # Helper to stream logs to WebSocket
                     def stream_logs(pipe, cid, cname):
-                        # Read line by line until process exits
-                        for line in iter(pipe.readline, ''):
-                            line_str = line.strip()
-                            if line_str:
+                        # Read line by line until process exits (binary read for robustness)
+                        for line in iter(pipe.readline, b''):
+                            try:
+                                line_str = line.decode('utf-8', errors='ignore').strip()
+                                if line_str:
                                 # Parse [LEVEL] ACTION: MESSAGE
                                 match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
                                 if match:
@@ -276,22 +297,25 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                     })
                                 else:
                                     print(f"[Worker Output] {line_str}")
+                            except Exception as e:
+                                print(f"[Sequential] Error decoding worker log: {e}")
 
                     # Feed the combined stdout/stderr to the logger thread
                     logger_thread = threading.Thread(target=stream_logs, args=(proc.stdout, _company_id, _company_name))
                     logger_thread.daemon = True
                     logger_thread.start()
 
-                    # Wait for worker
+                    # Wait for worker with absolute deadline
                     try:
+                        print(f"[Sequential] [Heartbeat] Waiting for worker PID {proc.pid}...")
                         proc.wait(timeout=PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC)
+                        print(f"[Sequential] [Heartbeat] Worker PID {proc.pid} finished.")
                         if os.path.exists(output_path):
                             with open(output_path, 'r', encoding='utf-8') as f:
                                 result = json.load(f)
                     except subprocess.TimeoutExpired:
-                        print(f"[Sequential] Worker TIMEOUT for company {_company_id} - killing")
-                        proc.kill()
-                        proc.wait()
+                        print(f"[Sequential] Worker TIMEOUT for company {_company_id} - killing tree")
+                        _kill_process_tree(proc)
                         result = {'success': False, 'error': 'Processing timed out', 'method': 'timeout'}
 
                 except Exception as sub_err:
@@ -356,11 +380,13 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                 db.session.commit()
                 
                 # Update campaign stats
+                print(f"[Sequential] [Heartbeat] Updating stats for campaign {campaign_id}")
                 campaign.processed_count = Company.query.filter(Company.campaign_id == campaign.id, Company.status != 'pending', Company.status != 'processing').count()
                 campaign.success_count = Company.query.filter(Company.campaign_id == campaign.id, Company.status.in_(['completed', 'contact_info_found'])).count()
                 campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
                 campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
                 db.session.commit()
+                db.session.expire_all() # Ensure next iteration gets fresh objects
                 
                 ws_manager.broadcast_event(campaign_id, {
                     'type': 'company_completed',

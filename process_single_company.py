@@ -42,6 +42,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services.fast_campaign_processor import FastCampaignProcessor
 
 
+def _timeout_handler(cid):
+    print(f"ERROR: Absolute process timeout reached for company {cid}. Exiting.", file=sys.stderr)
+    os._exit(1) # Force exit immediately
+
+
 def process_single_company(input_data: dict) -> dict:
     """
     Process a single company and return the result.
@@ -66,6 +71,12 @@ def process_single_company(input_data: dict) -> dict:
         timeout_sec = input_data.get('timeout_sec', 60)
         skip_submit = input_data.get('skip_submit', False)
         
+        # Absolute safeguard: kill self if we exceed timeout + 10s grace
+        import threading
+        timer = threading.Timer(timeout_sec + 20, _timeout_handler, args=[company_id])
+        timer.daemon = True
+        timer.start()
+
         # Simple logger that prints to stderr (orchestrator can capture)
         def simple_logger(level, action, message):
             print(f"[{level}] {action}: {message}", file=sys.stderr)
