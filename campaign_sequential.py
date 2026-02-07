@@ -365,7 +365,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         else:
                             _m = (result or {}).get('method') or ''
                             _e = ((result or {}).get('error') or '')[:200]
-                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}\")
+                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
                     except Exception as e:
                         elapsed = time.time() - _start_time
                         if _timed_out[0]:
