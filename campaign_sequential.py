@@ -322,7 +322,26 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         })
 
                     result = None
+                    _start_time = time.time()
+                    _timed_out = [False]
+                    _watchdog_timer = None
+                    
+                    def _timeout_watchdog():
+                        """Force-close the page if processing exceeds deadline"""
+                        _timed_out[0] = True
+                        elapsed = time.time() - _start_time
+                        print(f"[Sequential] Company {_company_id} TIMEOUT after {elapsed:.1f}s - force-closing page")
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                    
                     try:
+                        # Start watchdog timer - will force-close page after timeout
+                        _watchdog_timer = threading.Timer(PER_COMPANY_TIMEOUT_SEC + 5, _timeout_watchdog)
+                        _watchdog_timer.daemon = True
+                        _watchdog_timer.start()
+                        
                         company_data = company.to_dict()
                         processor = FastCampaignProcessor(
                             page=page,
@@ -336,37 +355,29 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             deadline_sec=PER_COMPANY_TIMEOUT_SEC,
                             skip_submit=skip_submit
                         )
-                        # PERMANENT FIX: Hard timeout enforcement - if processor doesn't respect deadline, force-kill after timeout
-                        _start_time = time.time()
-                        _result_container = [None]
-                        _exception_container = [None]
                         
-                        def _run_processor():
-                            try:
-                                _result_container[0] = processor.process_company()
-                            except Exception as e:
-                                _exception_container[0] = e
-                        
-                        processor_thread = threading.Thread(target=_run_processor, daemon=True)
-                        processor_thread.start()
-                        processor_thread.join(timeout=PER_COMPANY_TIMEOUT_SEC + 5)  # Allow 5s grace period
-                        
+                        result = processor.process_company()
                         elapsed = time.time() - _start_time
                         
-                        if processor_thread.is_alive():
-                            # Thread is still running - processor is stuck
-                            print(f"[Sequential] Company {_company_id} STUCK after {elapsed:.1f}s - forcing timeout")
-                            result = {'success': False, 'error': 'Processing timed out (stuck)', 'method': 'timeout'}
-                        elif _exception_container[0]:
-                            raise _exception_container[0]
+                        if _timed_out[0]:
+                            result = {'success': False, 'error': 'Processing timed out (watchdog)', 'method': 'timeout'}
+                            print(f"[Sequential] Company {_company_id} completed after watchdog timeout in {elapsed:.1f}s")
                         else:
-                            result = _result_container[0]
                             _m = (result or {}).get('method') or ''
                             _e = ((result or {}).get('error') or '')[:200]
-                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
+                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}\")
                     except Exception as e:
-                        result = {'success': False, 'error': str(e), 'method': 'error'}
-                        print(f"[Sequential] Company {_company_id} failed with exception: {e}")
+                        elapsed = time.time() - _start_time
+                        if _timed_out[0]:
+                            result = {'success': False, 'error': 'Processing timed out (watchdog killed)', 'method': 'timeout'}
+                            print(f"[Sequential] Company {_company_id} exception after watchdog timeout in {elapsed:.1f}s: {e}")
+                        else:
+                            result = {'success': False, 'error': str(e), 'method': 'error'}
+                            print(f"[Sequential] Company {_company_id} failed with exception: {e}")
+                    finally:
+                        # Cancel watchdog if processing completed before timeout
+                        if _watchdog_timer:
+                            _watchdog_timer.cancel()
 
                     try:
                         if result is None:
