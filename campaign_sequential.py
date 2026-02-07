@@ -337,10 +337,12 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         )
                         # Direct call - Playwright's global timeout (5s) ensures no operation hangs forever.
                         # The processor's internal deadline checks (_is_timed_out) handle early exit.
+                        _start_time = time.time()
                         result = processor.process_company()
+                        elapsed = time.time() - _start_time
                         _m = (result or {}).get('method') or ''
                         _e = ((result or {}).get('error') or '')[:200]
-                        print(f"[Sequential] Company {_company_id} result: method={_m!r} error={_e!r}")
+                        print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
                     except Exception as e:
                         result = {'success': False, 'error': str(e), 'method': 'error'}
                         print(f"[Sequential] Company {_company_id} failed with exception: {e}")

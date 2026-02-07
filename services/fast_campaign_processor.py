@@ -963,8 +963,9 @@ class FastCampaignProcessor:
             self.log('error', 'Contact Link Search', str(e))
             return None
 
-    def handle_cookie_modal(self):
-        """Comprehensive cookie modal handling - Accept, Reject, or Close"""
+    def handle_cookie_modal(self, max_time_ms: int = 15000):
+        """Comprehensive cookie modal handling - Accept, Reject, or Close. Capped at max_time_ms."""
+        start_time = time.time()
         # Try accept buttons first, then reject/close buttons
         selectors = [
             # Accept buttons
@@ -1019,8 +1020,13 @@ class FastCampaignProcessor:
 
         for selector in selectors:
             try:
+                # PERMANENT FIX: Don't spend too long on cookie modals; check deadline and local cap
+                if self._is_timed_out() or (time.time() - start_time) * 1000 > max_time_ms:
+                    break
+                
                 element = self.page.locator(selector).first
-                if element.is_visible(timeout=300):
+                # Reduce visibility check to 150ms to fly through the list if none exist
+                if element.is_visible(timeout=150):
                     element.click(timeout=self._action_timeout_ms())
                     self._wait_ms(200)
                     self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')
@@ -1066,6 +1072,8 @@ class FastCampaignProcessor:
         try:
             inputs = form.query_selector_all('input, textarea')
             for el in (inputs or []):
+                if self._is_timed_out():
+                    break
                 try:
                     itype = (el.get_attribute('type') or 'text').lower()
                     if itype in ('hidden', 'submit', 'button', 'image'):
@@ -1091,6 +1099,8 @@ class FastCampaignProcessor:
                     continue
             selects = form.query_selector_all('select')
             for el in (selects or []):
+                if self._is_timed_out():
+                    break
                 try:
                     name = el.get_attribute('name')
                     id_ = el.get_attribute('id')
@@ -1185,6 +1195,8 @@ class FastCampaignProcessor:
         optional_checkbox_checked = False  # only check one optional checkbox unless form strictly asks for all
         honeypot_hints = ('leave this field blank', 'if you are human', 'leave blank', 'do not fill', 'human')
         for f in unfilled:
+            if self._is_timed_out():
+                break
             name = (f.get('name') or '').strip()
             id_ = (f.get('id') or '').strip()
             label_raw = (f.get('label') or '').strip()
@@ -2100,6 +2112,8 @@ class FastCampaignProcessor:
             # Handle Radio groups: ensure one option selected per name (required for many forms)
             radios_by_name = {}
             for inp in inputs:
+                if self._is_timed_out():
+                    break
                 if inp.get_attribute('type') == 'radio':
                     name = inp.get_attribute('name')
                     if name and inp.is_visible():
@@ -2107,6 +2121,8 @@ class FastCampaignProcessor:
                             radios_by_name[name] = []
                         radios_by_name[name].append(inp)
             for name, group in radios_by_name.items():
+                if self._is_timed_out():
+                    break
                 try:
                     # Prefer option whose label/value matches enquiry, email, phone, general
                     name_lower = name.lower()
@@ -2135,6 +2151,8 @@ class FastCampaignProcessor:
 
             # Handle Checkboxes
             for cb in inputs:
+                if self._is_timed_out():
+                    break
                 if cb.get_attribute('type') == 'checkbox':
                     name = (cb.get_attribute('name') or '').lower()
                     # Try to get text from parent label or next sibling or aria-label
@@ -2159,6 +2177,8 @@ class FastCampaignProcessor:
             try:
                 required_selects = form.query_selector_all('select[required], select[aria-required="true"]')
                 for el in required_selects or []:
+                    if self._is_timed_out():
+                        break
                     opts = el.query_selector_all('option')
                     if opts and len(opts) > 1:
                         first_text = (opts[0].inner_text() or '').strip().lower()
@@ -2175,6 +2195,8 @@ class FastCampaignProcessor:
                 # Only fill empty required textarea if it looks like message/comment (never put generic text in name/email fields)
                 required_textareas = form.query_selector_all('textarea[required]')
                 for el in required_textareas or []:
+                    if self._is_timed_out():
+                        break
                     try:
                         current = (el.evaluate('el => el.value') or '') or ''
                         if current and str(current).strip():
@@ -2195,6 +2217,8 @@ class FastCampaignProcessor:
             try:
                 # Required radio groups: ensure one option selected (pick by preference or first)
                 for el in (form.query_selector_all('input[type=radio]') or []):
+                    if self._is_timed_out():
+                        break
                     try:
                         name = el.get_attribute('name')
                         if not name:
@@ -2222,6 +2246,8 @@ class FastCampaignProcessor:
                         pass
                 # Required checkboxes: only check when label clearly indicates opt-in/marketing; do not check terms/conditions
                 for el in (form.query_selector_all('input[type=checkbox][required]') or []):
+                    if self._is_timed_out():
+                        break
                     try:
                         if el.evaluate('el => el.checked'):
                             continue
@@ -2236,7 +2262,11 @@ class FastCampaignProcessor:
                     except Exception:
                         pass
                 for sel in ['input[required]', 'textarea[required]', 'select[required]', 'select[aria-required="true"]']:
+                    if self._is_timed_out():
+                        break
                     for el in (form.query_selector_all(sel) or []):
+                        if self._is_timed_out():
+                            break
                         try:
                             tag = el.evaluate('el => el.tagName.toLowerCase()')
                             current = (el.evaluate('el => el.value') or '') if tag != 'select' else ''
@@ -2786,7 +2816,8 @@ If you'd prefer not to receive these messages, please reply to let us know.
             self._dismiss_cookie_for_screenshot()
             self._wait_ms(300)
             # No path = Playwright returns bytes directly; no temp file, works on read-only Railway
-            raw = self.page.screenshot(full_page=True)
+            # PERMANENT FIX: Add explicit timeout to screenshot (default can be too long or hang)
+            raw = self.page.screenshot(full_page=True, timeout=10000)
             screenshot_bytes = raw if isinstance(raw, bytes) and len(raw) > 0 else None
             if not screenshot_bytes:
                 self.log('warning', 'Screenshot', 'page.screenshot() returned no bytes (type=%s)' % type(raw).__name__)
