@@ -1,14 +1,15 @@
 """
 Standalone campaign sequential processor.
 No Celery/Redis imports - safe to use when Redis is not running (e.g. Start button).
+Uses subprocess-based architecture for reliable timeout enforcement.
 """
 import os
 import json
 import re
 import time
-import threading
+import subprocess
+import tempfile
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 from models import Campaign, Company, db
 
 # Per-company timeout so one slow site doesn't hang the whole run (e.g. 5th company)
@@ -206,178 +207,174 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
             db.session.commit()
             return {'error': str(imp_err)}
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
-            context = browser.new_context()
-
-            for idx, company in enumerate(companies):
-                page = None
-                # Periodic context refresh: avoid Chromium memory bloat and "context gone bad" on long runs (2000+ companies)
-                if idx > 0 and idx % CONTEXT_REFRESH_INTERVAL == 0:
-                    try:
-                        context.close()
-                    except Exception as ctx_err:
-                        print(f"[Sequential] Context close warning: {ctx_err}")
-                    try:
-                        context = browser.new_context()
-                        print(f"[Sequential] Refreshed browser context after {idx} companies (continuing to next)")
-                    except Exception as ctx_err:
-                        print(f"[Sequential] New context failed: {ctx_err}; continuing with existing context")
-                # Re-fetch company by id so we always have a fresh session reference (avoids expired/detached after previous commit)
-                try:
-                    _cid = company.id if hasattr(company, 'id') else None
-                    if _cid is not None:
-                        company = Company.query.filter_by(id=_cid, campaign_id=campaign_id).first()
-                    if company is None:
-                        print(f"[Sequential] Skipping missing company at index {idx}")
-                        continue
-                except Exception as refetch_err:
-                    print(f"[Sequential] Refetch company at index {idx} failed: {refetch_err}; skipping")
+        # No Playwright needed in orchestrator - worker subprocess handles browser
+        for idx, company in enumerate(companies):
+            # Re-fetch company by id so we always have a fresh session reference (avoids expired/detached after previous commit)
+            try:
+                _cid = company.id if hasattr(company, 'id') else None
+                if _cid is not None:
+                    company = Company.query.filter_by(id=_cid, campaign_id=campaign_id).first()
+                if company is None:
+                    print(f"[Sequential] Skipping missing company at index {idx}")
                     continue
+            except Exception as refetch_err:
+                print(f"[Sequential] Refetch company at index {idx} failed: {refetch_err}; skipping")
+                continue
 
-                try:
-                    db.session.rollback()
-                    db.session.refresh(campaign)
-                    if campaign.status in ['stopping', 'cancelled']:
-                        # Reset any company still "processing" so UI doesn't show it stuck
-                        Company.query.filter_by(
-                            campaign_id=campaign_id,
-                            status='processing'
-                        ).update({'status': 'pending'})
-                        campaign.status = 'cancelled'
-                        db.session.commit()
-                        ws_manager.broadcast_event(campaign_id, {
-                            'type': 'campaign_stopped',
-                            'data': {'message': 'Processing stopped by user'}
-                        })
-                        break
-
-                    # PERMANENT FIX: Only one company may be "processing" at a time. Clear any other stuck ones (e.g. from crashed iteration).
-                    other_stuck = Company.query.filter(
-                        Company.campaign_id == campaign_id,
-                        Company.status == 'processing',
-                        Company.id != company.id
+            try:
+                db.session.rollback()
+                db.session.refresh(campaign)
+                if campaign.status in ['stopping', 'cancelled']:
+                    # Reset any company still "processing" so UI doesn't show it stuck
+                    Company.query.filter_by(
+                        campaign_id=campaign_id,
+                        status='processing'
                     ).update({'status': 'pending'})
-                    if other_stuck:
-                        db.session.commit()
-                        print(f"[Sequential] Cleared {other_stuck} other company/companies from 'processing' before starting company {company.id}")
-
-                    company.status = 'processing'
+                    campaign.status = 'cancelled'
                     db.session.commit()
+                    ws_manager.broadcast_event(campaign_id, {
+                        'type': 'campaign_stopped',
+                        'data': {'message': 'Processing stopped by user'}
+                    })
+                    break
 
-                    try:
-                        page = context.new_page()
-                        page.set_default_timeout(25000)
-                        page.set_default_navigation_timeout(30000)
-                    except Exception as page_err:
-                        # Context may be bad after timeouts; try fresh context once
-                        try:
-                            context.close()
-                            context = browser.new_context()
-                            page = context.new_page()
-                            page.set_default_timeout(25000)
-                            page.set_default_navigation_timeout(30000)
-                        except Exception as retry_err:
-                            print(f"[Sequential] new_page() failed for company {company.id}: {page_err}; retry: {retry_err}")
-                            company.status = 'failed'
-                            company.error_message = _user_facing_error(str(retry_err))
-                            company.processed_at = datetime.utcnow()
-                            db.session.commit()
-                            campaign.processed_count = Company.query.filter(
-                                Company.campaign_id == campaign.id,
-                                Company.status != 'pending',
-                                Company.status != 'processing'
-                            ).count()
-                            db.session.commit()
-                            ws_manager.broadcast_event(campaign_id, {
-                                'type': 'company_completed',
-                                'data': {
-                                    'company_id': company.id,
-                                    'status': company.status,
-                                    'screenshot_url': None,
-                                    'progress': int((idx + 1) / len(companies) * 100)
-                                }
-                            })
-                            continue
-                    # If retry succeeded, page is set and we proceed
+                # PERMANENT FIX: Only one company may be "processing" at a time. Clear any other stuck ones (e.g. from crashed iteration).
+                other_stuck = Company.query.filter(
+                    Company.campaign_id == campaign_id,
+                    Company.status == 'processing',
+                    Company.id != company.id
+                ).update({'status': 'pending'})
+                if other_stuck:
+                    db.session.commit()
+                    print(f"[Sequential] Cleared {other_stuck} other company/companies from 'processing' before starting company {company.id}")
 
-                    # Capture ids/names in this thread so inner thread never touches ORM (avoids "Working outside of application context")
-                    _company_id = company.id
-                    _company_name = getattr(company, 'company_name', '') or ''
+                company.status = 'processing'
+                db.session.commit()
 
-                    def live_logger(level, action, message):
-                        print(f"[{level}] {action}: {message}")
-                        user_msg = _user_friendly_message(level, action, message)
-                        ws_manager.broadcast_event(campaign_id, {
-                            'type': 'activity',
-                            'data': {
-                                'company_id': _company_id,
-                                'company_name': _company_name,
-                                'level': level,
-                                'action': action,
-                                'message': message,
-                                'user_message': user_msg,
-                                'timestamp': datetime.utcnow().isoformat()
-                            }
-                        })
+                # Capture ids/names so worker never touches ORM (avoids "Working outside of application context")
+                _company_id = company.id
+                _company_name = getattr(company, 'company_name', '') or ''
 
+                def live_logger(level, action, message):
+                    print(f"[{level}] {action}: {message}")
+                    user_msg = _user_friendly_message(level, action, message)
+                    ws_manager.broadcast_event(campaign_id, {
+                        'type': 'activity',
+                        'data': {
+                            'company_id': _company_id,
+                            'company_name': _company_name,
+                            'level': level,
+                            'action': action,
+                            'message': message,
+                            'user_message': user_msg,
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                    })
+
+
+                    # SUBPROCESS-BASED PROCESSING: Run worker in separate process that can be killed
                     result = None
                     _start_time = time.time()
-                    _timed_out = [False]
-                    _watchdog_timer = None
                     
-                    def _timeout_watchdog():
-                        """Force-close the page if processing exceeds deadline"""
-                        _timed_out[0] = True
-                        elapsed = time.time() - _start_time
-                        print(f"[Sequential] Company {_company_id} TIMEOUT after {elapsed:.1f}s - force-closing page")
-                        try:
-                            page.close()
-                        except Exception:
-                            pass
+                    # Create temp files for input/output
+                    input_fd, input_path = tempfile.mkstemp(suffix='.json', prefix='worker_input_')
+                    output_fd, output_path = tempfile.mkstemp(suffix='.json', prefix='worker_output_')
                     
                     try:
-                        # Start watchdog timer - will force-close page after timeout
-                        _watchdog_timer = threading.Timer(PER_COMPANY_TIMEOUT_SEC + 5, _timeout_watchdog)
-                        _watchdog_timer.daemon = True
-                        _watchdog_timer.start()
+                        # Close file descriptors (we'll use paths)
+                        os.close(input_fd)
+                        os.close(output_fd)
                         
+                        # Prepare input data for worker
                         company_data = company.to_dict()
-                        processor = FastCampaignProcessor(
-                            page=page,
-                            company_data=company_data,
-                            message_template=message_template_str,
-                            campaign_id=campaign_id,
-                            company_id=_company_id,
-                            logger=live_logger,
-                            subject=subject_str,
-                            sender_data=sender_data,
-                            deadline_sec=PER_COMPANY_TIMEOUT_SEC,
-                            skip_submit=skip_submit
+                        worker_input = {
+                            'campaign_id': campaign_id,
+                            'company_id': _company_id,
+                            'company_data': company_data,
+                            'message_template': message_template_str,
+                            'subject': subject_str,
+                            'sender_data': sender_data,
+                            'timeout_sec': PER_COMPANY_TIMEOUT_SEC,
+                            'skip_submit': skip_submit
+                        }
+                        
+                        # Write input file
+                        with open(input_path, 'w', encoding='utf-8') as f:
+                            json.dump(worker_input, f)
+                        
+                        # Spawn worker subprocess
+                        worker_script = os.path.join(os.path.dirname(__file__), 'process_single_company.py')
+                        proc = subprocess.Popen(
+                            ['py', worker_script, '--input', input_path, '--output', output_path],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            cwd=os.path.dirname(__file__)
                         )
                         
-                        result = processor.process_company()
-                        elapsed = time.time() - _start_time
+                        print(f"[Sequential] Company {_company_id} worker started (PID {proc.pid})")
                         
-                        if _timed_out[0]:
-                            result = {'success': False, 'error': 'Processing timed out (watchdog)', 'method': 'timeout'}
-                            print(f"[Sequential] Company {_company_id} completed after watchdog timeout in {elapsed:.1f}s")
-                        else:
-                            _m = (result or {}).get('method') or ''
-                            _e = ((result or {}).get('error') or '')[:200]
-                            print(f"[Sequential] Company {_company_id} result in {elapsed:.1f}s: method={_m!r} error={_e!r}")
-                    except Exception as e:
-                        elapsed = time.time() - _start_time
-                        if _timed_out[0]:
-                            result = {'success': False, 'error': 'Processing timed out (watchdog killed)', 'method': 'timeout'}
-                            print(f"[Sequential] Company {_company_id} exception after watchdog timeout in {elapsed:.1f}s: {e}")
-                        else:
-                            result = {'success': False, 'error': str(e), 'method': 'error'}
-                            print(f"[Sequential] Company {_company_id} failed with exception: {e}")
+                        # Wait for worker with timeout (60s + 5s grace period)
+                        timeout_sec = PER_COMPANY_TIMEOUT_SEC + 5
+                        try:
+                            stdout, stderr = proc.communicate(timeout=timeout_sec)
+                            elapsed = time.time() - _start_time
+                            
+                            # Worker completed within timeout
+                            if proc.returncode == 0:
+                                print(f"[Sequential] Company {_company_id} worker completed successfully in {elapsed:.1f}s")
+                            else:
+                                print(f"[Sequential] Company {_company_id} worker exited with code {proc.returncode} in {elapsed:.1f}s")
+                            
+                            # Log stderr if any
+                            if stderr:
+                                stderr_str = stderr.decode('utf-8', errors='ignore')
+                                if stderr_str.strip():
+                                    print(f"[Sequential] Company {_company_id} worker stderr:\n{stderr_str[:500]}")
+                            
+                            # Read result from output file
+                            try:
+                                with open(output_path, 'r', encoding='utf-8') as f:
+                                    result = json.load(f)
+                            except Exception as e:
+                                print(f"[Sequential] Company {_company_id} failed to read output: {e}")
+                                result = {'success': False, 'error': f'Failed to read worker output: {e}', 'method': 'error'}
+                        
+                        except subprocess.TimeoutExpired:
+                            # Worker exceeded timeout - KILL IT
+                            elapsed = time.time() - _start_time
+                            print(f"[Sequential] Company {_company_id} TIMEOUT after {elapsed:.1f}s - killing worker process (PID {proc.pid})")
+                            
+                            # Try graceful termination first
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=2)
+                                print(f"[Sequential] Company {_company_id} worker terminated gracefully")
+                            except subprocess.TimeoutExpired:
+                                # Force kill
+                                print(f"[Sequential] Company {_company_id} worker did not terminate, force killing")
+                                proc.kill()
+                                proc.wait()
+                            
+                            result = {
+                                'success': False,
+                                'error': f'Processing timed out after {elapsed:.1f}s',
+                                'method': 'timeout',
+                                'fields_filled': 0,
+                                'screenshot_url': None
+                            }
+                    
                     finally:
-                        # Cancel watchdog if processing completed before timeout
-                        if _watchdog_timer:
-                            _watchdog_timer.cancel()
+                        # Clean up temp files
+                        try:
+                            if os.path.exists(input_path):
+                                os.remove(input_path)
+                        except Exception:
+                            pass
+                        try:
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
+                        except Exception:
+                            pass
 
                     try:
                         if result is None:
@@ -442,33 +439,11 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                     print(f"[WARN] Screenshot file read error: {e}")
                             if screenshot_bytes:
                                 try:
-                                    _upload_result = [None]
-                                    def _do_upload():
-                                        _upload_result[0] = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                    _up = threading.Thread(target=_do_upload, daemon=True)
-                                    _up.start()
-                                    _up.join(timeout=30)
-                                    sb_url = _upload_result[0] if not _up.is_alive() else None
+                                    sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
                                     if sb_url:
                                         company.screenshot_url = sb_url
-                                    elif _up.is_alive():
-                                        print(f"[WARN] Screenshot upload timed out after 30s")
                                 except Exception as e:
                                     print(f"[WARN] Screenshot upload error: {e}")
-                            if not company.screenshot_url and result.get('method') == 'error':
-                                try:
-                                    fb_bytes = page.screenshot(full_page=True)
-                                    if fb_bytes:
-                                        _upload_result = [None]
-                                        def _do_upload_fb():
-                                            _upload_result[0] = upload_screenshot(fb_bytes, campaign_id, company.id)
-                                        _up = threading.Thread(target=_do_upload_fb, daemon=True)
-                                        _up.start()
-                                        _up.join(timeout=30)
-                                        sb_url = _upload_result[0] if not _up.is_alive() else None
-                                        if sb_url:
-                                            company.screenshot_url = sb_url
-                                except Exception as e:
                                     print(f"[WARN] Fallback screenshot error: {e}")
                         company.processed_at = datetime.utcnow()
                         db.session.commit()
@@ -606,22 +581,6 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             db.session.rollback()
                         except Exception:
                             pass
-                    if page:
-                        def do_close():
-                            try:
-                                page.close()
-                            except Exception:
-                                pass
-                        closer = threading.Thread(target=do_close, daemon=True)
-                        closer.start()
-                        closer.join(timeout=PAGE_CLOSE_TIMEOUT_SEC)
-                        if closer.is_alive():
-                            print(f"[WARN] Page close (after error) did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s")
-
-            try:
-                browser.close()
-            except Exception as close_err:
-                print(f"[Sequential] Browser close warning (non-fatal): {close_err}")
 
         # Only mark completed if we didn't break out due to stop/cancel
         if campaign.status not in ['stopping', 'cancelled']:
