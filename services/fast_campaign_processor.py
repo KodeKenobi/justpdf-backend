@@ -164,6 +164,41 @@ class FastCampaignProcessor:
         except Exception:
             return False
 
+    def detect_captcha(self, form):
+        """
+        Detect if a form contains CAPTCHA (reCAPTCHA, hCaptcha, etc.).
+        Returns True if CAPTCHA is detected, False otherwise.
+        """
+        try:
+            # Check for reCAPTCHA v2 (iframe with recaptcha)
+            recaptcha_iframe = form.query_selector('iframe[src*="recaptcha"], iframe[title*="recaptcha"]')
+            if recaptcha_iframe:
+                return True
+            
+            # Check for reCAPTCHA v3 (hidden badge)
+            recaptcha_badge = form.query_selector('.grecaptcha-badge, div[class*="recaptcha"]')
+            if recaptcha_badge:
+                return True
+            
+            # Check for hCaptcha
+            hcaptcha = form.query_selector('iframe[src*="hcaptcha"], div[class*="h-captcha"], .h-captcha')
+            if hcaptcha:
+                return True
+            
+            # Check for Cloudflare Turnstile
+            turnstile = form.query_selector('iframe[src*="turnstile"], div[class*="cf-turnstile"], .cf-turnstile')
+            if turnstile:
+                return True
+            
+            # Check for generic captcha elements
+            captcha_elements = form.query_selector_all('[class*="captcha"], [id*="captcha"], [name*="captcha"]')
+            if captcha_elements and len(captcha_elements) > 0:
+                return True
+            
+            return False
+        except Exception:
+            return False
+
     def process_company(self) -> Dict:
         """
         Main processing method using fast-contact-analyzer.js strategy
