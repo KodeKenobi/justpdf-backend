@@ -1,23 +1,24 @@
 """
 Standalone campaign sequential processor.
 No Celery/Redis imports - safe to use when Redis is not running (e.g. Start button).
-Uses subprocess-based architecture for reliable timeout enforcement.
+Uses a subprocess-based architecture for robustness: each company is processed in its own 
+process that can be forcefully killed if it hangs, preventing the whole run from freezing.
 """
 import os
 import json
 import re
-import time
+import threading
 import subprocess
 import tempfile
+import time
+import sys
 from datetime import datetime
 from models import Campaign, Company, db
 
-# Per-company timeout so one slow site doesn't hang the whole run (e.g. 5th company)
-PER_COMPANY_TIMEOUT_SEC = 60
-# Max time to wait for page.close() so one stuck close doesn't freeze the entire run
-PAGE_CLOSE_TIMEOUT_SEC = 8
-# Recreate browser context every N companies to avoid Chromium memory bloat and "context gone bad" on long runs (2000+)
-CONTEXT_REFRESH_INTERVAL = 50
+# Per-company timeout so one slow site doesn't hang the whole run
+PER_COMPANY_TIMEOUT_SEC = 90
+# Max time to wait for worker output/cleanup
+WORKER_WAIT_TIMEOUT_SEC = 10
 
 # Map technical log (action / message) to user-friendly English for the right-hand panel
 def _user_friendly_message(level, action, message):
@@ -124,9 +125,11 @@ def _user_facing_error(err: str) -> str:
 def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=None, skip_submit=False):
     """
     Process a campaign sequentially (one-by-one). Runs until all requested companies are done.
-    - company_ids: optional list of ids to process; if None, processes all pending.
-    - processing_limit: optional max number to process (e.g. 2000); when None, no cap.
+    Each company is processed in a separate subprocess for maximum reliability.
     """
+    # DIAGNOSTIC: Log function entry
+    print(f"[Sequential] ENTRY: campaign_id={campaign_id}, python={sys.executable}")
+    
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
 
@@ -135,12 +138,12 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         if not campaign:
             return {'error': f'Campaign {campaign_id} not found'}
 
-        # Permanent fix: clear any stale "processing" from a previous crashed run so they can be retried
+        # Clear stuck processing
         stuck = Company.query.filter_by(campaign_id=campaign_id, status='processing').count()
         if stuck:
             Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
             db.session.commit()
-            print(f"[Sequential] Reset {stuck} stuck 'processing' company/companies to 'pending' for campaign {campaign_id}")
+            print(f"[Sequential] Reset {stuck} stuck 'processing' companies to 'pending'")
 
         campaign.status = 'processing'
         campaign.started_at = datetime.utcnow()
@@ -148,16 +151,10 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
 
         limit = int(processing_limit) if processing_limit is not None else None
         if company_ids:
-            q = Company.query.filter(
-                Company.id.in_(company_ids),
-                Company.campaign_id == campaign_id
-            ).order_by(Company.id)
+            q = Company.query.filter(Company.id.in_(company_ids), Company.campaign_id == campaign_id).order_by(Company.id)
             companies = q.limit(limit).all() if limit else q.all()
         else:
-            q = Company.query.filter_by(
-                campaign_id=campaign_id,
-                status='pending'
-            ).order_by(Company.id)
+            q = Company.query.filter_by(campaign_id=campaign_id, status='pending').order_by(Company.id)
             companies = q.limit(limit).all() if limit else q.all()
 
         if not companies:
@@ -186,411 +183,197 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
             }
         })
 
-        # Mark first company as processing immediately so UI/API show "Processing" before we touch FastCampaignProcessor
-        first = companies[0]
-        first.status = 'processing'
-        db.session.commit()
-        ws_manager.broadcast_event(campaign_id, {
-            'type': 'company_processing',
-            'data': {'company_id': first.id, 'company_name': getattr(first, 'company_name', '')}
-        })
-
-        # Import after first commit so if FastCampaignProcessor import fails, API still shows 1 processing and we can see the error in logs
-        try:
-            from services.fast_campaign_processor import FastCampaignProcessor
-        except Exception as imp_err:
-            print(f"[Sequential] Failed to import FastCampaignProcessor: {imp_err}")
-            import traceback
-            traceback.print_exc()
-            first.status = 'failed'
-            first.error_message = 'Backend failed to load processor. Check server logs.'
-            db.session.commit()
-            return {'error': str(imp_err)}
-
-        # No Playwright needed in orchestrator - worker subprocess handles browser
         for idx, company in enumerate(companies):
-            # Re-fetch company by id so we always have a fresh session reference (avoids expired/detached after previous commit)
+            _company_id = company.id
+            _company_name = getattr(company, 'company_name', '') or ''
+            
             try:
-                _cid = company.id if hasattr(company, 'id') else None
-                if _cid is not None:
-                    company = Company.query.filter_by(id=_cid, campaign_id=campaign_id).first()
-                if company is None:
-                    print(f"[Sequential] Skipping missing company at index {idx}")
-                    continue
-            except Exception as refetch_err:
-                print(f"[Sequential] Refetch company at index {idx} failed: {refetch_err}; skipping")
-                continue
-
-            try:
+                # 1. Fresh state check
                 db.session.rollback()
                 db.session.refresh(campaign)
                 if campaign.status in ['stopping', 'cancelled']:
-                    # Reset any company still "processing" so UI doesn't show it stuck
-                    Company.query.filter_by(
-                        campaign_id=campaign_id,
-                        status='processing'
-                    ).update({'status': 'pending'})
+                    Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
                     campaign.status = 'cancelled'
                     db.session.commit()
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'campaign_stopped',
-                        'data': {'message': 'Processing stopped by user'}
-                    })
+                    ws_manager.broadcast_event(campaign_id, {'type': 'campaign_stopped', 'data': {'message': 'Stopped by user'}})
                     break
 
-                # PERMANENT FIX: Only one company may be "processing" at a time. Clear any other stuck ones (e.g. from crashed iteration).
-                other_stuck = Company.query.filter(
-                    Company.campaign_id == campaign_id,
-                    Company.status == 'processing',
-                    Company.id != company.id
-                ).update({'status': 'pending'})
-                if other_stuck:
-                    db.session.commit()
-                    print(f"[Sequential] Cleared {other_stuck} other company/companies from 'processing' before starting company {company.id}")
-
+                # 2. Mark as processing
                 company.status = 'processing'
                 db.session.commit()
+                ws_manager.broadcast_event(campaign_id, {
+                    'type': 'company_processing',
+                    'data': {'company_id': _company_id, 'company_name': _company_name}
+                })
 
-                # Capture ids/names so worker never touches ORM (avoids "Working outside of application context")
-                _company_id = company.id
-                _company_name = getattr(company, 'company_name', '') or ''
-
-                def live_logger(level, action, message):
-                    print(f"[{level}] {action}: {message}")
-                    user_msg = _user_friendly_message(level, action, message)
-                    ws_manager.broadcast_event(campaign_id, {
-                        'type': 'activity',
-                        'data': {
-                            'company_id': _company_id,
-                            'company_name': _company_name,
-                            'level': level,
-                            'action': action,
-                            'message': message,
-                            'user_message': user_msg,
-                            'timestamp': datetime.utcnow().isoformat()
-                        }
-                    })
-
-
-                    # SUBPROCESS-BASED PROCESSING: Run worker in separate process that can be killed
-                    result = None
-                    _start_time = time.time()
+                # 3. Subprocess setup
+                input_fd, input_path = tempfile.mkstemp(suffix='.json', prefix='worker_in_')
+                output_fd, output_path = tempfile.mkstemp(suffix='.json', prefix='worker_out_')
+                
+                result = None
+                try:
+                    os.close(input_fd)
+                    os.close(output_fd)
                     
-                    # Create temp files for input/output
-                    input_fd, input_path = tempfile.mkstemp(suffix='.json', prefix='worker_input_')
-                    output_fd, output_path = tempfile.mkstemp(suffix='.json', prefix='worker_output_')
+                    worker_input = {
+                        'campaign_id': campaign_id,
+                        'company_id': _company_id,
+                        'company_data': company.to_dict(),
+                        'message_template': message_template_str,
+                        'subject': subject_str,
+                        'sender_data': sender_data,
+                        'timeout_sec': PER_COMPANY_TIMEOUT_SEC,
+                        'skip_submit': skip_submit
+                    }
                     
-                    try:
-                        # Close file descriptors (we'll use paths)
-                        os.close(input_fd)
-                        os.close(output_fd)
-                        
-                        # Prepare input data for worker
-                        company_data = company.to_dict()
-                        worker_input = {
-                            'campaign_id': campaign_id,
-                            'company_id': _company_id,
-                            'company_data': company_data,
-                            'message_template': message_template_str,
-                            'subject': subject_str,
-                            'sender_data': sender_data,
-                            'timeout_sec': PER_COMPANY_TIMEOUT_SEC,
-                            'skip_submit': skip_submit
-                        }
-                        
-                        # Write input file
-                        with open(input_path, 'w', encoding='utf-8') as f:
-                            json.dump(worker_input, f)
-                        
-                        # Spawn worker subprocess
-                        worker_script = os.path.join(os.path.dirname(__file__), 'process_single_company.py')
-                        proc = subprocess.Popen(
-                            ['py', worker_script, '--input', input_path, '--output', output_path],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            cwd=os.path.dirname(__file__)
-                        )
-                        
-                        print(f"[Sequential] Company {_company_id} worker started (PID {proc.pid})")
-                        
-                        # Wait for worker with timeout (60s + 5s grace period)
-                        timeout_sec = PER_COMPANY_TIMEOUT_SEC + 5
-                        try:
-                            stdout, stderr = proc.communicate(timeout=timeout_sec)
-                            elapsed = time.time() - _start_time
-                            
-                            # Worker completed within timeout
-                            if proc.returncode == 0:
-                                print(f"[Sequential] Company {_company_id} worker completed successfully in {elapsed:.1f}s")
-                            else:
-                                print(f"[Sequential] Company {_company_id} worker exited with code {proc.returncode} in {elapsed:.1f}s")
-                            
-                            # Log stderr if any
-                            if stderr:
-                                stderr_str = stderr.decode('utf-8', errors='ignore')
-                                if stderr_str.strip():
-                                    print(f"[Sequential] Company {_company_id} worker stderr:\n{stderr_str[:500]}")
-                            
-                            # Read result from output file
-                            try:
-                                with open(output_path, 'r', encoding='utf-8') as f:
-                                    result = json.load(f)
-                            except Exception as e:
-                                print(f"[Sequential] Company {_company_id} failed to read output: {e}")
-                                result = {'success': False, 'error': f'Failed to read worker output: {e}', 'method': 'error'}
-                        
-                        except subprocess.TimeoutExpired:
-                            # Worker exceeded timeout - KILL IT
-                            elapsed = time.time() - _start_time
-                            print(f"[Sequential] Company {_company_id} TIMEOUT after {elapsed:.1f}s - killing worker process (PID {proc.pid})")
-                            
-                            # Try graceful termination first
-                            proc.terminate()
-                            try:
-                                proc.wait(timeout=2)
-                                print(f"[Sequential] Company {_company_id} worker terminated gracefully")
-                            except subprocess.TimeoutExpired:
-                                # Force kill
-                                print(f"[Sequential] Company {_company_id} worker did not terminate, force killing")
-                                proc.kill()
-                                proc.wait()
-                            
-                            result = {
-                                'success': False,
-                                'error': f'Processing timed out after {elapsed:.1f}s',
-                                'method': 'timeout',
-                                'fields_filled': 0,
-                                'screenshot_url': None
-                            }
+                    with open(input_path, 'w', encoding='utf-8') as f:
+                        json.dump(worker_input, f)
                     
-                    finally:
-                        # Clean up temp files
-                        try:
-                            if os.path.exists(input_path):
-                                os.remove(input_path)
-                        except Exception:
-                            pass
-                        try:
-                            if os.path.exists(output_path):
-                                os.remove(output_path)
-                        except Exception:
-                            pass
+                    worker_script = os.path.join(os.path.dirname(__file__), 'process_single_company.py')
+                    
+                    # ALWAYS USE PY
+                    cmd = ['py', worker_script, '--input', input_path, '--output', output_path]
+                    
+                    print(f"[Sequential] Starting worker for company {_company_id}")
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        cwd=os.path.dirname(__file__)
+                    )
 
-                    try:
-                        if result is None:
-                            company.status = 'failed'
-                            company.contact_method = 'error'
-                            company.error_message = _user_facing_error('No result from worker')
-                        elif result is not None:
-                            if result.get('success'):
-                                method = result.get('method', '')
-                                if method == 'contact_info_found' or method.startswith('email'):
-                                    company.status = 'contact_info_found'
+                    # Helper to stream logs from stderr to WebSocket
+                    def stream_logs(pipe, cid, cname):
+                        for line in iter(pipe.readline, b''):
+                            line_str = line.decode('utf-8', errors='ignore').strip()
+                            if line_str:
+                                # Parse [LEVEL] ACTION: MESSAGE
+                                match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
+                                if match:
+                                    level, action, message = match.groups()
+                                    user_msg = _user_friendly_message(level, action, message)
+                                    ws_manager.broadcast_event(campaign_id, {
+                                        'type': 'activity',
+                                        'data': {
+                                            'company_id': cid,
+                                            'company_name': cname,
+                                            'level': level,
+                                            'action': action,
+                                            'message': message,
+                                            'user_message': user_msg,
+                                            'timestamp': datetime.utcnow().isoformat()
+                                        }
+                                    })
                                 else:
-                                    company.status = 'completed'
-                                company.contact_method = (method or '')[:20]
-                                company.fields_filled = result.get('fields_filled', 0)
-                                company.error_message = None
-                                if result.get('form_fields_detected') is not None or result.get('filled_field_patterns'):
-                                    company.form_structure = {
-                                        'fields_detected': result.get('form_fields_detected') or [],
-                                        'fields_filled': result.get('filled_field_patterns') or [],
-                                    }
-                            else:
-                                error_msg = (result.get('error') or '').lower()
-                                method = result.get('method') or ''
-                                if method == 'timeout':
-                                    company.status = 'failed'
-                                    company.error_message = _user_facing_error('Processing timed out (limit reached). You can retry this company.')
-                                elif 'captcha' in error_msg or method == 'form_with_captcha':
-                                    company.status = 'captcha'
-                                elif method == 'no_contact_found':
-                                    company.status = 'no_contact_found'
-                                    company.error_message = 'No contact form found on this site.'
-                                else:
-                                    company.status = 'failed'
-                                    if method == 'error':
-                                        print(f"[Sequential] Company {company.id} failed with exception: {result.get('error')}")
-                                company.contact_method = (result.get('method') or '')[:20]
-                                if company.status == 'failed' and method != 'timeout':
-                                    company.error_message = _user_facing_error(result.get('error'))
-                                if result.get('form_fields_detected') is not None or result.get('filled_field_patterns'):
-                                    company.form_structure = {
-                                        'fields_detected': result.get('form_fields_detected') or [],
-                                        'fields_filled': result.get('filled_field_patterns') or [],
-                                    }
-                            screenshot_bytes = result.get('screenshot_bytes')
-                            if not screenshot_bytes and result.get('screenshot_url'):
-                                local_path = result.get('screenshot_url')
-                                try:
-                                    path_part = local_path.lstrip('/').replace('/', os.sep)
-                                    roots = [os.path.dirname(os.path.abspath(__file__)), os.getcwd()]
-                                    for root in roots:
-                                        candidate = os.path.join(root, path_part)
-                                        if os.path.exists(candidate):
-                                            with open(candidate, 'rb') as f:
-                                                screenshot_bytes = f.read()
-                                            try:
-                                                os.remove(candidate)
-                                            except OSError:
-                                                pass
-                                            break
-                                except Exception as e:
-                                    print(f"[WARN] Screenshot file read error: {e}")
-                            if screenshot_bytes:
-                                try:
-                                    sb_url = upload_screenshot(screenshot_bytes, campaign_id, company.id)
-                                    if sb_url:
-                                        company.screenshot_url = sb_url
-                                except Exception as e:
-                                    print(f"[WARN] Screenshot upload error: {e}")
-                                    print(f"[WARN] Fallback screenshot error: {e}")
-                        company.processed_at = datetime.utcnow()
-                        db.session.commit()
-                        # Processed = finished only (exclude "processing" so counts add up)
-                        campaign.processed_count = Company.query.filter(
-                            Company.campaign_id == campaign.id,
-                            Company.status != 'pending',
-                            Company.status != 'processing'
-                        ).count()
-                        campaign.success_count = Company.query.filter_by(campaign_id=campaign.id, status='completed').count() + \
-                            Company.query.filter_by(campaign_id=campaign.id, status='contact_info_found').count()
-                        campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-                        campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
-                        db.session.commit()
-                        ws_manager.broadcast_event(campaign_id, {
-                            'type': 'company_completed',
-                            'data': {
-                                'company_id': company.id,
-                                'status': company.status,
-                                'screenshot_url': getattr(company, 'screenshot_url', None),
-                                'progress': int((idx + 1) / len(companies) * 100)
-                            }
-                        })
-                    except Exception as e:
-                        live_logger('error', 'Execution Error', str(e))
-                        try:
-                            db.session.rollback()
-                            company.status = 'failed'
-                            company.error_message = _user_facing_error(str(e))
-                            company.processed_at = datetime.utcnow()
-                            try:
-                                fb_bytes = page.screenshot(full_page=True)
-                                if fb_bytes:
-                                    sb_url = upload_screenshot(fb_bytes, campaign_id, company.id)
-                                    if sb_url:
-                                        company.screenshot_url = sb_url
-                            except Exception:
-                                pass
-                            db.session.commit()
-                            campaign.processed_count = Company.query.filter(
-                                Company.campaign_id == campaign.id,
-                                Company.status != 'pending',
-                                Company.status != 'processing'
-                            ).count()
-                            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-                            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
-                            db.session.commit()
-                            ws_manager.broadcast_event(campaign_id, {
-                                'type': 'company_completed',
-                                'data': {
-                                    'company_id': company.id,
-                                    'status': 'failed',
-                                    'screenshot_url': getattr(company, 'screenshot_url', None),
-                                    'progress': int((idx + 1) / len(companies) * 100)
-                                }
-                            })
-                        except Exception as e2:
-                            print(f"[Sequential] Failed to record execution error for company {company.id}: {e2}")
-                            try:
-                                db.session.rollback()
-                            except Exception:
-                                pass
-                    finally:
-                        # PERMANENT FIX: If this company is still "processing" after we're done (crash/early exit), force to failed and notify so it never stays stuck.
-                        try:
-                            db.session.refresh(company)
-                            if company.status == 'processing':
-                                company.status = 'failed'
-                                company.error_message = 'Processing stopped unexpectedly. You can retry.'
-                                company.processed_at = datetime.utcnow()
-                                db.session.commit()
-                                ws_manager.broadcast_event(campaign_id, {
-                                    'type': 'company_completed',
-                                    'data': {
-                                        'company_id': company.id,
-                                        'status': 'failed',
-                                        'screenshot_url': getattr(company, 'screenshot_url', None),
-                                        'progress': int((idx + 1) / len(companies) * 100)
-                                    }
-                                })
-                                print(f"[Sequential] Safety: company {company.id} was still processing after iteration; set to failed")
-                        except Exception as safe_err:
-                            print(f"[Sequential] Safety net error (non-fatal): {safe_err}")
-                            try:
-                                db.session.rollback()
-                            except Exception:
-                                pass
-                        # Always close the page so we don't accumulate pages. Use a timeout so one stuck close never freezes the whole run.
-                        if page:
-                            def do_close():
-                                try:
-                                    page.close()
-                                except Exception:
-                                    pass
-                            closer = threading.Thread(target=do_close, daemon=True)
-                            closer.start()
-                            closer.join(timeout=PAGE_CLOSE_TIMEOUT_SEC)
-                            if closer.is_alive():
-                                print(f"[WARN] Page close did not finish in {PAGE_CLOSE_TIMEOUT_SEC}s; continuing to next company")
-                except BaseException as outer_err:
-                    # ANY uncaught exception in this iteration: mark company failed, broadcast, then CONTINUE to next company (never re-raise so remaining companies still process)
-                    _company_id_safe = getattr(company, 'id', None)
-                    print(f"[Sequential] Company {_company_id_safe} iteration failed (continuing to next): {outer_err}")
-                    import traceback
-                    traceback.print_exc()
+                                    print(f"[Worker Output] {line_str}")
+
+                    logger_thread = threading.Thread(target=stream_logs, args=(proc.stderr, _company_id, _company_name))
+                    logger_thread.daemon = True
+                    logger_thread.start()
+
+                    # Wait for worker
                     try:
-                        db.session.rollback()
-                        c = Company.query.get(_company_id_safe) if _company_id_safe else None
-                        if c is not None:
-                            c.status = 'failed'
-                            c.error_message = _user_facing_error(str(outer_err))
-                            c.processed_at = datetime.utcnow()
-                            db.session.commit()
-                            db.session.refresh(campaign)
-                            campaign.processed_count = Company.query.filter(
-                                Company.campaign_id == campaign.id,
-                                Company.status != 'pending',
-                                Company.status != 'processing'
-                            ).count()
-                            campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
-                            campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
-                            db.session.commit()
-                            ws_manager.broadcast_event(campaign_id, {
-                                'type': 'company_completed',
-                                'data': {
-                                    'company_id': _company_id_safe,
-                                    'status': 'failed',
-                                    'screenshot_url': None,
-                                    'progress': int((idx + 1) / len(companies) * 100)
-                                }
-                            })
-                    except Exception as e2:
-                        print(f"[Sequential] Failed to record iteration error (continuing): {e2}")
+                        proc.wait(timeout=PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC)
+                        if os.path.exists(output_path):
+                            with open(output_path, 'r', encoding='utf-8') as f:
+                                result = json.load(f)
+                    except subprocess.TimeoutExpired:
+                        print(f"[Sequential] Worker TIMEOUT for company {_company_id} - killing")
+                        proc.kill()
+                        proc.wait()
+                        result = {'success': False, 'error': 'Processing timed out', 'method': 'timeout'}
+
+                except Exception as sub_err:
+                    print(f"[Sequential] Subprocess error for company {_company_id}: {sub_err}")
+                    result = {'success': False, 'error': str(sub_err), 'method': 'error'}
+                finally:
+                    # Cleanup temp files
+                    for p in [input_path, output_path]:
+                        if os.path.exists(p):
+                            try: os.remove(p)
+                            except: pass
+
+                # 4. Process result
+                if result:
+                    if result.get('success'):
+                        method = result.get('method', '')
+                        if method == 'contact_info_found' or method.startswith('email'):
+                            company.status = 'contact_info_found'
+                        else:
+                            company.status = 'completed'
+                        company.contact_method = (method or '')[:20]
+                        company.fields_filled = result.get('fields_filled', 0)
+                        company.error_message = None
+                    else:
+                        error_msg = (result.get('error') or '').lower()
+                        method = result.get('method') or ''
+                        if method == 'timeout':
+                            company.status = 'failed'
+                            company.error_message = _user_facing_error('Processing timed out.')
+                        elif 'captcha' in error_msg or method == 'form_with_captcha':
+                            company.status = 'captcha'
+                        elif method == 'no_contact_found':
+                            company.status = 'no_contact_found'
+                            company.error_message = 'No contact form found.'
+                        else:
+                            company.status = 'failed'
+                            company.error_message = _user_facing_error(result.get('error'))
+                        company.contact_method = (method or '')[:20]
+                    
+                    if result.get('screenshot_bytes'):
+                        # Upload screenshot if provided
                         try:
-                            db.session.rollback()
-                        except Exception:
+                            import base64
+                            # If it's a list or string, handle it (depends on how worker wrote it)
+                            # process_single_company returns Dict which result of process_company
+                            # which might contain bytes. But JSON doesn't support bytes.
+                            # So worker should have base64 encoded it.
+                            s_data = result.get('screenshot_bytes')
+                            if isinstance(s_data, str):
+                                s_bytes = base64.b64decode(s_data)
+                                sb_url = upload_screenshot(s_bytes, campaign_id, _company_id)
+                                if sb_url: company.screenshot_url = sb_url
+                        except:
                             pass
 
-        # Only mark completed if we didn't break out due to stop/cancel
+                company.processed_at = datetime.utcnow()
+                db.session.commit()
+                
+                # Update campaign stats
+                campaign.processed_count = Company.query.filter(Company.campaign_id == campaign.id, Company.status != 'pending', Company.status != 'processing').count()
+                campaign.success_count = Company.query.filter(Company.campaign_id == campaign.id, Company.status.in_(['completed', 'contact_info_found'])).count()
+                campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
+                campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
+                db.session.commit()
+                
+                ws_manager.broadcast_event(campaign_id, {
+                    'type': 'company_completed',
+                    'data': {
+                        'company_id': _company_id,
+                        'status': company.status,
+                        'screenshot_url': getattr(company, 'screenshot_url', None),
+                        'progress': int((idx + 1) / len(companies) * 100)
+                    }
+                })
+
+            except BaseException as e:
+                print(f"[Sequential] Fatal iteration error for company {_company_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                try:
+                    db.session.rollback()
+                    c = Company.query.get(_company_id)
+                    if c:
+                        c.status = 'failed'
+                        c.error_message = _user_facing_error(str(e))
+                        db.session.commit()
+                except: pass
+
         if campaign.status not in ['stopping', 'cancelled']:
             campaign.status = 'completed'
             campaign.completed_at = datetime.utcnow()
             db.session.commit()
-            ws_manager.broadcast_event(campaign_id, {
-                'type': 'campaign_complete',
-                'data': {'campaign_id': campaign_id}
-            })
+            ws_manager.broadcast_event(campaign_id, {'type': 'campaign_complete', 'data': {'campaign_id': campaign_id}})
 
         return {'status': 'success', 'processed': len(companies)}
 
@@ -598,25 +381,12 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         print(f"Sequential Task Error: {e}")
         import traceback
         traceback.print_exc()
-        if 'campaign' in locals():
-            campaign.status = 'failed'
-            db.session.commit()
         return {'error': str(e)}
     finally:
-        # PERMANENT FIX: Always clear any company still "processing" so they are never stuck (crash/exit/timeout). Never skip.
-        if campaign_id is not None:
+        # Cleanup any stuck processing
+        if 'campaign_id' in locals() and campaign_id:
             try:
                 db.session.rollback()
-            except Exception:
-                pass
-            try:
-                n = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
-                if n:
-                    db.session.commit()
-                    print(f"[Sequential] Exit cleanup: cleared {n} company/companies from 'processing' to 'pending' (campaign {campaign_id})")
-            except Exception as cleanup_err:
-                print(f"[Sequential] Exit cleanup warning: {cleanup_err}")
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
+                Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+                db.session.commit()
+            except: pass

@@ -164,40 +164,6 @@ class FastCampaignProcessor:
         except Exception:
             return False
 
-    def detect_captcha(self, form):
-        """
-        Detect if a form contains CAPTCHA (reCAPTCHA, hCaptcha, etc.).
-        Returns True if CAPTCHA is detected, False otherwise.
-        """
-        try:
-            # Check for reCAPTCHA v2 (iframe with recaptcha)
-            recaptcha_iframe = form.query_selector('iframe[src*="recaptcha"], iframe[title*="recaptcha"]')
-            if recaptcha_iframe:
-                return True
-            
-            # Check for reCAPTCHA v3 (hidden badge)
-            recaptcha_badge = form.query_selector('.grecaptcha-badge, div[class*="recaptcha"]')
-            if recaptcha_badge:
-                return True
-            
-            # Check for hCaptcha
-            hcaptcha = form.query_selector('iframe[src*="hcaptcha"], div[class*="h-captcha"], .h-captcha')
-            if hcaptcha:
-                return True
-            
-            # Check for Cloudflare Turnstile
-            turnstile = form.query_selector('iframe[src*="turnstile"], div[class*="cf-turnstile"], .cf-turnstile')
-            if turnstile:
-                return True
-            
-            # Check for generic captcha elements
-            captcha_elements = form.query_selector_all('[class*="captcha"], [id*="captcha"], [name*="captcha"]')
-            if captcha_elements and len(captcha_elements) > 0:
-                return True
-            
-            return False
-        except Exception:
-            return False
 
     def process_company(self) -> Dict:
         """
@@ -2709,38 +2675,42 @@ class FastCampaignProcessor:
             return False
 
     def detect_captcha(self, form) -> bool:
-        """Detect CAPTCHA in form"""
+        """Detect CAPTCHA (reCAPTCHA, hCaptcha, Turnstile, etc.) in form or context"""
         try:
+            # 1. Check for known iframes in form
+            if form.query_selector('iframe[src*="recaptcha"], iframe[title*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"]'):
+                self.log('warning', 'Captcha', 'Detected captcha iframe in form')
+                return True
+            
+            # 2. Check for known badges/classes in form
+            if form.query_selector('.grecaptcha-badge, .g-recaptcha, .h-captcha, .cf-turnstile, [data-sitekey]'):
+                self.log('warning', 'Captcha', 'Detected captcha badge/data-sitekey in form')
+                return True
+            
+            # 3. Check for generic captcha keywords in ids/names/classes (case-insensitive)
             captcha_selectors = [
                 '[class*="captcha" i]',
                 '[id*="captcha" i]',
-                'iframe[src*="recaptcha"]',
-                'iframe[src*="hcaptcha"]',
-                '.g-recaptcha',
-                '.h-captcha',
-                '[data-sitekey]'
+                '[name*="captcha" i]',
+                'img[src*="captcha" i]'
             ]
-            
             for selector in captcha_selectors:
-                try:
-                    element = form.query_selector(selector)
-                    if element and element.is_visible():
-                        self.log('info', 'Captcha', f'Detected visible captcha: {selector}')
-                        return True
-                except: continue
+                el = form.query_selector(selector)
+                if el and el.is_visible():
+                    self.log('warning', 'Captcha', f'Detected probable captcha: {selector}')
+                    return True
             
-            # Also check page-level (outside form) but only if it's very likely blocking
-            for selector in ['.g-recaptcha', '.h-captcha', 'iframe[src*="recaptcha"]']:
-                try:
-                    element = self.page.query_selector(selector)
-                    if element and element.is_visible():
-                        self.log('info', 'Captcha', f'Detected page-level captcha: {selector}')
-                        return True
-                except: continue
+            # 4. Page-level check (sometimes they are outside the <form> tag)
+            for sel in ['.grecaptcha-badge', 'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', 'iframe[src*="turnstile"]']:
+                el = self.page.query_selector(sel)
+                if el and el.is_visible():
+                    self.log('warning', 'Captcha', f'Detected page-level captcha: {sel}')
+                    return True
             
             return False
-        except:
+        except Exception:
             return False
+
 
     def send_email_to_contact(self, email_address: str) -> bool:
         """
