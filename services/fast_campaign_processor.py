@@ -1077,8 +1077,8 @@ class FastCampaignProcessor:
                     break
                 
                 element = self.page.locator(selector).first
-                # Reduce visibility check to 150ms to fly through the list if none exist
-                if element.is_visible(timeout=150):
+                # Faster visibility check (50ms) to fly through the list
+                if element.is_visible(timeout=50):
                     element.click(timeout=self._action_timeout_ms())
                     self._wait_ms(200)
                     self.log('info', 'Cookie Modal', f'Dismissed using: {selector}')

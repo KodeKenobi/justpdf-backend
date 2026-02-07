@@ -183,15 +183,20 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
             }
         })
 
-        for idx, company in enumerate(companies):
-            _company_id = company.id
-            _company_name = getattr(company, 'company_name', '') or ''
+        for idx, _company_in_iter in enumerate(companies):
+            _company_id = _company_in_iter.id
+            _company_name = getattr(_company_in_iter, 'company_name', '') or ''
             
             try:
-                # 1. Fresh state check
+                # 1. Fresh state check (ensure we have a fresh, attached company object)
                 db.session.rollback()
+                company = Company.query.get(_company_id)
+                if not company:
+                    continue
+                
                 db.session.refresh(campaign)
                 if campaign.status in ['stopping', 'cancelled']:
+                    # Reset any processing back to pending
                     Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
                     campaign.status = 'cancelled'
                     db.session.commit()
@@ -235,18 +240,22 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                     python_exe = sys.executable or 'py'
                     cmd = [python_exe, worker_script, '--input', input_path, '--output', output_path]
                     
-                    print(f"[Sequential] Starting worker for company {_company_id}")
+                    print(f"[Sequential] Starting worker for company {_company_id} (Python: {python_exe})")
+                    # Merge stderr into stdout so one thread can drain both (prevents pipe hangs)
                     proc = subprocess.Popen(
                         cmd,
                         stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        cwd=os.path.dirname(__file__)
+                        stderr=subprocess.STDOUT,
+                        cwd=os.path.dirname(__file__),
+                        text=True,
+                        bufsize=1 # Line buffered
                     )
 
-                    # Helper to stream logs from stderr to WebSocket
+                    # Helper to stream logs to WebSocket
                     def stream_logs(pipe, cid, cname):
-                        for line in iter(pipe.readline, b''):
-                            line_str = line.decode('utf-8', errors='ignore').strip()
+                        # Read line by line until process exits
+                        for line in iter(pipe.readline, ''):
+                            line_str = line.strip()
                             if line_str:
                                 # Parse [LEVEL] ACTION: MESSAGE
                                 match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
@@ -268,7 +277,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                 else:
                                     print(f"[Worker Output] {line_str}")
 
-                    logger_thread = threading.Thread(target=stream_logs, args=(proc.stderr, _company_id, _company_name))
+                    # Feed the combined stdout/stderr to the logger thread
+                    logger_thread = threading.Thread(target=stream_logs, args=(proc.stdout, _company_id, _company_name))
                     logger_thread.daemon = True
                     logger_thread.start()
 
@@ -295,6 +305,11 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             except: pass
 
                 # 4. Process result
+                processed_count = idx + 1
+                total_to_process = len(companies)
+                # Granular progress percentage (1 decimal place) to avoid 0% for long batches
+                progress_pct = round((processed_count / total_to_process) * 100, 1)
+                
                 if result:
                     if result.get('success'):
                         method = result.get('method', '')
@@ -353,7 +368,9 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         'company_id': _company_id,
                         'status': company.status,
                         'screenshot_url': getattr(company, 'screenshot_url', None),
-                        'progress': int((idx + 1) / len(companies) * 100)
+                        'progress': progress_pct,
+                        'processed_count': idx + 1,
+                        'total_companies': len(companies)
                     }
                 })
 
