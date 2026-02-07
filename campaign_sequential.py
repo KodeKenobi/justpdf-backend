@@ -231,8 +231,9 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                     
                     worker_script = os.path.join(os.path.dirname(__file__), 'process_single_company.py')
                     
-                    # ALWAYS USE PY
-                    cmd = ['py', worker_script, '--input', input_path, '--output', output_path]
+                    # Auto-detect the Python command to work on both Windows (local) and Linux (Railway)
+                    python_exe = sys.executable or 'py'
+                    cmd = [python_exe, worker_script, '--input', input_path, '--output', output_path]
                     
                     print(f"[Sequential] Starting worker for company {_company_id}")
                     proc = subprocess.Popen(

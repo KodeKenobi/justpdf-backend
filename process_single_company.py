@@ -137,6 +137,15 @@ def process_single_company(input_data: dict) -> dict:
             'screenshot_url': None
         }
     
+    # Ensure result is JSON serializable (bytes -> base64 string)
+    if result and result.get('screenshot_bytes'):
+        try:
+            import base64
+            if isinstance(result['screenshot_bytes'], bytes):
+                result['screenshot_bytes'] = base64.b64encode(result['screenshot_bytes']).decode('utf-8')
+        except Exception as e:
+            print(f"ERROR: Failed to encode screenshot: {e}", file=sys.stderr)
+            
     return result
 
 
