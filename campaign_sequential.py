@@ -155,20 +155,30 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
     from utils.supabase_storage import upload_screenshot
 
     try:
+        # 1. Ensure we start with a clean session to avoid inheriting deadlocks from the main thread
+        db.session.rollback()
+        db.session.expire_all()
+        
+        print(f"[Sequential] [Startup] Fetching campaign {campaign_id}...")
         campaign = Campaign.query.get(campaign_id)
         if not campaign:
+            print(f"[Sequential] [Startup] ERROR: Campaign {campaign_id} not found!")
             return {'error': f'Campaign {campaign_id} not found'}
 
         # Clear stuck processing
+        print(f"[Sequential] [Startup] Checking for stuck companies...")
         stuck = Company.query.filter_by(campaign_id=campaign_id, status='processing').count()
         if stuck:
+            print(f"[Sequential] [Startup] Found {stuck} stuck companies, resetting...")
             Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
             db.session.commit()
-            print(f"[Sequential] Reset {stuck} stuck 'processing' companies to 'pending'")
+            print(f"[Sequential] [Startup] Reset {stuck} stuck 'processing' companies to 'pending'")
 
+        print(f"[Sequential] [Startup] Marking campaign as processing...")
         campaign.status = 'processing'
         campaign.started_at = datetime.utcnow()
         db.session.commit()
+        print(f"[Sequential] [Startup] Campaign {campaign_id} marked as processing.")
 
         limit = int(processing_limit) if processing_limit is not None else None
         if company_ids:
@@ -204,12 +214,14 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
             }
         })
 
+        print(f"[Sequential] [Startup] Entering main loop for {len(companies)} companies...")
         for idx, _company_in_iter in enumerate(companies):
             _company_id = _company_in_iter.id
             _company_name = getattr(_company_in_iter, 'company_name', '') or ''
             
             try:
                 # 1. Fresh state check (ensure we have a fresh, attached company object)
+                print(f"[Sequential] [Heartbeat] Loop iteration {idx+1}/{len(companies)} starting for company {_company_id}...")
                 db.session.rollback()
                 company = Company.query.get(_company_id)
                 if not company:
