@@ -5,6 +5,7 @@ No Celery/Redis imports - safe to use when Redis is not running (e.g. Start butt
 import os
 import json
 import re
+import time
 import threading
 from datetime import datetime
 from playwright.sync_api import sync_playwright
