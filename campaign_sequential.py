@@ -335,9 +335,23 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             deadline_sec=PER_COMPANY_TIMEOUT_SEC,
                             skip_submit=skip_submit
                         )
-                        # Run on main thread only: Playwright sync API is not thread-safe; same page/context must not be used from another thread (causes "Invalid switch into Event.wait()" and stops the run).
-                        # Per-company timeout is enforced inside the processor via deadline_sec, _remaining_ms(), and _is_timed_out() so we do not hang indefinitely.
-                        result = processor.process_company()
+                        # HARD TIMEOUT: wrap in executor so we NEVER hang. If Playwright freezes, we abandon after deadline and move on.
+                        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+                        def _run_processor():
+                            return processor.process_company()
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(_run_processor)
+                            try:
+                                result = future.result(timeout=PER_COMPANY_TIMEOUT_SEC + 5)  # +5s grace for cleanup
+                            except FuturesTimeoutError:
+                                print(f"[Sequential] HARD TIMEOUT: Company {_company_id} exceeded {PER_COMPANY_TIMEOUT_SEC}s, forcing move-on")
+                                result = {'success': False, 'error': f'Hard timeout after {PER_COMPANY_TIMEOUT_SEC}s', 'method': 'timeout'}
+                                # Attempt to close page immediately to free resources
+                                try:
+                                    page.close()
+                                except Exception:
+                                    pass
+                                page = None  # Mark as closed so finally block doesn't try again
                         _m = (result or {}).get('method') or ''
                         _e = ((result or {}).get('error') or '')[:200]
                         print(f"[Sequential] Company {_company_id} result: method={_m!r} error={_e!r}")
