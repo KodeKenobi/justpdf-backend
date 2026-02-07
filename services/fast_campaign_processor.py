@@ -43,6 +43,13 @@ class FastCampaignProcessor:
                  campaign_id: int = None, company_id: int = None, logger=None, subject: str = None, sender_data: Dict = None,
                  deadline_sec: float = None, skip_submit: bool = False):
         self.page = page
+        # CRITICAL: Set global timeout to 5s so NO Playwright operation can hang indefinitely.
+        # This is the ONLY way to guarantee we don't get stuck on a frozen page.
+        try:
+            page.set_default_timeout(5000)  # 5 seconds max for any operation
+            page.set_default_navigation_timeout(10000)  # 10 seconds for navigation
+        except Exception:
+            pass  # If it fails, continue anyway
         self.company = company_data
         self.campaign_id = campaign_id
         self.company_id = company_id
