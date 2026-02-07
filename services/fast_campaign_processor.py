@@ -240,7 +240,7 @@ class FastCampaignProcessor:
                             self._wait_ms(200)
                             try:
                                 # Wait for form/overlay (capped to remaining deadline so we never hang)
-                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=self._remaining_ms(30000))
+                                self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"]', timeout=self._remaining_ms(8000))
                                 if self._is_timed_out():
                                     result['success'] = False
                                     result['error'] = 'Processing timed out'
@@ -498,7 +498,7 @@ class FastCampaignProcessor:
                             self.handle_cookie_modal()
                         try:
                             # Wait for form/overlay (capped by per-company deadline so one slow site doesn't hang the run)
-                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=self._remaining_ms(30000))
+                            self.page.wait_for_selector('form, input[type="email"], textarea, [id*="email"], iframe', timeout=self._remaining_ms(8000))
                             self._wait_ms(500)
                         except Exception:
                             self.log('info', 'Contact Page', 'No form elements/iframes appeared within 30s, checking immediately')
