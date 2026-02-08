@@ -6,11 +6,17 @@ Broadcasts scraper events to connected frontend clients
 from flask_sock import Sock
 from collections import defaultdict
 import json
+import threading
+import queue
+import time
 
 class WebSocketManager:
     def __init__(self, app=None):
         self.sock = None
         self.connections = defaultdict(list)  # company_id -> [websockets]
+        self._lock = threading.Lock()
+        self._event_queue = queue.Queue(maxsize=2000)
+        self._worker_thread = None
         
         if app:
             self.init_app(app)
@@ -19,50 +25,85 @@ class WebSocketManager:
         """Initialize WebSocket with Flask app"""
         self.sock = Sock(app)
         
+        # Start background worker thread if not already running
+        if not self._worker_thread or not self._worker_thread.is_alive():
+            self._worker_thread = threading.Thread(target=self._broadcast_worker, daemon=True)
+            self._worker_thread.start()
+            print("[WebSocket] Background worker thread started.")
+
         @self.sock.route('/ws/campaign/<int:campaign_id>')
         def campaign_websocket(ws, campaign_id):
             """WebSocket endpoint for live campaign monitoring"""
             print(f"WebSocket client connected for campaign {campaign_id}")
             
             # Add connection to tracking (using campaign_id as room)
-            self.connections[campaign_id].append(ws)
+            with self._lock:
+                self.connections[campaign_id].append(ws)
             
             try:
                 # Keep connection alive
                 while True:
                     # Receive messages from client (if any)
-                    data = ws.receive(timeout=10) # Add timeout to avoid hanging
+                    data = ws.receive(timeout=30) # Increased timeout
                     if data:
                         print(f"Received from client: {data}")
             except Exception as e:
-                print(f"WebSocket error for campaign {campaign_id}: {e}")
+                # Don't log normal disconnects as errors
+                if 'closed' not in str(e).lower():
+                    print(f"WebSocket for campaign {campaign_id} closed: {e}")
             finally:
                 # Remove connection on close
-                if ws in self.connections[campaign_id]:
-                    self.connections[campaign_id].remove(ws)
+                with self._lock:
+                    if ws in self.connections[campaign_id]:
+                        self.connections[campaign_id].remove(ws)
                 print(f"WebSocket client disconnected for campaign {campaign_id}")
     
     def broadcast_event(self, campaign_id: int, event_data: dict):
         """
-        Broadcast event to all connected clients for a campaign
+        Add event to queue for asynchronous broadcasting
         """
-        if campaign_id not in self.connections or not self.connections[campaign_id]:
-            return
-        
-        message = json.dumps(event_data)
-        
-        # Send to all connected clients
-        disconnected = []
-        for ws in self.connections[campaign_id]:
+        try:
+            # We use put_nowait to ensure we NEVER block the caller (especially the campaign loop)
+            # If the queue is full (2000 messages), we drop the oldest messages to keep processing alive
+            if self._event_queue.full():
+                try: self._event_queue.get_nowait()
+                except queue.Empty: pass
+            
+            self._event_queue.put_nowait((campaign_id, event_data))
+        except Exception as e:
+            print(f"[WebSocket] Error queuing event: {e}")
+
+    def _broadcast_worker(self):
+        """Background thread that drains the queue and sends to clients"""
+        while True:
             try:
-                ws.send(message)
-            except Exception as e:
-                print(f"Failed to send to WebSocket: {e}")
-                disconnected.append(ws)
-        
-        # Clean up disconnected clients
-        for ws in disconnected:
-            self.connections[campaign_id].remove(ws)
+                campaign_id, event_data = self._event_queue.get()
+                
+                with self._lock:
+                    clients = list(self.connections.get(campaign_id, []))
+                
+                if clients:
+                    message = json.dumps(event_data)
+                    disconnected = []
+                    
+                    for ws in clients:
+                        try:
+                            # Still blocks slightly per client, but in its own thread
+                            ws.send(message)
+                        except Exception:
+                            # Silent fail for individual clients, add to disconnect list
+                            disconnected.append(ws)
+                    
+                    if disconnected:
+                        with self._lock:
+                            for ws in disconnected:
+                                if ws in self.connections[campaign_id]:
+                                    self.connections[campaign_id].remove(ws)
+                
+                self._event_queue.task_done()
+            except Exception as worker_err:
+                print(f"[WebSocket] Worker error: {worker_err}")
+                time.sleep(1) # Prevent tight loop on error
     
     def close_all(self, campaign_id: int):
         """Close all connections for a campaign"""

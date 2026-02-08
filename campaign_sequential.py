@@ -151,6 +151,20 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
     # DIAGNOSTIC: Log function entry
     print(f"[Sequential] ENTRY: campaign_id={campaign_id}, python={sys.executable}")
     
+    # Watchdog to prove the thread is alive even if logs go silent
+    def watchdog():
+        last_idx = -1
+        while True:
+            time.sleep(30)
+            print(f"[Sequential] [WATCHDOG] Thread is alive for campaign {campaign_id}. Current status check...")
+            try:
+                # We can't easily check 'idx' here without making it nonlocal, but just knowing the thread is alive is good.
+                pass
+            except: pass
+            
+    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
+    watchdog_thread.start()
+    
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
 
@@ -280,7 +294,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         cwd=os.path.dirname(__file__),
-                        bufsize=0 # Unbuffered binary
+                        bufsize=-1 # Use system default buffering (safer than 0)
                     )
 
                     # Helper to stream logs to WebSocket
