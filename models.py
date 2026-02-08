@@ -3,6 +3,7 @@ from datetime import datetime
 import secrets
 import string
 import bcrypt
+import uuid
 
 class User(db.Model):
     """User model for authentication and API access"""
@@ -423,6 +424,7 @@ class Campaign(db.Model):
     __tablename__ = 'campaigns'
     
     id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(20), unique=True, nullable=False, index=True, default=lambda: secrets.token_urlsafe(8)[:8])
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)  # Optional - for public campaigns
     session_id = db.Column(db.String(100), nullable=True, index=True)  # For guest users - browser session identifier
     name = db.Column(db.String(200), nullable=False)
@@ -452,6 +454,7 @@ class Campaign(db.Model):
         """Convert to dictionary for JSON serialization"""
         data = {
             'id': self.id,
+            'public_id': self.public_id,
             'user_id': self.user_id,
             'name': self.name,
             'message_template': self.message_template,

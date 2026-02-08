@@ -351,13 +351,18 @@ def create_campaign():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>', methods=['GET'])
-def get_campaign(campaign_id):
-    """Get a specific campaign with details"""
+@campaigns_api.route('/<id_or_public_id>', methods=['GET'])
+def get_campaign(id_or_public_id):
+    """Get a specific campaign with details (supports ID or matching public_id)"""
     try:
         from models import Campaign
         
-        campaign = Campaign.query.get(campaign_id)
+        # Try finding by public_id first
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        
+        # Fallback to numeric ID for backward compatibility
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
@@ -375,14 +380,16 @@ def get_campaign(campaign_id):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>', methods=['PATCH'])
-def update_campaign(campaign_id):
+@campaigns_api.route('/<id_or_public_id>', methods=['PATCH'])
+def update_campaign(id_or_public_id):
     """Update a campaign"""
     try:
         from models import Campaign
         from database import db
         
-        campaign = Campaign.query.get(campaign_id)
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
@@ -413,17 +420,21 @@ def update_campaign(campaign_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>', methods=['DELETE'])
-def delete_campaign(campaign_id):
-    """Delete a campaign and all related data (scraping_sessions first, then companies via cascade)."""
+@campaigns_api.route('/<id_or_public_id>', methods=['DELETE'])
+def delete_campaign(id_or_public_id):
+    """Delete a campaign and data"""
     try:
         from models import Campaign, ScrapingSession
         from database import db
         
-        campaign = Campaign.query.get(campaign_id)
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
         
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+        
+        campaign_id = campaign.id # Use the internal ID for related data cleanup
         
         # Remove scraping sessions that reference this campaign (no cascade on Campaign -> scraping_sessions)
         ScrapingSession.query.filter_by(campaign_id=campaign_id).delete()
@@ -442,19 +453,23 @@ def delete_campaign(campaign_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>/companies', methods=['GET'])
-def get_campaign_companies(campaign_id):
-    """Get all companies for a specific campaign"""
+@campaigns_api.route('/<id_or_public_id>/companies', methods=['GET'])
+def get_campaign_companies(id_or_public_id):
+    """Get companies for campaign"""
     try:
         from models import Campaign, Company
         
-        campaign = Campaign.query.get(campaign_id)
-        
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+            
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+
+        companies = Company.query.filter_by(campaign_id=campaign.id).all()
         
         # Get all companies for this campaign in upload order (same order as CSV/file)
-        companies = Company.query.filter_by(campaign_id=campaign_id).order_by(Company.id).all()
+        companies = Company.query.filter_by(campaign_id=campaign.id).order_by(Company.id).all()
         
         return jsonify({
             'success': True,
@@ -1032,8 +1047,8 @@ def rapid_process_batch(campaign_id):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>/reset-stuck', methods=['POST'])
-def reset_stuck_processing(campaign_id):
+@campaigns_api.route('/<id_or_public_id>/reset-stuck', methods=['POST'])
+def reset_stuck_processing(id_or_public_id):
     """
     Reset any companies stuck in 'processing' to 'pending' so they can be retried.
     Call this if processing stopped and some companies show "In progress..." indefinitely.
@@ -1042,10 +1057,14 @@ def reset_stuck_processing(campaign_id):
         from models import Campaign, Company
         from database import db
 
-        campaign = Campaign.query.get(campaign_id)
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
 
+        campaign_id = campaign.id
         n = Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
         db.session.commit()
         return jsonify({
@@ -1059,8 +1078,8 @@ def reset_stuck_processing(campaign_id):
         return jsonify({'error': str(e)}), 500
 
 
-@campaigns_api.route('/<int:campaign_id>/stop', methods=['POST'])
-def stop_campaign(campaign_id):
+@campaigns_api.route('/<id_or_public_id>/stop', methods=['POST'])
+def stop_campaign(id_or_public_id):
     """
     Stop a running campaign
     """
@@ -1068,7 +1087,10 @@ def stop_campaign(campaign_id):
         from models import Campaign
         from database import db
         
-        campaign = Campaign.query.get(campaign_id)
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
             

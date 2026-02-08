@@ -31,7 +31,7 @@ class WebSocketManager:
             self._worker_thread.start()
             print("[WebSocket] Background worker thread started.")
 
-        @self.sock.route('/ws/campaign/<int:campaign_id>')
+        @self.sock.route('/ws/campaign/<campaign_id>')
         def campaign_websocket(ws, campaign_id):
             """WebSocket endpoint for live campaign monitoring"""
             print(f"WebSocket client connected for campaign {campaign_id}")

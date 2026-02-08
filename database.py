@@ -253,6 +253,12 @@ def init_db(app):
                     db.session.commit()
                     print("[OK] Added last_heartbeat_at to campaigns")
 
+                if 'public_id' not in campaign_cols:
+                    print("[RELOAD] Migrating: Adding public_id column to campaigns...")
+                    db.session.execute(text("ALTER TABLE campaigns ADD COLUMN public_id VARCHAR(36)"))
+                    db.session.commit()
+                    print("[OK] Added public_id to campaigns")
+
             # Check and migrate api_keys table for free tier fields
             if 'api_keys' in tables:
                 print("[RELOAD] Checking api_keys table for missing free tier columns...")
