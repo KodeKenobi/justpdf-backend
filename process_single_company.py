@@ -133,19 +133,16 @@ def process_single_company(input_data: dict) -> dict:
                 result = processor.process_company()
                 
             finally:
-                # Clean up
+                # Absolute cleanup
                 try:
-                    page.close(timeout=5000)
-                except Exception:
-                    pass
+                    page.close()
+                except: pass
                 try:
-                    context.close(timeout=5000)
-                except Exception:
-                    pass
+                    context.close()
+                except: pass
                 try:
                     browser.close()
-                except Exception:
-                    pass
+                except: pass
     
     except Exception as e:
         result = {

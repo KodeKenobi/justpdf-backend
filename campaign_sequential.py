@@ -20,7 +20,7 @@ PER_COMPANY_TIMEOUT_SEC = 90
 # Max time to wait for worker output/cleanup
 WORKER_WAIT_TIMEOUT_SEC = 10
 # Maximum concurrent workers to avoid OOM or CPU saturation
-MAX_CONCURRENT_WORKERS = 8
+MAX_CONCURRENT_WORKERS = 5
 
 def _kill_process_tree(proc):
     """Safely terminate a process and all its children across platforms."""
@@ -173,7 +173,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         print(f"[Parallel] [WATCHDOG] Started for campaign {campaign_id}")
         last_db_check = 0
         while not state['stop_watchdog']:
-            time.sleep(5) # Faster checks (was 30)
+            time.sleep(12) # Reduced frequency to lower DB and CPU load (was 5)
             now = time.time()
             offline_sec = now - state['last_activity_at']
             
@@ -481,9 +481,11 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
 
                 except Exception as e:
                     print(f"[Parallel] Error in company task {comp_id}: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    try: db.session.remove()
+                    # Ensure cleanup even on error
+                    from database import db
+                    try: 
+                        db.session.rollback()
+                        db.session.remove()
                     except: pass
 
         # Execute in ThreadPool
