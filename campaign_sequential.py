@@ -22,6 +22,23 @@ WORKER_WAIT_TIMEOUT_SEC = 10
 # Maximum concurrent workers to avoid OOM or CPU saturation
 MAX_CONCURRENT_WORKERS = 8
 
+def _kill_process_tree(proc):
+    """Safely terminate a process and all its children across platforms."""
+    if not proc: return
+    try:
+        if sys.platform == 'win32':
+            # On Windows, taskkill /F /T kills the process and all its children
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], 
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # On Linux/macOS, we use process groups
+            import signal
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except:
+        # Fallback to simple terminate if group kill fails
+        try: proc.kill()
+        except: pass
+
 # Map technical log (action / message) to user-friendly English for the right-hand panel
 def _user_friendly_message(level, action, message):
     action_lower = (action or '').lower()
@@ -364,7 +381,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         # D. Update Result - RE-FETCH first to avoid DetachedInstanceError
                         # The commit earlier (line 273) expired these objects, and the long-running 
                         # subprocess might have timed out the session or seen other thread-local issues.
-                        db.session.rollback()
+                        db.session.rollback() # Clear any stale cache/objects for this thread
                         company = Company.query.get(comp_id)
                         camp = Campaign.query.get(campaign_id)
                         
