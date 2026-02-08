@@ -12,7 +12,8 @@ import subprocess
 import tempfile
 import time
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+from sqlalchemy import func
 from models import Campaign, Company, db
 
 # Per-company timeout so one slow site doesn't hang the whole run
@@ -21,6 +22,8 @@ PER_COMPANY_TIMEOUT_SEC = 90
 WORKER_WAIT_TIMEOUT_SEC = 10
 # Maximum concurrent workers to avoid OOM or CPU saturation
 MAX_CONCURRENT_WORKERS = 5
+# Sentinel: How long without heartbeat before we consider a campaign 'orphaned' (User requested 2m30s)
+SENTINEL_ORPHAN_THRESHOLD_SEC = 150 
 
 def _kill_process_tree(proc):
     """Safely terminate a process and all its children across platforms."""
@@ -220,6 +223,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         db.session.rollback()
                         camp = Campaign.query.get(campaign_id)
                         if camp:
+                            # CRITICAL: Update heartbeat
                             camp.last_heartbeat_at = datetime.utcnow()
                             
                             # Optimized stats update: Single query instead of 4
@@ -249,8 +253,9 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                     try: db.session.remove()
                     except: pass
 
-    watchdog_thread = threading.Thread(target=watchdog, daemon=True)
-    watchdog_thread.start()
+    # Start watchdog
+    state['watchdog_thread'] = threading.Thread(target=watchdog, daemon=True)
+    state['watchdog_thread'].start()
     
     from websocket_manager import ws_manager
     from utils.supabase_storage import upload_screenshot
@@ -516,8 +521,86 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         state['stop_watchdog'] = True
         if 'campaign_id' in locals() and campaign_id:
             try:
-                db.session.rollback()
-                Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
-                db.session.commit()
-                db.session.remove()
+                # IMPORTANT: If we are exiting normally and not interrupted, 
+                # we don't need to revert processing leads as they either finished or will finish.
+                # If we were interrupted (STOP requested), watchdog already killed procs.
+                pass
             except: pass
+
+
+# =============================================================================
+# SELF-HEALING SENTINEL
+# =============================================================================
+
+class SelfHealingSentinel:
+    """
+    Background worker that detects orphaned campaigns (e.g. server crashed/restarted)
+    and automatically resumes them if they haven't reported a heartbeat.
+    """
+    _instance = None
+    _lock = threading.Lock()
+    _running = False
+
+    @classmethod
+    def start(cls):
+        with cls._lock:
+            if cls._running: return
+            cls._running = True
+            thread = threading.Thread(target=cls._monitor_loop, daemon=True, name="SentinelThread")
+            thread.start()
+            print("[SENTINEL] Started background recovery engine.")
+
+    @classmethod
+    def _monitor_loop(cls):
+        # We need a flux app context for DB access
+        from app import app as flask_app
+        
+        while cls._running:
+            try:
+                with flask_app.app_context():
+                    from models import Campaign
+                    from database import db
+                    
+                    # 1. Look for orphaned campaigns
+                    # Criteria: status='processing' AND (last_heartbeat_at is NULL OR > threshold ago)
+                    cutoff = datetime.utcnow() - timedelta(seconds=SENTINEL_ORPHAN_THRESHOLD_SEC)
+                    orphans = Campaign.query.filter(
+                        Campaign.status == 'processing',
+                        (Campaign.last_heartbeat_at == None) | (Campaign.last_heartbeat_at < cutoff)
+                    ).all()
+                    
+                    if orphans:
+                        print(f"[SENTINEL] Found {len(orphans)} orphaned campaigns. Triggering recovery...")
+                        for camp in orphans:
+                            print(f"[SENTINEL] RECOVERING: Campaign {camp.public_id} (ID: {camp.id}). No heartbeat since {camp.last_heartbeat_at}")
+                            
+                            # A. Reset 'processing' leads to 'pending' just in case
+                            # (Worker might have died, or is globally stuck)
+                            db.session.rollback()
+                            from models import Company
+                            stuck_count = Company.query.filter_by(campaign_id=camp.id, status='processing').update({'status': 'pending'})
+                            db.session.commit()
+                            
+                            print(f"[SENTINEL]   - Reset {stuck_count} stuck leads for campaign {camp.id}")
+                            
+                            # B. Forcefully stop any existing watchdog thread for this ID if it exists?
+                            # (Hard to do without a global registry, but process_campaign_sequential handles its own state)
+                            
+                            # C. Restart processing in a new thread
+                            restart_thread = threading.Thread(
+                                target=process_campaign_sequential,
+                                args=(camp.id,),
+                                kwargs={'skip_submit': True}, # Mimic usually runs with this
+                                daemon=True
+                            )
+                            restart_thread.start()
+                            print(f"[SENTINEL]   - Restarted processing thread for campaign {camp.id}")
+                            
+                    db.session.remove()
+            except Exception as e:
+                print(f"[SENTINEL] Monitor Error: {e}")
+            
+            time.sleep(60) # Wake up every minute to check
+
+# Auto-start sentinel when this module is used
+SelfHealingSentinel.start()
