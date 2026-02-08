@@ -49,8 +49,11 @@ class WebSocketManager:
                         print(f"Received from client: {data}")
             except Exception as e:
                 # Don't log normal disconnects as errors
-                if 'closed' not in str(e).lower():
-                    print(f"WebSocket for campaign {campaign_id} closed: {e}")
+                err_str = str(e).lower()
+                if 'closed' not in err_str and 'fin must be set' not in err_str:
+                    print(f"[WebSocket] Campaign {campaign_id} error: {e}")
+                elif 'fin must be set' in err_str:
+                    print(f"[WebSocket] Campaign {campaign_id} framing error (FIN must be set): {e}")
             finally:
                 # Remove connection on close
                 with self._lock:
@@ -90,8 +93,10 @@ class WebSocketManager:
                         try:
                             # Still blocks slightly per client, but in its own thread
                             ws.send(message)
-                        except Exception:
+                        except Exception as e:
                             # Silent fail for individual clients, add to disconnect list
+                            if 'fin must be set' in str(e).lower():
+                                print(f"[WebSocket] Framing error during broadcast: {e}")
                             disconnected.append(ws)
                     
                     if disconnected:

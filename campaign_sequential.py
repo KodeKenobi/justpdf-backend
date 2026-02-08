@@ -123,7 +123,7 @@ def _user_facing_error(err: str) -> str:
 
 
 def _kill_process_tree(proc):
-    """Forcefully kill a process and all its children (important for Chrome/Playwright on Windows)."""
+    """Forcefully kill a process and all its children (important for Chrome/Playwright)."""
     if not proc:
         return
     pid = proc.pid
@@ -133,9 +133,14 @@ def _kill_process_tree(proc):
             # /F = forceful, /T = tree (all children)
             subprocess.run(['taskkill', '/F', '/T', '/PID', str(pid)], capture_output=True, timeout=5)
         else:
-            # On Linux, kill the process group if we had set pgroup, but for now just kill() 
-            # Subprocess.kill() is usually enough on Linux/Railway
-            proc.kill()
+            # On Linux, kill the process group (set via os.setsid in Popen)
+            # This ensures orphaned Chrome/Playwright processes are also killed.
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, 9) # SIGKILL
+            except Exception as pg_err:
+                print(f"[Sequential] PG kill failed: {pg_err}, falling back to kill()")
+                proc.kill()
     except Exception as e:
         print(f"[Sequential] Error killing process {pid}: {e}")
     finally:
@@ -151,17 +156,55 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
     # DIAGNOSTIC: Log function entry
     print(f"[Sequential] ENTRY: campaign_id={campaign_id}, python={sys.executable}")
     
+    # Shared state for watchdog
+    state = {
+        'last_activity_at': time.time(),
+        'current_proc': None,
+        'stop_watchdog': False
+    }
+    
     # Watchdog to prove the thread is alive even if logs go silent
+    # and to forcefully kill the worker if the main loop hangs.
     def watchdog():
-        last_idx = -1
-        while True:
+        print(f"[Sequential] [WATCHDOG] Started for campaign {campaign_id}")
+        while not state['stop_watchdog']:
             time.sleep(30)
-            print(f"[Sequential] [WATCHDOG] Thread is alive for campaign {campaign_id}. Current status check...")
-            try:
-                # We can't easily check 'idx' here without making it nonlocal, but just knowing the thread is alive is good.
-                pass
-            except: pass
+            now = time.time()
+            offline_sec = now - state['last_activity_at']
             
+            # 1. Thread life check
+            print(f"[Sequential] [WATCHDOG] Heartbeat. Main loop active {offline_sec:.0f}s ago.")
+            
+            # 2. Main loop stall check 
+            # If main loop hasn't updated its activity for > PERSENT_TIMEOUT + workers grace, 
+            # it might be stuck on a blocking wait or DB lock.
+            if offline_sec > (PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC + 30):
+                print(f"[Sequential] [WATCHDOG] [STALL] Main loop STALL suspected! ({offline_sec:.0f}s since last activity)")
+                if state['current_proc']:
+                    print(f"[Sequential] [WATCHDOG] [STALL] Killing unresponsive worker process tree...")
+                    _kill_process_tree(state['current_proc'])
+            
+            # 3. Update campaign heartbeat in DB (every minute roughly)
+            if int(now) % 60 < 35:
+                try:
+                    with flask_app.app_context():
+                        from models import Campaign
+                        from database import db
+                        db.session.rollback()
+                        camp = Campaign.query.get(campaign_id)
+                        if camp:
+                            camp.last_heartbeat_at = datetime.utcnow()
+                            db.session.commit()
+                except: pass
+
+    # Get flask app for DB updates in watchdog
+    from flask import current_app
+    try:
+        flask_app = current_app._get_current_object()
+    except:
+        # Fallback if called outside request context (though routes.py passes it)
+        from app import app as flask_app
+
     watchdog_thread = threading.Thread(target=watchdog, daemon=True)
     watchdog_thread.start()
     
@@ -236,23 +279,28 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
             try:
                 # 1. Fresh state check (ensure we have a fresh, attached company object)
                 print(f"[Sequential] [Heartbeat] Loop iteration {idx+1}/{len(companies)} starting for company {_company_id}...")
+                state['last_activity_at'] = time.time() # Update watchdog
+                
+                # Resilient session handling: ensure we start each iteration with a fresh session
+                db.session.remove() # Close any previous session
                 db.session.rollback()
                 company = Company.query.get(_company_id)
                 if not company:
                     continue
                 
-                db.session.refresh(campaign)
-                if campaign.status in ['stopping', 'cancelled']:
+                campaign = Campaign.query.get(campaign_id) # Refresh campaign object too
+                if not campaign or campaign.status in ['stopping', 'cancelled']:
                     # Reset any processing back to pending
                     Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
-                    campaign.status = 'cancelled'
+                    if campaign: campaign.status = 'cancelled'
                     db.session.commit()
                     ws_manager.broadcast_event(campaign_id, {'type': 'campaign_stopped', 'data': {'message': 'Stopped by user'}})
                     break
-
+                
                 # 2. Mark as processing
                 company.status = 'processing'
                 db.session.commit()
+                state['last_activity_at'] = time.time() # Update watchdog
                 ws_manager.broadcast_event(campaign_id, {
                     'type': 'company_processing',
                     'data': {'company_id': _company_id, 'company_name': _company_name}
@@ -289,13 +337,20 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                     
                     print(f"[Sequential] Starting worker for company {_company_id} (Python: {python_exe})")
                     # Merge stderr into stdout so one thread can drain both (prevents pipe hangs)
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        cwd=os.path.dirname(__file__),
-                        bufsize=-1 # Use system default buffering (safer than 0)
-                    )
+                    
+                    popen_kwargs = {
+                        'stdout': subprocess.PIPE,
+                        'stderr': subprocess.STDOUT,
+                        'cwd': os.path.dirname(__file__),
+                        'bufsize': -1 # Use system default buffering (safer than 0)
+                    }
+                    
+                    # On Linux, set process group so we can kill orphan Chrome processes
+                    if sys.platform != 'win32':
+                        popen_kwargs['preexec_fn'] = os.setsid
+                        
+                    proc = subprocess.Popen(cmd, **popen_kwargs)
+                    state['current_proc'] = proc
 
                     # Helper to stream logs to WebSocket
                     def stream_logs(pipe, cid, cname):
@@ -308,6 +363,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                                     match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
                                     if match:
                                         level, action, message = match.groups()
+                                        state['last_activity_at'] = time.time() # WORKER IS ALIVE
                                         user_msg = _user_friendly_message(level, action, message)
                                         ws_manager.broadcast_event(campaign_id, {
                                             'type': 'activity',
@@ -335,7 +391,9 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                     try:
                         print(f"[Sequential] [Heartbeat] Waiting for worker PID {proc.pid}...")
                         proc.wait(timeout=PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC)
+                        state['last_activity_at'] = time.time() # Update watchdog
                         print(f"[Sequential] [Heartbeat] Worker PID {proc.pid} finished.")
+                        state['current_proc'] = None
                         if os.path.exists(output_path):
                             with open(output_path, 'r', encoding='utf-8') as f:
                                 result = json.load(f)
@@ -412,7 +470,10 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                 campaign.failed_count = Company.query.filter_by(campaign_id=campaign.id, status='failed').count()
                 campaign.captcha_count = Company.query.filter_by(campaign_id=campaign.id, status='captcha').count()
                 db.session.commit()
+                # Use db.session.remove() frequently to avoid pool exhaustion or long-lived locks
+                db.session.remove()
                 db.session.expire_all() # Ensure next iteration gets fresh objects
+                state['last_activity_at'] = time.time()
                 
                 ws_manager.broadcast_event(campaign_id, {
                     'type': 'company_completed',
@@ -439,11 +500,15 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         db.session.commit()
                 except: pass
 
-        if campaign.status not in ['stopping', 'cancelled']:
+        # Final status update
+        db.session.rollback()
+        campaign = Campaign.query.get(campaign_id)
+        if campaign and campaign.status not in ['stopping', 'cancelled']:
             campaign.status = 'completed'
             campaign.completed_at = datetime.utcnow()
             db.session.commit()
             ws_manager.broadcast_event(campaign_id, {'type': 'campaign_complete', 'data': {'campaign_id': campaign_id}})
+        db.session.remove()
 
         return {'status': 'success', 'processed': len(companies)}
 
@@ -453,10 +518,16 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         traceback.print_exc()
         return {'error': str(e)}
     finally:
+        # Stop watchdog
+        try: state['stop_watchdog'] = True
+        except: pass
+        
         # Cleanup any stuck processing
         if 'campaign_id' in locals() and campaign_id:
             try:
                 db.session.rollback()
+                # Use a fresh query for cleanup
                 Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
                 db.session.commit()
+                db.session.remove()
             except: pass

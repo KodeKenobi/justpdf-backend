@@ -227,6 +227,24 @@ def init_db(app):
                     db.session.commit()
                     print("[OK] Added monthly_reset_date")
             
+            if 'companies' in tables:
+                print("[RELOAD] Checking companies table for missing columns...")
+                companies_cols = [col['name'] for col in inspector.get_columns('companies')]
+                # (Add any future companies migrations here)
+
+            if 'campaigns' in tables:
+                print("[RELOAD] Checking campaigns table for missing columns...")
+                campaign_cols = [col['name'] for col in inspector.get_columns('campaigns')]
+                if 'last_heartbeat_at' not in campaign_cols:
+                    print("[RELOAD] Migrating: Adding last_heartbeat_at column to campaigns...")
+                    # Use TIMESTAMP for PostgreSQL/Supabase, DATETIME for SQLite
+                    if is_supabase or not is_sqlite:
+                        db.session.execute(text("ALTER TABLE campaigns ADD COLUMN last_heartbeat_at TIMESTAMP"))
+                    else:
+                        db.session.execute(text("ALTER TABLE campaigns ADD COLUMN last_heartbeat_at DATETIME"))
+                    db.session.commit()
+                    print("[OK] Added last_heartbeat_at to campaigns")
+
             # Check and migrate api_keys table for free tier fields
             if 'api_keys' in tables:
                 print("[RELOAD] Checking api_keys table for missing free tier columns...")
