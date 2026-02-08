@@ -477,10 +477,10 @@ def get_campaign_companies(id_or_public_id):
         }), 200
         
     except Exception as e:
-        print(f"Error fetching campaign companies: {e}")
         import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        err_msg = f"Error fetching campaign companies for {id_or_public_id}: {str(e)}\n{traceback.format_exc()}"
+        print(err_msg)
+        return jsonify({'error': 'Failed to fetch companies', 'details': str(e)}), 500
 
 @campaigns_api.route('/companies/<int:company_id>', methods=['PATCH'])
 def update_company(company_id):

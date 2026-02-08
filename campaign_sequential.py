@@ -221,12 +221,19 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         camp = Campaign.query.get(campaign_id)
                         if camp:
                             camp.last_heartbeat_at = datetime.utcnow()
-                            processed = Company.query.filter(Company.campaign_id == campaign_id, Company.status != 'pending', Company.status != 'processing').count()
-                            success = Company.query.filter(Company.campaign_id == campaign_id, Company.status.in_(['completed', 'contact_info_found'])).count()
-                            failed = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
-                            captcha = Company.query.filter_by(campaign_id=campaign_id, status='captcha').count()
-                            total = camp.total_companies # Capture before remove
-
+                            
+                            # Optimized stats update: Single query instead of 4
+                            stats = db.session.query(
+                                Company.status, 
+                                func.count(Company.id)
+                            ).filter(Company.campaign_id == campaign_id).group_by(Company.status).all()
+                            
+                            counts = {s: c for s, c in stats}
+                            processed = sum(c for s, c in counts.items() if s not in ['pending', 'processing'])
+                            success = counts.get('completed', 0) + counts.get('contact_info_found', 0)
+                            failed = counts.get('failed', 0)
+                            captcha = counts.get('captcha', 0)
+                            
                             camp.processed_count = processed
                             camp.success_count = success
                             camp.failed_count = failed
@@ -234,6 +241,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             db.session.commit()
                             db.session.remove() # Release connection while waiting for next heartbeat
                             
+                            total = camp.total_companies or 0
                             pct = (processed / total * 100) if total > 0 else 0
                             print(f"\n[PROGRESS] Campaign {campaign_id}: {processed}/{total} ({pct:.1f}%) | Success: {success} | Failed: {failed} | Captcha: {captcha}")
                 except Exception as e:
@@ -457,6 +465,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             processed = state['processed_count']
                         
                         progress_pct = round((processed / state['total_companies']) * 100, 1)
+                        
+                        # Signal completion via WebSocket for real-time UI updates
                         ws_manager.broadcast_event(campaign_id, {
                             'type': 'company_completed',
                             'data': {
@@ -467,14 +477,6 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             }
                         })
                         
-                        # Global stats update
-                        camp = Campaign.query.get(campaign_id)
-                        if camp:
-                            camp.processed_count = Company.query.filter(Company.campaign_id == campaign_id, Company.status != 'pending', Company.status != 'processing').count()
-                            camp.success_count = Company.query.filter(Company.campaign_id == campaign_id, Company.status.in_(['completed', 'contact_info_found'])).count()
-                            camp.failed_count = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
-                            camp.captcha_count = Company.query.filter_by(campaign_id=campaign_id, status='captcha').count()
-                            db.session.commit()
                         db.session.remove() # Aggressive cleanup
 
                 except Exception as e:
