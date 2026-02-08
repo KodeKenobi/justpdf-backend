@@ -76,24 +76,46 @@ def upload_screenshot(screenshot_bytes: bytes, campaign_id: int, company_id: int
         
         client = _client()
         _ensure_bucket(client)
-        response = client.storage.from_(SCREENSHOT_BUCKET).upload(
-            filename,
-            screenshot_bytes,
-            file_options={
-                'content-type': 'image/png',
-                'cache-control': '3600',
-                'upsert': 'true'
-            }
-        )
         
-        print(f"[DEBUG] Upload response: {response}")
+        import threading
+        upload_result = {"url": None, "error": None}
+        upload_finished = threading.Event()
+
+        def do_upload():
+            try:
+                # Perform the upload
+                client.storage.from_(SCREENSHOT_BUCKET).upload(
+                    filename,
+                    screenshot_bytes,
+                    file_options={
+                        'content-type': 'image/png',
+                        'cache-control': '3600',
+                        'upsert': 'true'
+                    }
+                )
+                # If success, get the URL
+                upload_result["url"] = client.storage.from_(SCREENSHOT_BUCKET).get_public_url(filename)
+            except Exception as e:
+                upload_result["error"] = str(e)
+            finally:
+                upload_finished.set()
+
+        # Start upload in a separate thread
+        upload_thread = threading.Thread(target=do_upload, daemon=True)
+        upload_thread.start()
+
+        # Wait for max 30 seconds
+        if not upload_finished.wait(timeout=30):
+            print(f"[ERROR] Supabase upload TIMEOUT for {filename} after 30s. Moving on.")
+            return None
         
-        # Get public URL
-        public_url = client.storage.from_(SCREENSHOT_BUCKET).get_public_url(filename)
-        
+        if upload_result["error"]:
+            print(f"[ERROR] Supabase upload failed for {filename}: {upload_result['error']}")
+            return None
+
         print(f"[OK] Screenshot uploaded to Supabase: {filename}")
-        print(f"[OK] Public URL: {public_url}")
-        return public_url
+        print(f"[OK] Public URL: {upload_result['url']}")
+        return upload_result["url"]
         
     except Exception as e:
         print(f"[ERROR] Failed to upload screenshot to Supabase: {e}")

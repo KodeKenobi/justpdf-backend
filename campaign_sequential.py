@@ -214,14 +214,30 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         db.session.remove()
                 except Exception as e:
                     print(f"[Parallel] [WATCHDOG] Stop check error: {e}")
+                    try: 
+                        from database import db
+                        db.session.remove()
+                    except: pass
 
             # 3. Kill stuck processes (Individual timeout)
             if offline_sec > (PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC + 60):
-                print(f"[Parallel] [WATCHDOG] [STALL] Global inactivity! Killing all active workers...")
+                print(f"[Parallel] [WATCHDOG] [STALL] Global inactivity! Force-clearing {len(state['active_procs'])} workers...")
                 with state['lock']:
+                    pids_to_kill = list(state['active_procs'].keys())
                     for pid, proc in list(state['active_procs'].items()):
                         _kill_process_tree(proc)
                     state['active_procs'].clear()
+                
+                # Proactive status reset: If we are stuck, mark all 'processing' as 'pending'
+                # so the engine (or a rebooted one) can try again.
+                try:
+                    with flask_app.app_context():
+                        from models import Company
+                        from database import db
+                        Company.query.filter_by(campaign_id=campaign_id, status='processing').update({'status': 'pending'})
+                        db.session.commit()
+                        db.session.remove()
+                except: pass
             
             # 3. Update campaign heartbeat and report progress in DB
             if int(now) % 60 < 35:
@@ -389,22 +405,29 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
 
                             # Log streaming
                             def stream_logs(pipe, cid, cname):
-                                for line in iter(pipe.readline, b''):
-                                    line_str = line.decode('utf-8', errors='ignore').strip()
-                                    if not line_str: continue
-                                    match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
-                                    if match:
-                                        level, action, message = match.groups()
-                                        with state['lock']: state['last_activity_at'] = time.time()
-                                        user_msg = _user_friendly_message(level, action, message)
-                                        ws_manager.broadcast_event(campaign_id, {
-                                            'type': 'activity',
-                                            'data': {
-                                                'company_id': cid, 'company_name': cname,
-                                                'level': level, 'action': action, 'message': message,
-                                                'user_message': user_msg, 'timestamp': datetime.utcnow().isoformat()
-                                            }
-                                        })
+                                try:
+                                    for line in iter(pipe.readline, b''):
+                                        try:
+                                            line_str = line.decode('utf-8', errors='ignore').strip()
+                                            if not line_str: continue
+                                            match = re.match(r'\[(\w+)\] (.*?): (.*)', line_str)
+                                            if match:
+                                                level, action, message = match.groups()
+                                                with state['lock']: state['last_activity_at'] = time.time()
+                                                user_msg = _user_friendly_message(level, action, message)
+                                                ws_manager.broadcast_event(campaign_id, {
+                                                    'type': 'activity',
+                                                    'data': {
+                                                        'company_id': cid, 'company_name': cname,
+                                                        'level': level, 'action': action, 'message': message,
+                                                        'user_message': user_msg, 'timestamp': datetime.utcnow().isoformat()
+                                                    }
+                                                })
+                                        except Exception as e:
+                                            print(f"[Parallel] Error processing log line: {e}")
+                                            # Don't break the loop, keep reading to avoid pipe block (Errno 11)
+                                except Exception as e:
+                                    print(f"[Parallel] Critical log streamer error for company {cid}: {e}")
                             
                             log_thread = threading.Thread(target=stream_logs, args=(proc.stdout, comp_id, comp_name), daemon=True)
                             log_thread.start()
@@ -651,6 +674,10 @@ class SelfHealingSentinel:
                     db.session.remove()
             except Exception as e:
                 print(f"[SENTINEL] Monitor Error: {e}")
+                try: 
+                    from database import db
+                    db.session.remove()
+                except: pass
             
             time.sleep(60) # Wake up every minute
 
