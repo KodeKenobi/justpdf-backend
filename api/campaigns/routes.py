@@ -700,8 +700,8 @@ def get_queued_campaigns_internal():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
-def rapid_process_single(campaign_id, company_id):
+@campaigns_api.route('/<id_or_public_id>/companies/<int:company_id>/rapid-process', methods=['POST'])
+def rapid_process_single(id_or_public_id, company_id):
     """
     Fast campaign processing using JavaScript rapid-process-single.js
     - Uses proven JavaScript scraper that works reliably
@@ -716,9 +716,15 @@ def rapid_process_single(campaign_id, company_id):
         import time
         import os
         
-        campaign = Campaign.query.get(campaign_id)
+        # Resolve campaign by public_id or numeric ID
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+            
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+        
+        campaign_id = campaign.id # Keep internal ID for DB operations
         
         company = Company.query.filter_by(id=company_id, campaign_id=campaign_id).first()
         if not company:
@@ -933,8 +939,8 @@ def rapid_process_single(campaign_id, company_id):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@campaigns_api.route('/<int:campaign_id>/rapid-process-batch', methods=['POST'])
-def rapid_process_batch(campaign_id):
+@campaigns_api.route('/<id_or_public_id>/rapid-process-batch', methods=['POST'])
+def rapid_process_batch(id_or_public_id):
     """
     Trigger asynchronous sequential campaign processing
     """
@@ -950,9 +956,15 @@ def rapid_process_batch(campaign_id):
         test_secret = request.headers.get('X-Test-Run-Secret') or ''
         skip_submit = bool(data.get('skip_submit') and test_secret and test_secret == os.environ.get('TEST_RUN_SECRET'))
 
-        campaign = Campaign.query.get(campaign_id)
+        # Resolve campaign by public_id or numeric ID
+        campaign = Campaign.query.filter_by(public_id=id_or_public_id).first()
+        if not campaign and id_or_public_id.isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+            
         if not campaign:
             return jsonify({'error': 'Campaign not found'}), 404
+            
+        campaign_id = campaign.id # Keep internal ID for DB operations
 
         # How many we're about to process
         if company_ids:
