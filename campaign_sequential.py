@@ -183,7 +183,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             success = Company.query.filter(Company.campaign_id == campaign_id, Company.status.in_(['completed', 'contact_info_found'])).count()
                             failed = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
                             captcha = Company.query.filter_by(campaign_id=campaign_id, status='captcha').count()
-                            
+                            total = camp.total_companies # Capture before remove
+
                             camp.processed_count = processed
                             camp.success_count = success
                             camp.failed_count = failed
@@ -191,8 +192,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             db.session.commit()
                             db.session.remove() # Release connection while waiting for next heartbeat
                             
-                            pct = (processed / camp.total_companies * 100) if camp.total_companies > 0 else 0
-                            print(f"\n[PROGRESS] Campaign {campaign_id}: {processed}/{camp.total_companies} ({pct:.1f}%) | Success: {success} | Failed: {failed} | Captcha: {captcha}")
+                            pct = (processed / total * 100) if total > 0 else 0
+                            print(f"\n[PROGRESS] Campaign {campaign_id}: {processed}/{total} ({pct:.1f}%) | Success: {success} | Failed: {failed} | Captcha: {captcha}")
                 except Exception as e:
                     print(f"[Parallel] Watchdog DB error: {e}")
                     try: db.session.remove()
@@ -273,6 +274,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
 
                         # B. Mark processing
                         company.status = 'processing'
+                        # Capture data into serializable dict BEFORE we commit and potentially lose the session
+                        company_data_dict = company.to_dict()
                         db.session.commit()
                         db.session.remove() # AGGRESSIVE: Release connection back to pool while worker is busy (~90s)
                         
@@ -293,7 +296,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             worker_input = {
                                 'campaign_id': campaign_id,
                                 'company_id': comp_id,
-                                'company_data': company.to_dict(),
+                                'company_data': company_data_dict,
                                 'message_template': message_template_str,
                                 'subject': subject_str,
                                 'sender_data': sender_data,
