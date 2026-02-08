@@ -105,6 +105,15 @@ def process_single_company(input_data: dict) -> dict:
             
             page = context.new_page()
             
+            # LIGHTNING FAST: Block non-essential resources to slash load times
+            def block_aggressively(route):
+                if route.request.resource_type in ["image", "media", "font"]:
+                    route.abort()
+                else:
+                    route.continue_()
+            
+            page.route("**/*", block_aggressively)
+            
             try:
                 # Create processor
                 processor = FastCampaignProcessor(
