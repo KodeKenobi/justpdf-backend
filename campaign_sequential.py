@@ -162,6 +162,7 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         'last_activity_at': time.time(),
         'active_procs': {}, # pid -> proc
         'stop_watchdog': False,
+        'interrupted': False, # New: Prevent new tasks from starting
         'processed_count': 0,
         'total_companies': 0,
         'lock': threading.Lock()
@@ -170,15 +171,39 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
     # Watchdog to monitor all active processes
     def watchdog():
         print(f"[Parallel] [WATCHDOG] Started for campaign {campaign_id}")
+        last_db_check = 0
         while not state['stop_watchdog']:
-            time.sleep(30)
+            time.sleep(5) # Faster checks (was 30)
             now = time.time()
             offline_sec = now - state['last_activity_at']
             
-            # 1. Thread life check
-            print(f"[Parallel] [WATCHDOG] Heartbeat. Last activity {offline_sec:.0f}s ago. Active: {len(state['active_procs'])}")
+            # 1. Heartbeat check
+            if int(now) % 60 < 10:
+                print(f"[Parallel] [WATCHDOG] Heartbeat. Last activity {offline_sec:.0f}s ago. Active: {len(state['active_procs'])}")
             
-            # 2. Kill stuck processes
+            # 2. IMMEDIATE STOP CHECK
+            # Check DB status every 5 seconds to see if user clicked Stop
+            if now - last_db_check > 5:
+                last_db_check = now
+                try:
+                    with flask_app.app_context():
+                        from models import Campaign
+                        from database import db
+                        db.session.rollback()
+                        camp = Campaign.query.get(campaign_id)
+                        if camp and camp.status in ['stopping', 'cancelled']:
+                            print(f"[Parallel] [WATCHDOG] STOP REQUESTED (status={camp.status}). Killing active workers...")
+                            state['interrupted'] = True
+                            with state['lock']:
+                                for pid, proc in list(state['active_procs'].items()):
+                                    print(f"[Parallel] [WATCHDOG] Killing PID {pid}")
+                                    _kill_process_tree(proc)
+                                state['active_procs'].clear()
+                        db.session.remove()
+                except Exception as e:
+                    print(f"[Parallel] [WATCHDOG] Stop check error: {e}")
+
+            # 3. Kill stuck processes (Individual timeout)
             if offline_sec > (PER_COMPANY_TIMEOUT_SEC + WORKER_WAIT_TIMEOUT_SEC + 60):
                 print(f"[Parallel] [WATCHDOG] [STALL] Global inactivity! Killing all active workers...")
                 with state['lock']:
@@ -275,6 +300,10 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         def process_one_company(comp_id, comp_name):
             with semaphore:
                 try:
+                    # Check global interrupt flag before starting new work
+                    if state['interrupted']:
+                        return
+
                     with flask_app.app_context():
                         from models import Company, Campaign
                         from database import db
