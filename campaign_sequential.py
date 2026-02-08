@@ -534,12 +534,14 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
 
 class SelfHealingSentinel:
     """
-    Background worker that detects orphaned campaigns (e.g. server crashed/restarted)
-    and automatically resumes them if they haven't reported a heartbeat.
+    Background worker that detects stalled or orphaned campaigns.
+    Detects two types of stalls:
+    1. Heartbeat Fail (Heartbeat > 150s old) - Process likely dead.
+    2. Progress Fail (Processed count unchanged for > 150s) - Process hung or deadlocked.
     """
-    _instance = None
     _lock = threading.Lock()
     _running = False
+    _prog_cache = {} # campaign_id -> {'count': int, 'last_move_at': float}
 
     @classmethod
     def start(cls):
@@ -552,55 +554,83 @@ class SelfHealingSentinel:
 
     @classmethod
     def _monitor_loop(cls):
-        # We need a flux app context for DB access
         from app import app as flask_app
         
         while cls._running:
             try:
                 with flask_app.app_context():
-                    from models import Campaign
+                    from models import Campaign, Company
                     from database import db
                     
-                    # 1. Look for orphaned campaigns
-                    # Criteria: status='processing' AND (last_heartbeat_at is NULL OR > threshold ago)
-                    cutoff = datetime.utcnow() - timedelta(seconds=SENTINEL_ORPHAN_THRESHOLD_SEC)
-                    orphans = Campaign.query.filter(
-                        Campaign.status == 'processing',
-                        (Campaign.last_heartbeat_at == None) | (Campaign.last_heartbeat_at < cutoff)
-                    ).all()
+                    now_ts = time.time()
+                    cutoff_heartbeat = datetime.utcnow() - timedelta(seconds=SENTINEL_ORPHAN_THRESHOLD_SEC)
                     
-                    if orphans:
-                        print(f"[SENTINEL] Found {len(orphans)} orphaned campaigns. Triggering recovery...")
-                        for camp in orphans:
-                            print(f"[SENTINEL] RECOVERING: Campaign {camp.public_id} (ID: {camp.id}). No heartbeat since {camp.last_heartbeat_at}")
+                    # Look for campaigns that SHOULD be processing
+                    processing_camps = Campaign.query.filter(Campaign.status == 'processing').all()
+                    
+                    for camp in processing_camps:
+                        cid = camp.id
+                        curr_count = camp.processed_count or 0
+                        last_hb = camp.last_heartbeat_at
+                        
+                        is_stalled = False
+                        reason = ""
+
+                        # 1. Check Heartbeat (Dead Process)
+                        if last_hb is None or last_hb < cutoff_heartbeat:
+                            is_stalled = True
+                            reason = f"Missing heartbeat since {last_hb}"
+                        
+                        # 2. Check Progress (Hung Process)
+                        if not is_stalled:
+                            if cid not in cls._prog_cache:
+                                cls._prog_cache[cid] = {'count': curr_count, 'last_move_at': now_ts}
+                            else:
+                                cache = cls._prog_cache[cid]
+                                if curr_count > cache['count']:
+                                    # Progress made! Reset timer
+                                    cls._prog_cache[cid] = {'count': curr_count, 'last_move_at': now_ts}
+                                else:
+                                    # Progress stalled
+                                    idle_sec = now_ts - cache['last_move_at']
+                                    if idle_sec > SENTINEL_ORPHAN_THRESHOLD_SEC:
+                                        is_stalled = True
+                                        reason = f"No progress (count={curr_count}) for {idle_sec:.0f}s"
+
+                        # 3. TRIGGER RECOVERY
+                        if is_stalled:
+                            print(f"[SENTINEL] RECOVERY TRIGGERED: Campaign {camp.public_id} (ID: {cid}). Reason: {reason}")
                             
-                            # A. Reset 'processing' leads to 'pending' just in case
-                            # (Worker might have died, or is globally stuck)
+                            # A. Cleanup cache
+                            cls._prog_cache.pop(cid, None)
+                            
+                            # B. Reset 'processing' leads back to 'pending'
                             db.session.rollback()
-                            from models import Company
-                            stuck_count = Company.query.filter_by(campaign_id=camp.id, status='processing').update({'status': 'pending'})
+                            stuck_count = Company.query.filter_by(campaign_id=cid, status='processing').update({'status': 'pending'})
+                            
+                            # C. IMPORTANT: Update the campaign start time so we don't immediately stall again on empty loops
+                            camp.last_heartbeat_at = datetime.utcnow() 
                             db.session.commit()
                             
-                            print(f"[SENTINEL]   - Reset {stuck_count} stuck leads for campaign {camp.id}")
+                            print(f"[SENTINEL]   - Reset {stuck_count} stuck leads. Rebooting processing loop...")
                             
-                            # B. Forcefully stop any existing watchdog thread for this ID if it exists?
-                            # (Hard to do without a global registry, but process_campaign_sequential handles its own state)
-                            
-                            # C. Restart processing in a new thread
+                            # D. Restart processing in a new thread
                             restart_thread = threading.Thread(
                                 target=process_campaign_sequential,
-                                args=(camp.id,),
-                                kwargs={'skip_submit': True}, # Mimic usually runs with this
+                                args=(cid,),
+                                kwargs={'skip_submit': True},
                                 daemon=True
                             )
                             restart_thread.start()
-                            print(f"[SENTINEL]   - Restarted processing thread for campaign {camp.id}")
                             
                     db.session.remove()
             except Exception as e:
                 print(f"[SENTINEL] Monitor Error: {e}")
             
-            time.sleep(60) # Wake up every minute to check
+            time.sleep(60) # Wake up every minute
+
+# Auto-start sentinel
+SelfHealingSentinel.start()
 
 # Auto-start sentinel when this module is used
 SelfHealingSentinel.start()
