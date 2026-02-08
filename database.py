@@ -254,10 +254,19 @@ def init_db(app):
                     print("[OK] Added last_heartbeat_at to campaigns")
 
                 if 'public_id' not in campaign_cols:
-                    print("[RELOAD] Migrating: Adding public_id column to campaigns...")
-                    db.session.execute(text("ALTER TABLE campaigns ADD COLUMN public_id VARCHAR(36)"))
-                    db.session.commit()
-                    print("[OK] Added public_id to campaigns")
+                    try:
+                        print("[RELOAD] Migrating: Adding public_id column to campaigns...")
+                        # Use a shorter lock timeout if supported (PostgreSQL)
+                        if is_supabase or not is_sqlite:
+                            db.session.execute(text("SET STATEMENT_TIMEOUT TO '5s'"))
+                            db.session.execute(text("ALTER TABLE campaigns ADD COLUMN public_id VARCHAR(36)"))
+                        else:
+                            db.session.execute(text("ALTER TABLE campaigns ADD COLUMN public_id VARCHAR(36)"))
+                        db.session.commit()
+                        print("[OK] Added public_id to campaigns")
+                    except Exception as migration_err:
+                        print(f"[WARN] Failed to add public_id column (could be locked): {migration_err}")
+                        db.session.rollback()
 
             # Check and migrate api_keys table for free tier fields
             if 'api_keys' in tables:
