@@ -16,14 +16,19 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from models import Campaign, Company, db
 
+# Global registry to allow Sentinel to kill stalled threads
+# campaign_id -> state dict
+GLOBAL_CAMPAIGN_REGISTRY = {}
+REGISTRY_LOCK = threading.Lock()
+
 # Per-company timeout so one slow site doesn't hang the whole run
 PER_COMPANY_TIMEOUT_SEC = 90
 # Max time to wait for worker output/cleanup
 WORKER_WAIT_TIMEOUT_SEC = 10
 # Maximum concurrent workers to avoid OOM or CPU saturation
 MAX_CONCURRENT_WORKERS = 5
-# Sentinel: How long without heartbeat before we consider a campaign 'orphaned' (User requested 2m30s)
-SENTINEL_ORPHAN_THRESHOLD_SEC = 150 
+# Sentinel: How long without heartbeat before we consider a campaign 'orphaned'# Threshold for detecting stalled campaigns (2m 30s)
+SENTINEL_ORPHAN_THRESHOLD_SEC = 150
 
 def _kill_process_tree(proc):
     """Safely terminate a process and all its children across platforms."""
@@ -165,11 +170,15 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         'last_activity_at': time.time(),
         'active_procs': {}, # pid -> proc
         'stop_watchdog': False,
-        'interrupted': False, # New: Prevent new tasks from starting
+        'interrupted': False, 
         'processed_count': 0,
         'total_companies': 0,
         'lock': threading.Lock()
     }
+
+    # Register for Sentinel to find us
+    with REGISTRY_LOCK:
+        GLOBAL_CAMPAIGN_REGISTRY[campaign_id] = state
     
     # Watchdog to monitor all active processes
     def watchdog():
@@ -519,6 +528,11 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
         return {'error': str(e)}
     finally:
         state['stop_watchdog'] = True
+        # Unregister
+        with REGISTRY_LOCK:
+            if GLOBAL_CAMPAIGN_REGISTRY.get(campaign_id) == state:
+                GLOBAL_CAMPAIGN_REGISTRY.pop(campaign_id, None)
+
         if 'campaign_id' in locals() and campaign_id:
             try:
                 # IMPORTANT: If we are exiting normally and not interrupted, 
@@ -597,24 +611,35 @@ class SelfHealingSentinel:
                                         is_stalled = True
                                         reason = f"No progress (count={curr_count}) for {idle_sec:.0f}s"
 
-                        # 3. TRIGGER RECOVERY
+                        # 3. TRIGGER RECOVERY (FORCE KILL & REBOOT)
                         if is_stalled:
                             print(f"[SENTINEL] RECOVERY TRIGGERED: Campaign {camp.public_id} (ID: {cid}). Reason: {reason}")
                             
-                            # A. Cleanup cache
-                            cls._prog_cache.pop(cid, None)
-                            
+                            # A. FORCE KILL OLD SUBPROCESSES
+                            with REGISTRY_LOCK:
+                                old_state = GLOBAL_CAMPAIGN_REGISTRY.get(cid)
+                                if old_state:
+                                    print(f"[SENTINEL]   - Found active state registry. Killing {len(old_state['active_procs'])} workers...")
+                                    old_state['interrupted'] = True
+                                    old_state['stop_watchdog'] = True
+                                    with old_state['lock']:
+                                        for pid, proc in list(old_state['active_procs'].items()):
+                                            print(f"[SENTINEL]   - Killing PID {pid}")
+                                            _kill_process_tree(proc)
+                                        old_state['active_procs'].clear()
+                                    GLOBAL_CAMPAIGN_REGISTRY.pop(cid, None)
+
                             # B. Reset 'processing' leads back to 'pending'
                             db.session.rollback()
                             stuck_count = Company.query.filter_by(campaign_id=cid, status='processing').update({'status': 'pending'})
                             
-                            # C. IMPORTANT: Update the campaign start time so we don't immediately stall again on empty loops
+                            # C. Update heartbeat and commit
                             camp.last_heartbeat_at = datetime.utcnow() 
                             db.session.commit()
                             
-                            print(f"[SENTINEL]   - Reset {stuck_count} stuck leads. Rebooting processing loop...")
+                            print(f"[SENTINEL]   - Reset {stuck_count} stuck leads. REBOOTING engine...")
                             
-                            # D. Restart processing in a new thread
+                            # D. Restart processing
                             restart_thread = threading.Thread(
                                 target=process_campaign_sequential,
                                 args=(cid,),
