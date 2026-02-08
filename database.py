@@ -143,6 +143,14 @@ def init_db(app):
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
+    # CRITICAL: Increase pool size for parallel campaign processing (MAX_CONCURRENT_WORKERS is 8+)
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_size': 20,
+        'max_overflow': 10,
+        'pool_recycle': 3600,
+        'pool_pre_ping': True
+    }
+    
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)

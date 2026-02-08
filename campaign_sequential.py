@@ -189,11 +189,14 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             camp.failed_count = failed
                             camp.captcha_count = captcha
                             db.session.commit()
+                            db.session.remove() # Release connection while waiting for next heartbeat
                             
                             pct = (processed / camp.total_companies * 100) if camp.total_companies > 0 else 0
                             print(f"\n[PROGRESS] Campaign {campaign_id}: {processed}/{camp.total_companies} ({pct:.1f}%) | Success: {success} | Failed: {failed} | Captcha: {captcha}")
                 except Exception as e:
                     print(f"[Parallel] Watchdog DB error: {e}")
+                    try: db.session.remove()
+                    except: pass
 
     watchdog_thread = threading.Thread(target=watchdog, daemon=True)
     watchdog_thread.start()
@@ -271,6 +274,8 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                         # B. Mark processing
                         company.status = 'processing'
                         db.session.commit()
+                        db.session.remove() # AGGRESSIVE: Release connection back to pool while worker is busy (~90s)
+                        
                         with state['lock']: state['last_activity_at'] = time.time()
                         
                         ws_manager.broadcast_event(campaign_id, {
@@ -421,12 +426,14 @@ def process_campaign_sequential(campaign_id, company_ids=None, processing_limit=
                             camp.failed_count = Company.query.filter_by(campaign_id=campaign_id, status='failed').count()
                             camp.captcha_count = Company.query.filter_by(campaign_id=campaign_id, status='captcha').count()
                             db.session.commit()
-                        db.session.remove()
+                        db.session.remove() # Aggressive cleanup
 
                 except Exception as e:
                     print(f"[Parallel] Error in company task {comp_id}: {e}")
                     import traceback
                     traceback.print_exc()
+                    try: db.session.remove()
+                    except: pass
 
         # Execute in ThreadPool
         with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as executor:
