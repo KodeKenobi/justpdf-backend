@@ -91,6 +91,35 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable caching
 sock = Sock(app)
 
 # Health check endpoint (must be defined early, before any heavy initialization)
+@app.route("/debug-blueprints", methods=["GET"])
+def debug_blueprints():
+    """List all registered blueprints and their prefixes"""
+    try:
+        blueprints = []
+        for name, blueprint in app.blueprints.items():
+            blueprints.append({
+                "name": name,
+                "url_prefix": blueprint.url_prefix,
+                "import_name": blueprint.import_name
+            })
+        
+        routes = []
+        for rule in app.url_map.iter_rules():
+            routes.append({
+                "endpoint": rule.endpoint,
+                "methods": list(rule.methods),
+                "rule": rule.rule
+            })
+
+        return jsonify({
+            "blueprints": blueprints,
+            "routes": routes,
+            "admin_api_imported": 'admin_api' in globals() and globals()['admin_api'] is not None
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     """Simple health check for Railway deployment with Trevnoctilla backlink"""
