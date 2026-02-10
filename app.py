@@ -169,6 +169,15 @@ except Exception as e:
     ad_service_admin_api = None
 
 try:
+    from api.admin.image_test_routes import image_test_admin_api
+    from automated_image_test_service import image_test_service
+    print("[OK] image_test_admin_api imported")
+except Exception as e:
+    print(f"[WARN] Failed to import image_test_admin_api: {e}")
+    image_test_admin_api = None
+    image_test_service = None
+
+try:
     from api.client.routes import client_api
     print("[OK] client_api imported")
 except Exception as e:
@@ -5267,6 +5276,13 @@ if __name__ == "__main__":
     if ad_service_admin_api:
         app.register_blueprint(ad_service_admin_api)
         print("[OK] Ad service admin routes registered")
+        
+    if image_test_admin_api:
+        app.register_blueprint(image_test_admin_api, url_prefix='/api/admin/image-test')
+        if image_test_service:
+            # Start the service automatically
+            image_test_service.start()
+            print("[OK] Automated Image Test Service started")
 
     # Get port from environment variable (Railway provides this)
     port = int(os.getenv('PORT', 5000))
