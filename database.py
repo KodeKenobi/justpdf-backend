@@ -116,9 +116,9 @@ def init_db(app):
         if database_url:
             print("[OK] [DATABASE] Using Supabase from SUPABASE_DATABASE_URL")
         else:
-            # Fallback to SQLite for local development
-            database_url = 'sqlite:///trevnoctilla_api.db'
-            print("[WARN] [DATABASE] DATABASE_URL and SUPABASE_DATABASE_URL not set - using SQLite fallback")
+            # Fallback to Supabase for development instead of local SQLite
+            print("[INFO] [DATABASE] No DATABASE_URL set, using hardcoded Supabase connection")
+            database_url = "postgresql://postgres.pqdxqvxyrahvongbhtdb:Kopenikus0218!@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
     
     # Detect Supabase connection
     is_supabase = 'supabase.com' in database_url or 'supabase.co' in database_url
