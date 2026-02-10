@@ -181,6 +181,8 @@ try:
     print("[OK] admin_api imported")
 except Exception as e:
     print(f"[WARN] Failed to import admin_api: {e}")
+    import traceback
+    traceback.print_exc()
     admin_api = None
 
 try:
