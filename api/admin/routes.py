@@ -757,6 +757,32 @@ def get_notification_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@admin_api.route('/campaigns/<int:campaign_id>', methods=['DELETE'])
+@require_admin
+def delete_campaign(campaign_id):
+    """Permanently delete a campaign and all associated data"""
+    try:
+        from models import Campaign, ScrapingSession
+        from database import db
+        
+        campaign = Campaign.query.get_or_404(campaign_id)
+        
+        # Remove scraping sessions that reference this campaign
+        ScrapingSession.query.filter_by(campaign_id=campaign_id).delete()
+        
+        # Delete campaign (cascades to Companies -> SubmissionLogs)
+        db.session.delete(campaign)
+        db.session.commit()
+        
+        print(f"[Admin] Campaign {campaign_id} deleted by {g.current_user.email}")
+        
+        return jsonify({'message': 'Campaign deleted successfully'}), 200
+        
+    except Exception as e:
+        from database import db
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # FREE TIER API KEY MANAGEMENT ENDPOINTS
 # ============================================================================
