@@ -18,7 +18,7 @@ def start_ad_service_endpoint():
 
         # Check if user is admin
         user = User.query.get(current_user_id)
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
 
         success, message = start_ad_service()
@@ -41,7 +41,7 @@ def stop_ad_service_endpoint():
 
         # Check if user is admin
         user = User.query.get(current_user_id)
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
 
         success, message = stop_ad_service()
@@ -64,7 +64,7 @@ def get_ad_service_status_endpoint():
 
         # Check if user is admin
         user = User.query.get(current_user_id)
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
 
         status = get_ad_service_status()
@@ -87,7 +87,7 @@ def reset_ad_stats_endpoint():
 
         # Check if user is admin
         user = User.query.get(current_user_id)
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
 
         success, message = reset_ad_stats()
@@ -110,7 +110,7 @@ def trigger_click_endpoint():
 
         # Check if user is admin
         user = User.query.get(current_user_id)
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
 
         success, message = trigger_manual_ad_view()

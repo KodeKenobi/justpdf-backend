@@ -5260,12 +5260,12 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[WARN] Failed to start backup service: {e}")
 
-    # Register additional admin blueprints
+    # Register additional admin blueprints with correct prefixes
     if backup_admin_api:
-        app.register_blueprint(backup_admin_api)
+        app.register_blueprint(backup_admin_api, url_prefix='/api/admin')
         print("[OK] Backup admin routes registered")
     if ad_service_admin_api:
-        app.register_blueprint(ad_service_admin_api)
+        app.register_blueprint(ad_service_admin_api, url_prefix='/api/admin')
         print("[OK] Ad service admin routes registered")
 
     # Get port from environment variable (Railway provides this)
