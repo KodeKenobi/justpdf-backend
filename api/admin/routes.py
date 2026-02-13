@@ -4,13 +4,13 @@ from datetime import datetime, timedelta
 from api_auth import require_api_key, get_user_stats
 import secrets
 
-# Import service routes
-try:
-    from .backup_routes import backup_admin_api
-    from .ad_service_routes import ad_service_admin_api
-except ImportError:
-    backup_admin_api = None
-    ad_service_admin_api = None
+# Import service routes - DISABLED TO PREVENT IMPORT ERRORS
+# try:
+#     from .backup_routes import backup_admin_api
+#     from .ad_service_routes import ad_service_admin_api
+# except ImportError:
+#     backup_admin_api = None
+#     ad_service_admin_api = None
 
 # Create Blueprint
 admin_api = Blueprint('admin_api', __name__, url_prefix='/api/admin')
@@ -757,30 +757,62 @@ def get_notification_stats():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@admin_api.route('/campaigns/<int:campaign_id>', methods=['DELETE'])
+@admin_api.route('/campaigns/<id_or_public_id>', methods=['DELETE'])
 @require_admin
-def delete_campaign(campaign_id):
-    """Permanently delete a campaign and all associated data"""
+def delete_campaign(id_or_public_id):
+    """
+    Permanently delete a campaign - Unified Logic
+    Accepts both numeric ID and public_id string to match user behavior.
+    """
     try:
-        from models import Campaign, ScrapingSession
+        from models import Campaign, ScrapingSession, Company, SubmissionLog
         from database import db
+        import time
         
-        campaign = Campaign.query.get_or_404(campaign_id)
+        start_time = time.time()
         
-        # Remove scraping sessions that reference this campaign
-        ScrapingSession.query.filter_by(campaign_id=campaign_id).delete()
+        # Resolve campaign by public_id or numeric ID (like user API)
+        campaign = Campaign.query.filter_by(public_id=str(id_or_public_id)).first()
+        if not campaign and str(id_or_public_id).isdigit():
+            campaign = Campaign.query.get(int(id_or_public_id))
+            
+        if not campaign:
+            return jsonify({'error': 'Campaign not found'}), 404
         
-        # Delete campaign (cascades to Companies -> SubmissionLogs)
+        campaign_id = campaign.id
+        print(f"[Admin Delete] Targets: ID={campaign_id} PublicID={campaign.public_id} Name={campaign.name}")
+        
+        # 1. Delete ScrapingSessions
+        try:
+            ScrapingSession.query.filter_by(campaign_id=campaign_id).delete(synchronize_session=False)
+        except Exception as e:
+            print(f"[Admin Delete] Error clearing sessions: {e}")
+        
+        # 2. Delete SubmissionLogs via Subquery (Fast & RAM efficient)
+        try:
+            company_subquery = db.session.query(Company.id).filter_by(campaign_id=campaign_id)
+            SubmissionLog.query.filter(SubmissionLog.company_id.in_(company_subquery)).delete(synchronize_session=False)
+        except Exception as e:
+            print(f"[Admin Delete] Error clearing logs: {e}")
+        
+        # 3. Delete Companies
+        Company.query.filter_by(campaign_id=campaign_id).delete(synchronize_session=False)
+        
+        # 4. Delete Campaign
         db.session.delete(campaign)
         db.session.commit()
         
-        print(f"[Admin] Campaign {campaign_id} deleted by {g.current_user.email}")
+        duration = time.time() - start_time
+        print(f"[Admin] Campaign {campaign_id} deleted permanently in {duration:.2f}s by {g.current_user.email}")
         
-        return jsonify({'message': 'Campaign deleted successfully'}), 200
+        return jsonify({'message': f'Campaign deleted successfully in {duration:.2f}s'}), 200
         
     except Exception as e:
         from database import db
         db.session.rollback()
+        print(f"[Admin Delete Error] {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # ============================================================================
