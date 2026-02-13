@@ -244,6 +244,12 @@ class AutomatedAdService:
         except Exception as e:
             print(f"[AD SERVICE] Error sending progress email: {e}")
 
+    def perform_manual_ad_view(self):
+        """Perform a single ad view immediately (manual trigger)"""
+        print("[AD SERVICE] Manual ad view triggered")
+        self._perform_ad_view("Manual Trigger")
+        return True, "Manual ad click simulated successfully"
+
 # Global service instance
 ad_service = AutomatedAdService()
 
@@ -263,3 +269,7 @@ def get_ad_service_status():
 def reset_ad_stats():
     """Reset ad view statistics (admin function)"""
     return ad_service.reset_stats()
+
+def trigger_manual_ad_view():
+    """Trigger a single ad view immediately (admin function)"""
+    return ad_service.perform_manual_ad_view()

@@ -5,7 +5,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from database import db
 from models import User
-from automated_ad_service import start_ad_service, stop_ad_service, get_ad_service_status, reset_ad_stats
+from automated_ad_service import start_ad_service, stop_ad_service, get_ad_service_status, reset_ad_stats, trigger_manual_ad_view
 
 ad_service_admin_api = Blueprint('ad_service_admin_api', __name__)
 
@@ -100,3 +100,26 @@ def reset_ad_stats_endpoint():
     except Exception as e:
         print(f"[ADMIN AD SERVICE] Error resetting ad stats: {e}")
         return jsonify({'error': 'Failed to reset ad statistics'}), 500
+
+@ad_service_admin_api.route('/ad-service/trigger-click', methods=['POST'])
+@jwt_required()
+def trigger_click_endpoint():
+    """Trigger a single ad click manually"""
+    try:
+        current_user_id = get_jwt_identity()
+
+        # Check if user is admin
+        user = User.query.get(current_user_id)
+        if not user or user.role != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+
+        success, message = trigger_manual_ad_view()
+
+        return jsonify({
+            'success': success,
+            'message': message
+        })
+
+    except Exception as e:
+        print(f"[ADMIN AD SERVICE] Error triggering ad click: {e}")
+        return jsonify({'error': 'Failed to trigger ad click'}), 500
