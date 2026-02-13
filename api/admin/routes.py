@@ -4,13 +4,18 @@ from datetime import datetime, timedelta
 from api_auth import require_api_key, get_user_stats
 import secrets
 
-# Import service routes - DISABLED TO PREVENT IMPORT ERRORS
-# try:
-#     from .backup_routes import backup_admin_api
-#     from .ad_service_routes import ad_service_admin_api
-# except ImportError:
-#     backup_admin_api = None
-#     ad_service_admin_api = None
+# Import service routes
+try:
+    from .ad_service_routes import ad_service_admin_api
+except Exception as e:
+    print(f"[WARN] Failed to import ad_service_admin_api: {e}")
+    ad_service_admin_api = None
+
+try:
+    from .backup_routes import backup_admin_api
+except Exception as e:
+    print(f"[WARN] Failed to import backup_admin_api: {e}")
+    backup_admin_api = None
 
 # Create Blueprint
 admin_api = Blueprint('admin_api', __name__, url_prefix='/api/admin')
