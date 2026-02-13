@@ -132,34 +132,35 @@ class AutomatedAdService:
                 # Process the ad view tracking in the database
                 from models import AnalyticsEvent
                 
-                # We need an app context to perform DB operations
-                # Assuming the app is accessible or we can use the db object directly
+                # We need an app context to perform DB operations in a background thread
                 try:
-                    event = AnalyticsEvent(
-                        event_type="custom",
-                        event_name="ad_click",
-                        properties={
-                            "ad_provider": "monetag",
-                            "ad_url": "https://otieu.com/4/10115019",
-                            "source": "automated_background_engine",
-                            "context": context,
-                            "simulated": True
-                        },
-                        session_id=f"background-engine-{datetime.now().strftime('%Y%m%d')}",
-                        page_url="/", # Spoof root to bypass admin filters
-                        page_title="Home",
-                        timestamp=datetime.utcnow(),
-                        user_agent="Trevnoctilla-Bot/1.0",
-                        device_type="server",
-                        browser="Python-Requests",
-                        os="Linux"
-                    )
-                    db.session.add(event)
-                    db.session.commit()
-                    print(f"[AD SERVICE] ✅ Database event recorded")
+                    # Use the app context from the db instance
+                    with db.app.app_context():
+                        event = AnalyticsEvent(
+                            event_type="custom",
+                            event_name="ad_click",
+                            properties={
+                                "ad_provider": "monetag",
+                                "ad_url": "https://otieu.com/4/10115019",
+                                "source": "automated_background_engine",
+                                "context": context,
+                                "simulated": True
+                            },
+                            session_id=f"background-engine-{datetime.now().strftime('%Y%m%d')}",
+                            page_url="/", # Spoof root to bypass admin filters
+                            page_title="Home",
+                            timestamp=datetime.utcnow(),
+                            user_agent="Trevnoctilla-Bot/1.0",
+                            device_type="server",
+                            browser="Python-Requests",
+                            os="Linux"
+                        )
+                        db.session.add(event)
+                        db.session.commit()
+                        print(f"[AD SERVICE] ✅ Database event recorded")
                 except Exception as db_err:
                     print(f"[AD SERVICE] ❌ DB Error: {db_err}")
-                    db.session.rollback()
+                    # No need to rollback here as we are in our own context
 
                 self.view_count += 1
                 self.last_view_time = datetime.now()
