@@ -153,6 +153,7 @@ def init_db(app):
     
     # Initialize extensions
     db.init_app(app)
+    db.app = app
     migrate.init_app(app, db)
     
     # Create tables (with timeout protection for Railway)
