@@ -227,87 +227,58 @@ class AutomatedAdService:
         except Exception as e:
             print(f"[AD SERVICE] ❌ Critical error performing ad view: {e}")
 
-    def _get_today_view_count(self) -> int:
-        """Get number of views completed today from DB"""
-        from models import AnalyticsEvent
-        from app import app
-        from sqlalchemy import func, or_
-        
-        try:
-            with app.app_context():
-                today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                # Count ad_click events today (be robust with page_url)
-                count = db.session.query(func.count(AnalyticsEvent.id)).filter(
-                    AnalyticsEvent.event_name == 'ad_click',
-                    AnalyticsEvent.timestamp >= today,
-                    or_(
-                        AnalyticsEvent.page_url == None,
-                        AnalyticsEvent.page_url == '',
-                        ~AnalyticsEvent.page_url.like('%/admin/%')
-                    )
-                ).scalar()
-                return count or 0
-        except Exception as e:
-            print(f"[AD SERVICE] Error counting today's views: {e}")
-            return 0
-
-    def _get_total_view_count(self) -> int:
-        """Get total number of views completed all-time from DB"""
-        from models import AnalyticsEvent
-        from app import app
-        from sqlalchemy import func, or_
-        
-        try:
-            with app.app_context():
-                # Count ad_click events all-time (be robust with page_url)
-                count = db.session.query(func.count(AnalyticsEvent.id)).filter(
-                    AnalyticsEvent.event_name == 'ad_click',
-                    or_(
-                        AnalyticsEvent.page_url == None,
-                        AnalyticsEvent.page_url == '',
-                        ~AnalyticsEvent.page_url.like('%/admin/%')
-                    )
-                ).scalar()
-                return count or 0
-        except Exception as e:
-            print(f"[AD SERVICE] Error counting total views: {e}")
-            return 0
-
     def get_status(self):
-        """Get current service status with global counts"""
+        """Get current service status with global counts from DB"""
         from models import SystemSetting
-        from app import app
+        from sqlalchemy import text
         
-        # Initialize from DB
         db_running = False
-        today_views = self._get_today_view_count()
-        total_views = self._get_total_view_count()
+        total_views = 0
+        today_views = 0
         db_last_view = self.last_view_time
-        
-        try:
-            with app.app_context():
-                db_running = SystemSetting.get('ad_engine_running', 'False') == 'True'
-                last_view_str = SystemSetting.get('ad_engine_last_view')
-                if last_view_str:
-                    try:
-                        db_last_view = datetime.fromisoformat(last_view_str)
-                    except:
-                        pass
-                    
-                # Sync local state if DB says it should be running but local isn't
-                if db_running and not self.is_running:
-                    print("[AD SERVICE] ⚡ Resyncing runner with DB state (Auto-starting thread)")
-                    self.is_running = True
-                    if not self.thread or not self.thread.is_alive():
-                        self.thread = threading.Thread(target=self._run_service, daemon=True)
-                        self.thread.start()
-                elif not db_running and self.is_running:
-                    print("[AD SERVICE] ⚡ Resyncing runner with DB state (Stopping thread)")
-                    self.is_running = False
-        except Exception as e:
-            print(f"[AD SERVICE] Status sync warning: {e}")
 
-        # USER REQUEST: Total Views 10 means Daily Target is 2 (12 goal)
+        try:
+            # All DB work in one block - use raw SQL for reliable counting
+            today_str = datetime.utcnow().strftime('%Y-%m-%d 00:00:00')
+            
+            total_result = db.session.execute(text(
+                "SELECT count(*) FROM analytics_events WHERE event_name = 'ad_click' "
+                "AND (page_url IS NULL OR page_url = '' OR page_url NOT LIKE '%/admin/%')"
+            ))
+            total_views = total_result.scalar() or 0
+
+            today_result = db.session.execute(text(
+                "SELECT count(*) FROM analytics_events WHERE event_name = 'ad_click' "
+                "AND timestamp >= :today "
+                "AND (page_url IS NULL OR page_url = '' OR page_url NOT LIKE '%/admin/%')"
+            ), {'today': today_str})
+            today_views = today_result.scalar() or 0
+
+            db_running = SystemSetting.get('ad_engine_running', 'False') == 'True'
+            last_view_str = SystemSetting.get('ad_engine_last_view')
+            if last_view_str:
+                try:
+                    db_last_view = datetime.fromisoformat(last_view_str)
+                except:
+                    pass
+
+            # Sync local state with DB
+            if db_running and not self.is_running:
+                print("[AD SERVICE] ⚡ Resyncing (Auto-starting thread)")
+                self.is_running = True
+                if not self.thread or not self.thread.is_alive():
+                    self.thread = threading.Thread(target=self._run_service, daemon=True)
+                    self.thread.start()
+            elif not db_running and self.is_running:
+                print("[AD SERVICE] ⚡ Resyncing (Stopping thread)")
+                self.is_running = False
+
+            print(f"[AD SERVICE] Status: total={total_views}, today={today_views}, running={db_running}")
+        except Exception as e:
+            print(f"[AD SERVICE] ❌ Status error: {e}")
+            import traceback
+            traceback.print_exc()
+
         target_remaining = max(0, self.target_views_per_day - total_views)
 
         return {
@@ -316,7 +287,7 @@ class AutomatedAdService:
             'last_view_time': db_last_view.isoformat() if db_last_view else None,
             'today_views': today_views,
             'target_daily_views': target_remaining,
-            'recent_history': self.view_history[-10:]  # Last 10 views
+            'recent_history': self.view_history[-10:]
         }
 
     def reset_stats(self):
