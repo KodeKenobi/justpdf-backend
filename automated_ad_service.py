@@ -231,16 +231,20 @@ class AutomatedAdService:
         """Get number of views completed today from DB"""
         from models import AnalyticsEvent
         from app import app
-        from sqlalchemy import func
+        from sqlalchemy import func, or_
         
         try:
             with app.app_context():
                 today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                # Count non-admin ad_click events today
+                # Count ad_click events today (be robust with page_url)
                 count = db.session.query(func.count(AnalyticsEvent.id)).filter(
                     AnalyticsEvent.event_name == 'ad_click',
                     AnalyticsEvent.timestamp >= today,
-                    ~AnalyticsEvent.page_url.like('%/admin/%')
+                    or_(
+                        AnalyticsEvent.page_url == None,
+                        AnalyticsEvent.page_url == '',
+                        ~AnalyticsEvent.page_url.like('%/admin/%')
+                    )
                 ).scalar()
                 return count or 0
         except Exception as e:
@@ -251,14 +255,18 @@ class AutomatedAdService:
         """Get total number of views completed all-time from DB"""
         from models import AnalyticsEvent
         from app import app
-        from sqlalchemy import func
+        from sqlalchemy import func, or_
         
         try:
             with app.app_context():
-                # Count non-admin ad_click events all-time
+                # Count ad_click events all-time (be robust with page_url)
                 count = db.session.query(func.count(AnalyticsEvent.id)).filter(
                     AnalyticsEvent.event_name == 'ad_click',
-                    ~AnalyticsEvent.page_url.like('%/admin/%')
+                    or_(
+                        AnalyticsEvent.page_url == None,
+                        AnalyticsEvent.page_url == '',
+                        ~AnalyticsEvent.page_url.like('%/admin/%')
+                    )
                 ).scalar()
                 return count or 0
         except Exception as e:
@@ -281,7 +289,10 @@ class AutomatedAdService:
                 db_running = SystemSetting.get('ad_engine_running', 'False') == 'True'
                 last_view_str = SystemSetting.get('ad_engine_last_view')
                 if last_view_str:
-                    db_last_view = datetime.fromisoformat(last_view_str)
+                    try:
+                        db_last_view = datetime.fromisoformat(last_view_str)
+                    except:
+                        pass
                     
                 # Sync local state if DB says it should be running but local isn't
                 if db_running and not self.is_running:
@@ -296,8 +307,8 @@ class AutomatedAdService:
         except Exception as e:
             print(f"[AD SERVICE] Status sync warning: {e}")
 
-        # If 10 total views exist and target is 12, show 2 remaining
-        target_remaining = max(0, self.target_views_per_day - today_views)
+        # USER REQUEST: Total Views 10 means Daily Target is 2 (12 goal)
+        target_remaining = max(0, self.target_views_per_day - total_views)
 
         return {
             'is_running': db_running,
