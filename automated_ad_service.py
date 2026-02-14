@@ -236,6 +236,7 @@ class AutomatedAdService:
         total_views = 0
         today_views = 0
         db_last_view = self.last_view_time
+        debug_msg = "ok"
 
         try:
             # All DB work in one block - use raw SQL for reliable counting
@@ -275,6 +276,7 @@ class AutomatedAdService:
 
             print(f"[AD SERVICE] Status: total={total_views}, today={today_views}, running={db_running}")
         except Exception as e:
+            debug_msg = str(e)
             print(f"[AD SERVICE] ❌ Status error: {e}")
             import traceback
             traceback.print_exc()
@@ -287,7 +289,9 @@ class AutomatedAdService:
             'last_view_time': db_last_view.isoformat() if db_last_view else None,
             'today_views': today_views,
             'target_daily_views': target_remaining,
-            'recent_history': self.view_history[-10:]
+            'recent_history': self.view_history[-10:],
+            '_version': 'v4-rawsql',
+            '_debug': debug_msg
         }
 
     def reset_stats(self):
