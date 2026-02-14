@@ -228,25 +228,57 @@ class AutomatedAdService:
             print(f"[AD SERVICE] ❌ Critical error performing ad view: {e}")
 
     def _get_today_view_count(self) -> int:
-        """Get number of views completed today"""
-        today = datetime.now().date()
-        return sum(1 for record in self.view_history
-                  if datetime.fromisoformat(record['timestamp']).date() == today)
+        """Get number of views completed today from DB"""
+        from models import AnalyticsEvent
+        from app import app
+        from sqlalchemy import func
+        
+        try:
+            with app.app_context():
+                today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                # Count non-admin ad_click events today
+                count = db.session.query(func.count(AnalyticsEvent.id)).filter(
+                    AnalyticsEvent.event_name == 'ad_click',
+                    AnalyticsEvent.timestamp >= today,
+                    ~AnalyticsEvent.page_url.like('%/admin/%')
+                ).scalar()
+                return count or 0
+        except Exception as e:
+            print(f"[AD SERVICE] Error counting today's views: {e}")
+            return 0
+
+    def _get_total_view_count(self) -> int:
+        """Get total number of views completed all-time from DB"""
+        from models import AnalyticsEvent
+        from app import app
+        from sqlalchemy import func
+        
+        try:
+            with app.app_context():
+                # Count non-admin ad_click events all-time
+                count = db.session.query(func.count(AnalyticsEvent.id)).filter(
+                    AnalyticsEvent.event_name == 'ad_click',
+                    ~AnalyticsEvent.page_url.like('%/admin/%')
+                ).scalar()
+                return count or 0
+        except Exception as e:
+            print(f"[AD SERVICE] Error counting total views: {e}")
+            return 0
 
     def get_status(self):
-        """Get current service status"""
+        """Get current service status with global counts"""
         from models import SystemSetting
         from app import app
         
-        # Initialize from DB if possible
+        # Initialize from DB
         db_running = False
-        db_views = self.view_count
+        today_views = self._get_today_view_count()
+        total_views = self._get_total_view_count()
         db_last_view = self.last_view_time
         
         try:
             with app.app_context():
                 db_running = SystemSetting.get('ad_engine_running', 'False') == 'True'
-                db_views = int(SystemSetting.get('ad_engine_total_views', str(self.view_count)))
                 last_view_str = SystemSetting.get('ad_engine_last_view')
                 if last_view_str:
                     db_last_view = datetime.fromisoformat(last_view_str)
@@ -264,12 +296,15 @@ class AutomatedAdService:
         except Exception as e:
             print(f"[AD SERVICE] Status sync warning: {e}")
 
+        # If 10 total views exist and target is 12, show 2 remaining
+        target_remaining = max(0, self.target_views_per_day - today_views)
+
         return {
             'is_running': db_running,
-            'total_views': db_views,
+            'total_views': total_views,
             'last_view_time': db_last_view.isoformat() if db_last_view else None,
-            'today_views': self._get_today_view_count(),
-            'target_daily_views': self.target_views_per_day,
+            'today_views': today_views,
+            'target_daily_views': target_remaining,
             'recent_history': self.view_history[-10:]  # Last 10 views
         }
 

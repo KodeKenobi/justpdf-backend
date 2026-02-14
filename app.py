@@ -141,19 +141,6 @@ except Exception as e:
     print(f"[WARN] Failed to import backup_admin_api: {e}")
     backup_admin_api = None
 
-@app.route("/diagnostic/db-check", methods=["GET"])
-def db_diagnostic():
-    """Diagnostic route to check DB connection and settings"""
-    try:
-        from models import SystemSetting
-        settings = SystemSetting.query.all()
-        return jsonify({
-            "uri": app.config.get('SQLALCHEMY_DATABASE_URI', '').split('@')[-1],
-            "settings": {s.key: s.value for s in settings}
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 try:
     from api.admin.ad_service_routes import ad_service_admin_api
     print("[OK] ad_service_admin_api imported")
