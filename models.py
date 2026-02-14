@@ -699,3 +699,30 @@ class ScrapingSession(db.Model):
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'last_update_at': self.last_update_at.isoformat() if self.last_update_at else None,
         }
+
+class SystemSetting(db.Model):
+    """Global system settings and state"""
+    __tablename__ = 'system_settings'
+    
+    key = db.Column(db.String(100), primary_key=True)
+    value = db.Column(db.Text)
+    description = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @staticmethod
+    def get(key, default=None):
+        setting = SystemSetting.query.get(key)
+        return setting.value if setting else default
+
+    @staticmethod
+    def set(key, value, description=None):
+        setting = SystemSetting.query.get(key)
+        if setting:
+            setting.value = str(value)
+            if description:
+                setting.description = description
+        else:
+            setting = SystemSetting(key=key, value=str(value), description=description)
+            db.session.add(setting)
+        db.session.commit()
+        return value

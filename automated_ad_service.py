@@ -25,26 +25,33 @@ class AutomatedAdService:
 
     def start_service(self):
         """Start the automated ad view service"""
-        if self.is_running:
-            return False, "Service is already running"
-
+        from models import SystemSetting
+        from app import app
+        
+        with app.app_context():
+            SystemSetting.set('ad_engine_running', 'True', 'Whether the automated ad engine is active')
+        
+        # We handle thread starting in a way that allows multiple workers to know it SHOULD be running
+        # but for simplicity in this PR, we just ensure local instance matches DB
         self.is_running = True
-        self.thread = threading.Thread(target=self._run_service, daemon=True)
-        self.thread.start()
+        
+        if not self.thread or not self.thread.is_alive():
+            self.thread = threading.Thread(target=self._run_service, daemon=True)
+            self.thread.start()
 
-        print("[AD SERVICE] Automated ad view service started")
+        print("[AD SERVICE] Automated ad view service started (Persisted to DB)")
         return True, "Service started successfully"
 
     def stop_service(self):
         """Stop the automated ad view service"""
-        if not self.is_running:
-            return False, "Service is not running"
-
+        from models import SystemSetting
+        from app import app
+        
+        with app.app_context():
+            SystemSetting.set('ad_engine_running', 'False')
+            
         self.is_running = False
-        if self.thread:
-            self.thread.join(timeout=5)
-
-        print("[AD SERVICE] Automated ad view service stopped")
+        print("[AD SERVICE] Automated ad view service stopped (Persisted to DB)")
         return True, "Service stopped successfully"
 
     def _run_service(self):
@@ -185,6 +192,16 @@ class AutomatedAdService:
             if api_recorded:
                 self.view_count += 1
                 self.last_view_time = datetime.now()
+                
+                # Persist stats to DB
+                try:
+                    from models import SystemSetting
+                    from app import app
+                    with app.app_context():
+                        SystemSetting.set('ad_engine_total_views', self.view_count)
+                        SystemSetting.set('ad_engine_last_view', self.last_view_time.isoformat())
+                except:
+                    pass
 
                 # Log the view for service status
                 view_record = {
@@ -218,10 +235,39 @@ class AutomatedAdService:
 
     def get_status(self):
         """Get current service status"""
+        from models import SystemSetting
+        from app import app
+        
+        # Initialize from DB if possible
+        db_running = False
+        db_views = self.view_count
+        db_last_view = self.last_view_time
+        
+        try:
+            with app.app_context():
+                db_running = SystemSetting.get('ad_engine_running', 'False') == 'True'
+                db_views = int(SystemSetting.get('ad_engine_total_views', str(self.view_count)))
+                last_view_str = SystemSetting.get('ad_engine_last_view')
+                if last_view_str:
+                    db_last_view = datetime.fromisoformat(last_view_str)
+                    
+                # Sync local state if DB says it should be running but local isn't
+                if db_running and not self.is_running:
+                    print("[AD SERVICE] ⚡ Resyncing runner with DB state (Auto-starting thread)")
+                    self.is_running = True
+                    if not self.thread or not self.thread.is_alive():
+                        self.thread = threading.Thread(target=self._run_service, daemon=True)
+                        self.thread.start()
+                elif not db_running and self.is_running:
+                    print("[AD SERVICE] ⚡ Resyncing runner with DB state (Stopping thread)")
+                    self.is_running = False
+        except Exception as e:
+            print(f"[AD SERVICE] Status sync warning: {e}")
+
         return {
-            'is_running': self.is_running,
-            'total_views': self.view_count,
-            'last_view_time': self.last_view_time.isoformat() if self.last_view_time else None,
+            'is_running': db_running,
+            'total_views': db_views,
+            'last_view_time': db_last_view.isoformat() if db_last_view else None,
             'today_views': self._get_today_view_count(),
             'target_daily_views': self.target_views_per_day,
             'recent_history': self.view_history[-10:]  # Last 10 views
@@ -229,6 +275,13 @@ class AutomatedAdService:
 
     def reset_stats(self):
         """Reset view statistics"""
+        from models import SystemSetting
+        from app import app
+        
+        with app.app_context():
+            SystemSetting.set('ad_engine_total_views', '0')
+            SystemSetting.set('ad_engine_last_view', '')
+            
         self.view_count = 0
         self.view_history = []
         return True, "Statistics reset successfully"
