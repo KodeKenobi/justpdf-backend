@@ -111,26 +111,6 @@ def health_check():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route("/env-check", methods=["GET"])
-def env_check():
-    """Safe check for deployment: database type only (no secrets). Use to verify Railway env."""
-    try:
-        uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
-        if uri.startswith("sqlite"):
-            database = "sqlite"
-            ok = False
-        else:
-            database = "postgres"
-            ok = True
-        return jsonify({
-            "ok": ok,
-            "database": database,
-            "message": "Use Postgres in production (set SUPABASE_DATABASE_URL or DATABASE_URL)." if not ok else "Database env looks good.",
-        }), 200
-    except Exception as e:
-        return jsonify({"ok": False, "database": "unknown", "message": str(e)}), 500
-
-
 # Import blueprints with error handling (non-critical for health endpoint)
 print("[LOAD] Importing blueprints...")
 try:
@@ -5212,6 +5192,14 @@ if enterprise_api:
     app.register_blueprint(enterprise_api)
     print("[OK] enterprise_api registered")
 
+# Register additional admin blueprints
+if backup_admin_api:
+    app.register_blueprint(backup_admin_api, url_prefix='/api/admin')
+    print("[OK] Backup admin routes registered")
+if ad_service_admin_api:
+    app.register_blueprint(ad_service_admin_api, url_prefix='/api/admin')
+    print("[OK] Ad service admin routes registered")
+
 # Register WebSocket routes for live monitoring
 try:
     from api.campaigns.websocket import register_websocket_routes
@@ -5259,14 +5247,6 @@ if __name__ == "__main__":
         schedule_daily_backups()
     except Exception as e:
         print(f"[WARN] Failed to start backup service: {e}")
-
-    # Register additional admin blueprints with correct prefixes
-    if backup_admin_api:
-        app.register_blueprint(backup_admin_api, url_prefix='/api/admin')
-        print("[OK] Backup admin routes registered")
-    if ad_service_admin_api:
-        app.register_blueprint(ad_service_admin_api, url_prefix='/api/admin')
-        print("[OK] Ad service admin routes registered")
 
     # Get port from environment variable (Railway provides this)
     port = int(os.getenv('PORT', 5000))
