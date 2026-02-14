@@ -237,7 +237,7 @@ def require_admin(f):
         from models import User
         
         user = User.query.get(get_jwt_identity())
-        if not user or user.role != 'admin':
+        if not user or user.role not in ['admin', 'super_admin']:
             return jsonify({'error': 'Admin access required'}), 403
         g.current_user = user
         return f(*args, **kwargs)
