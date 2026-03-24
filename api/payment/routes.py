@@ -29,6 +29,74 @@ TIER_LIMITS = {
     'client': -1
 }
 
+def get_supabase_pooler_database_url():
+    """
+    Resolve DATABASE_URL and convert Supabase direct host format to pooler format when needed.
+    """
+    import os
+    import re
+
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return None
+
+    if "db." in database_url and ".supabase.co" in database_url:
+        match = re.match(r'postgresql?://([^:]+):([^@]+)@db\.([^.]+)\.supabase\.co:(\d+)/(.+)', database_url)
+        if match:
+            user_part, password, project_ref, port, database = match.groups()
+            database_url = f"postgresql://postgres.{project_ref}:{password}@aws-1-eu-west-1.pooler.supabase.com:6543/{database}"
+    return database_url
+
+def upsert_extension_lifetime_license(user_email: str, payment_id: str = ""):
+    """
+    Mark extension license as active lifetime in Supabase.
+    """
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    if not user_email:
+        return
+
+    database_url = get_supabase_pooler_database_url()
+    if not database_url:
+        print("[WARN] [EXT LICENSE] DATABASE_URL not set; skipping extension license sync")
+        return
+
+    conn = psycopg2.connect(database_url, sslmode='require')
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("""
+        INSERT INTO public.extension_licenses (
+            email,
+            status,
+            license_type,
+            provider,
+            provider_payment_id,
+            paid_at,
+            metadata
+        )
+        VALUES (
+            lower(%s),
+            'active',
+            'pro_lifetime',
+            'payfast',
+            %s,
+            now(),
+            jsonb_build_object('source', 'upgrade-subscription')
+        )
+        ON CONFLICT ((lower(email)))
+        DO UPDATE SET
+            status = 'active',
+            license_type = 'pro_lifetime',
+            provider = 'payfast',
+            provider_payment_id = COALESCE(EXCLUDED.provider_payment_id, extension_licenses.provider_payment_id),
+            paid_at = COALESCE(extension_licenses.paid_at, EXCLUDED.paid_at),
+            metadata = extension_licenses.metadata || EXCLUDED.metadata,
+            updated_at = now()
+    """, (user_email.strip().lower(), payment_id or None))
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 @payment_api.route('/upgrade-subscription', methods=['POST'])
 def upgrade_subscription():
     """
@@ -160,6 +228,22 @@ def upgrade_subscription():
             import traceback
             traceback.print_exc()
             # Don't fail the request if Supabase sync fails
+
+        # Sync extension lifetime license for paid upgrades.
+        # One-off payment model: any paid successful upgrade activates pro_lifetime.
+        try:
+            paid_amount = float(amount or 0)
+        except Exception:
+            paid_amount = 0.0
+        if paid_amount > 0:
+            try:
+                upsert_extension_lifetime_license(user.email, payment_id)
+                print(f"[OK] [EXT LICENSE] Activated pro_lifetime for {user.email}")
+            except Exception as e:
+                print(f"[WARN] [EXT LICENSE] Failed to sync extension license: {e}")
+                import traceback
+                traceback.print_exc()
+                # Don't fail the request if extension license sync fails
         
         # Create notification for subscription upgrade
         try:
